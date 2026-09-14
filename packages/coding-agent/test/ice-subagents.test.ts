@@ -5243,7 +5243,14 @@ describe("ICE subagent contracts", () => {
 
 	it("keeps the hard turn limit authoritative when wrap-up does not produce a report", async () => {
 		const cwd = await createWorkspace();
-		const normalized = normalizeSubagentRequest({ ...request(cwd), execution: { maxTurns: 2 } }, cwd);
+		const normalized = normalizeSubagentRequest(
+			{
+				...request(cwd),
+				execution: { maxTurns: 2 },
+				outputSchema: { type: "object" as const, additionalProperties: false },
+			},
+			cwd,
+		);
 		const messages: AgentMessage[] = [];
 		const promptCalls: string[] = [];
 		let notify: ((event: AgentSessionEvent) => void) | undefined;

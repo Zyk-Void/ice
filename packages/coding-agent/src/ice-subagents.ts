@@ -8933,7 +8933,7 @@ export class NativeSubagentRunner {
 						...(diagnostic ? { diagnostic } : {}),
 					});
 					updatePresentation({ retry: retryState });
-					emit("subagent_retry", "running", undefined, undefined, undefined, undefined, undefined, retryState);
+					emit("subagent_retry", "running", undefined, undefined, undefined, undefined, undefined, undefined, retryState);
 					return;
 				}
 				if (event.type === "auto_retry_end") {
@@ -8948,7 +8948,7 @@ export class NativeSubagentRunner {
 						...(diagnostic ? { diagnostic } : {}),
 					});
 					updatePresentation({ retry: retryState });
-					emit("subagent_retry", "running", undefined, undefined, undefined, undefined, undefined, retryState);
+					emit("subagent_retry", "running", undefined, undefined, undefined, undefined, undefined, undefined, retryState);
 					return;
 				}
 				if (event.type === "message_end" && event.message.role === "assistant" && tokenUsageReconciler) {
