@@ -75,6 +75,12 @@ export interface IceCogneeConfig extends Omit<CogneeClientConfig, "maxResponseCh
 	 * Default "auto": never replace the Ice compact summary; store the final checkpoint only.
 	 */
 	compactionSummaryMode: CompactionSummaryMode;
+	/**
+	 * Optional Blackhole checkpoint handoff: when Blackhole owns compaction, run one
+	 * bounded recall before the checkpoint and write it to
+	 * <storageDir>/compaction-recall.json for Blackhole to embed (consume-once).
+	 */
+	checkpointRecall: boolean;
 	topK: number;
 	recallMaxChars: number;
 	rememberMaxChars: number;
@@ -93,6 +99,8 @@ export const DEFAULT_ICE_COGNEE_CONFIG: IceCogneeConfig = {
 	autoImprove: true,
 	// Never steal the Ice compact summary unless the user sets "own".
 	compactionSummaryMode: "auto",
+	// Recall-in-checkpoint duplicates the next-turn recall injection; keep it opt-in.
+	checkpointRecall: false,
 	topK: 5,
 	baseUrl: "http://127.0.0.1:8211",
 	dataset: "ice",
@@ -126,10 +134,7 @@ export function isBlackholeCompactionActive(agentDir: string = getAgentDir()): b
 }
 
 /** Whether Cognee should return a Ice compaction summary for this run. */
-export function shouldOwnCompactionSummary(
-	mode: CompactionSummaryMode,
-	_blackholeActive: boolean = isBlackholeCompactionActive(),
-): boolean {
+export function shouldOwnCompactionSummary(mode: CompactionSummaryMode): boolean {
 	// auto always defers so a default install cannot replace Ice/Blackhole's checkpoint
 	// with a recall dump. Explicit "own" remains available.
 	return mode === "own";
@@ -338,6 +343,9 @@ export function resolveIceCogneeConfig(stored: unknown, env: NodeJS.ProcessEnv =
 	if (compactionSummaryRaw !== undefined && compactionSummaryMode === undefined) {
 		throw new Error("ICE_COGNEE_COMPACTION_SUMMARY must be defer, own, or auto");
 	}
+	const checkpointRecall =
+		parseBoolean(env.ICE_COGNEE_CHECKPOINT_RECALL, "ICE_COGNEE_CHECKPOINT_RECALL") ??
+		parseBoolean(source.checkpointRecall, "checkpointRecall");
 	const topK = parsePositiveInteger(source.topK, "topK", 1, 10);
 	const recallBudgetMs = parsePositiveInteger(source.recallBudgetMs, "recallBudgetMs", 100, 120_000);
 	const recallMaxChars = parsePositiveInteger(source.recallMaxChars, "recallMaxChars", 256, 100_000);
@@ -354,6 +362,7 @@ export function resolveIceCogneeConfig(stored: unknown, env: NodeJS.ProcessEnv =
 		...(captureTools === undefined ? {} : { captureTools }),
 		...(autoImprove === undefined ? {} : { autoImprove }),
 		...(compactionSummaryMode === undefined ? {} : { compactionSummaryMode }),
+		...(checkpointRecall === undefined ? {} : { checkpointRecall }),
 		...(baseUrl === undefined ? {} : { baseUrl }),
 		...(dataset === undefined ? {} : { dataset }),
 		...(topK === undefined ? {} : { topK }),
@@ -524,6 +533,7 @@ export async function saveIceCogneeConfig(configPath: string, config: IceCogneeC
 		captureTools: config.captureTools,
 		autoImprove: config.autoImprove,
 		compactionSummaryMode: config.compactionSummaryMode,
+		checkpointRecall: config.checkpointRecall,
 		baseUrl: config.baseUrl,
 		dataset: config.dataset,
 		topK: config.topK,
@@ -706,6 +716,21 @@ export function buildOwnedCompactionSummary(
 		.filter(Boolean)
 		.slice(0, 40);
 	return redactMemoryText([buildLocalPrecompactAnchor(preparation, reason), ...texts].join("\n"), maxChars);
+}
+
+/** Bounded recall seed for the checkpoint handoff: the newest user message to summarize. */
+export function checkpointRecallQuery(preparation: {
+	messagesToSummarize?: unknown[];
+	previousSummary?: string;
+}): string {
+	const messages = preparation.messagesToSummarize ?? [];
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (!isRecord(message) || message.role !== "user") continue;
+		const text = extractMessageText(message).trim();
+		if (text) return text.slice(0, 400);
+	}
+	return "";
 }
 
 export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}): (ice: ExtensionAPI) => void {
@@ -1103,7 +1128,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 		runtime.connected = health.ok;
 		const agentDir = environment.ICE_CODING_AGENT_DIR?.trim() || getAgentDir();
 		const blackholeActive = isBlackholeCompactionActive(agentDir);
-		const ownCompactionSummary = shouldOwnCompactionSummary(runtime.config.compactionSummaryMode, blackholeActive);
+		const ownCompactionSummary = shouldOwnCompactionSummary(runtime.config.compactionSummaryMode);
 		return {
 			enabled: runtime.config.enabled,
 			mode: "http",
@@ -1517,6 +1542,13 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 					values: ["auto", "defer", "own"],
 				},
 				{
+					id: "checkpointRecall",
+					label: "Cognee checkpoint recall",
+					description: "Add bounded Cognee recall into Blackhole checkpoints (opt-in)",
+					currentValue: runtime.config.checkpointRecall ? "on" : "off",
+					values: ["off", "on"],
+				},
+				{
 					id: "captureSession",
 					label: "Cognee session capture",
 					description: "Capture prompts, answers, and traces into Cognee during the session",
@@ -1548,7 +1580,8 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 				else if (id === "autoRemember") patch.autoRemember = value === "compaction" ? "compaction" : "off";
 				else if (id === "compactionSummaryMode") {
 					patch.compactionSummaryMode = value === "own" ? "own" : value === "defer" ? "defer" : "auto";
-				} else return;
+				} else if (id === "checkpointRecall") patch.checkpointRecall = value === "on";
+				else return;
 				void persistConfig({ ...runtime.config, ...patch }, { hasUI: false, ui: { notify: () => {} } });
 			},
 		});
@@ -1772,18 +1805,98 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			drainWarmup();
 		});
 
+		// Optional Blackhole handoff: one bounded recall written to a consume-once
+		// file that the Blackhole before-compact hook embeds into the checkpoint.
+		const checkpointRecallPath = join(storageDir, "compaction-recall.json");
+		const clearCheckpointRecallForSession = async (hostSessionId: string): Promise<void> => {
+			try {
+				const existing = JSON.parse(await readFile(checkpointRecallPath, "utf8")) as { hostSessionId?: unknown };
+				if (typeof existing.hostSessionId === "string" && existing.hostSessionId !== hostSessionId) return;
+				await unlink(checkpointRecallPath);
+			} catch (error) {
+				const code = (error as NodeJS.ErrnoException).code;
+				if (code === "ENOENT") return;
+				// Malformed/partial legacy handoffs are never valid input; remove them
+				// best-effort without coupling cleanup failures to Cognee's recall circuit.
+				await unlink(checkpointRecallPath).catch(() => undefined);
+			}
+		};
+		const maybeWriteCheckpointRecall = async (
+			event: { preparation: { messagesToSummarize?: unknown[] }; signal: AbortSignal },
+			sessionId: string,
+			hostSessionId: string,
+			blackholeActive: boolean,
+		): Promise<void> => {
+			if (!blackholeActive) return;
+			await clearCheckpointRecallForSession(hostSessionId);
+			if (!runtime.config.checkpointRecall) return;
+			try {
+				if (!runtime.client || !canAttemptCircuit(runtime.circuit)) return;
+				const query = checkpointRecallQuery(event.preparation);
+				if (!query) return;
+				const client = runtime.client;
+				const results = await client.recall(query, {
+					topK: runtime.config.topK ?? 5,
+					sessionId,
+					scope: ["session", "trace", "graph"],
+					signal: event.signal,
+				});
+				runtime.circuit = resetCircuitState();
+				if (results.length === 0) return;
+				let remainingChars = runtime.config.recallMaxChars;
+				const boundedResults: Array<{ text: string; score?: number }> = [];
+				for (const result of results) {
+					if (remainingChars <= 0) break;
+					const text = redactMemoryText(result.text, remainingChars).trim();
+					if (!text) continue;
+					boundedResults.push({
+						text,
+						...(typeof result.score === "number" && Number.isFinite(result.score) ? { score: result.score } : {}),
+					});
+					remainingChars -= text.length;
+				}
+				if (boundedResults.length === 0) return;
+				const payload = {
+					generatedAt: new Date(options.now?.() ?? Date.now()).toISOString(),
+					hostSessionId,
+					query,
+					results: boundedResults,
+				};
+				await mkdir(storageDir, { recursive: true });
+				const temporaryPath = `${checkpointRecallPath}.${randomUUID()}.tmp`;
+				try {
+					await writeFile(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
+					await rename(temporaryPath, checkpointRecallPath);
+				} finally {
+					await unlink(temporaryPath).catch((error: NodeJS.ErrnoException) => {
+						if (error.code !== "ENOENT") throw error;
+					});
+				}
+			} catch (error) {
+				const kind = errorKind(error);
+				runtime.lastError = kind;
+				runtime.circuit = noteCircuitFailure(runtime.circuit, kind);
+			}
+		};
+
 		// ── PreCompact: optional summary ownership only ───
 		// auto/defer never return a Ice compaction summary. Explicit own summarizes
 		// messagesToSummarize locally and skips network on overflow/willRetry.
 		ice.on("session_before_compact", async (event, ctx) => {
 			await ensureLoaded();
-			if (!runtime.config.enabled || !runtime.client) return;
 			const hostId = ctx.sessionManager.getSessionId();
-			const sessionId = await ensureSessionId(hostId);
 			const agentDir = environment.ICE_CODING_AGENT_DIR?.trim() || getAgentDir();
 			const blackholeActive = isBlackholeCompactionActive(agentDir);
-			const ownSummary = shouldOwnCompactionSummary(runtime.config.compactionSummaryMode, blackholeActive);
-			if (!ownSummary) return;
+			if (!runtime.config.enabled || !runtime.client) {
+				if (blackholeActive) await clearCheckpointRecallForSession(hostId);
+				return;
+			}
+			const sessionId = await ensureSessionId(hostId);
+			const ownSummary = shouldOwnCompactionSummary(runtime.config.compactionSummaryMode);
+			if (!ownSummary) {
+				await maybeWriteCheckpointRecall(event, sessionId, hostId, blackholeActive);
+				return;
+			}
 
 			const skipNetwork = event.reason === "overflow" || event.willRetry;
 			const fileOps = {

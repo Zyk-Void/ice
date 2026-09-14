@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -22,6 +22,7 @@ import {
 	resolveIceCogneeConfig,
 	resolveProjectCogneeDataset,
 	resolveRuntimeCogneeDataset,
+	saveIceCogneeConfig,
 	shouldOwnCompactionSummary,
 	truncateForCapture,
 	updatePendingRememberState,
@@ -541,11 +542,9 @@ describe("ice-cognee extension hooks", () => {
 	});
 
 	it("defers Ice compaction summary when Blackhole would own it", () => {
-		expect(shouldOwnCompactionSummary("defer", true)).toBe(false);
-		expect(shouldOwnCompactionSummary("defer", false)).toBe(false);
-		expect(shouldOwnCompactionSummary("own", true)).toBe(true);
-		expect(shouldOwnCompactionSummary("auto", true)).toBe(false);
-		expect(shouldOwnCompactionSummary("auto", false)).toBe(false);
+		expect(shouldOwnCompactionSummary("defer")).toBe(false);
+		expect(shouldOwnCompactionSummary("own")).toBe(true);
+		expect(shouldOwnCompactionSummary("auto")).toBe(false);
 		const local = buildLocalPrecompactAnchor(
 			{
 				previousSummary: "prior",
@@ -594,6 +593,205 @@ describe("ice-cognee extension hooks", () => {
 			expect(runtime.requests.filter((url) => url.includes("/recall")).length).toBe(recallBefore);
 			await new Promise((resolve) => setTimeout(resolve, 20));
 			expect(runtime.requests.some((url) => url.includes("/remember/entry"))).toBe(false);
+		} finally {
+			rmSync(agentRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("writes a bounded checkpoint-recall handoff for Blackhole when enabled", async () => {
+		const agentRoot = mkdtempSync(join(tmpdir(), "ice-cognee-checkpoint-"));
+		const storageDir = join(agentRoot, "ice-cognee");
+		mkdirSync(join(agentRoot, "ice-blackhole"), { recursive: true });
+		writeFileSync(
+			join(agentRoot, "ice-blackhole", "ice-blackhole-config.json"),
+			JSON.stringify({ compaction: "auto", compactionEngine: "blackhole" }),
+		);
+		try {
+			const runtime = extensionHookFixture(storageDir, false, {
+				ICE_CODING_AGENT_DIR: agentRoot,
+				ICE_COGNEE_CHECKPOINT_RECALL: "true",
+			});
+			await runtime.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, runtime.ctx);
+			const result = await runtime.handlers.get("session_before_compact")?.(
+				{
+					type: "session_before_compact",
+					preparation: {
+						firstKeptEntryId: "keep-1",
+						tokensBefore: 42,
+						messagesToSummarize: [{ role: "user", content: "Where did we leave the queue refactor?" }],
+						turnPrefixMessages: [],
+						fileOps: { read: [], edited: [], written: [] },
+					},
+					reason: "manual",
+				},
+				runtime.ctx,
+			);
+			expect(result).toBeUndefined();
+			expect(runtime.requests.filter((url) => url.includes("/recall")).length).toBe(1);
+			const payloadPath = join(storageDir, "compaction-recall.json");
+			expect(existsSync(payloadPath)).toBe(true);
+			const payload = JSON.parse(readFileSync(payloadPath, "utf8")) as {
+				generatedAt: string;
+				hostSessionId: string;
+				query: string;
+				results: Array<{ text: string; score?: number }>;
+			};
+			expect(payload.query).toContain("queue refactor");
+			expect(payload.generatedAt).toBeTruthy();
+			expect(payload.hostSessionId).toBe("session-1");
+			expect(payload.results).toEqual([{ text: "remembered context" }]);
+		} finally {
+			rmSync(agentRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("checkpoint recall is independent of per-prompt autoRecall", async () => {
+		const agentRoot = mkdtempSync(join(tmpdir(), "ice-cognee-checkpoint-independent-"));
+		const storageDir = join(agentRoot, "ice-cognee");
+		mkdirSync(join(agentRoot, "ice-blackhole"), { recursive: true });
+		writeFileSync(
+			join(agentRoot, "ice-blackhole", "ice-blackhole-config.json"),
+			JSON.stringify({ compaction: "auto", compactionEngine: "blackhole" }),
+		);
+		try {
+			const runtime = extensionHookFixture(storageDir, false, {
+				ICE_CODING_AGENT_DIR: agentRoot,
+				ICE_COGNEE_AUTO_RECALL: "false",
+				ICE_COGNEE_CHECKPOINT_RECALL: "true",
+			});
+			await runtime.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, runtime.ctx);
+			await runtime.handlers.get("session_before_compact")?.(
+				{
+					type: "session_before_compact",
+					preparation: {
+						messagesToSummarize: [{ role: "user", content: "Recall this checkpoint" }],
+						fileOps: { read: [], edited: [], written: [] },
+					},
+					reason: "manual",
+				},
+				runtime.ctx,
+			);
+			expect(runtime.requests.filter((url) => url.includes("/recall")).length).toBe(1);
+			expect(existsSync(join(storageDir, "compaction-recall.json"))).toBe(true);
+		} finally {
+			rmSync(agentRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("removes an old checkpoint handoff when a fresh recall returns no results", async () => {
+		const agentRoot = mkdtempSync(join(tmpdir(), "ice-cognee-checkpoint-empty-"));
+		const storageDir = join(agentRoot, "ice-cognee");
+		mkdirSync(storageDir, { recursive: true });
+		mkdirSync(join(agentRoot, "ice-blackhole"), { recursive: true });
+		writeFileSync(
+			join(agentRoot, "ice-blackhole", "ice-blackhole-config.json"),
+			JSON.stringify({ compaction: "auto", compactionEngine: "blackhole" }),
+		);
+		writeFileSync(
+			join(storageDir, "compaction-recall.json"),
+			JSON.stringify({ generatedAt: new Date().toISOString(), results: [{ text: "stale" }] }),
+		);
+		try {
+			const runtime = extensionHookFixture(
+				storageDir,
+				false,
+				{ ICE_CODING_AGENT_DIR: agentRoot, ICE_COGNEE_CHECKPOINT_RECALL: "true" },
+				async (input) =>
+					String(input).endsWith("/recall")
+						? new Response(JSON.stringify([]), { status: 200 })
+						: new Response(null, { status: 202 }),
+			);
+			await runtime.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, runtime.ctx);
+			await runtime.handlers.get("session_before_compact")?.(
+				{
+					type: "session_before_compact",
+					preparation: {
+						messagesToSummarize: [{ role: "user", content: "No matches" }],
+						fileOps: { read: [], edited: [], written: [] },
+					},
+					reason: "manual",
+				},
+				runtime.ctx,
+			);
+			expect(existsSync(join(storageDir, "compaction-recall.json"))).toBe(false);
+		} finally {
+			rmSync(agentRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("clears a same-session checkpoint handoff when checkpoint recall is disabled", async () => {
+		const agentRoot = mkdtempSync(join(tmpdir(), "ice-cognee-checkpoint-disabled-stale-"));
+		const storageDir = join(agentRoot, "ice-cognee");
+		mkdirSync(storageDir, { recursive: true });
+		mkdirSync(join(agentRoot, "ice-blackhole"), { recursive: true });
+		writeFileSync(
+			join(agentRoot, "ice-blackhole", "ice-blackhole-config.json"),
+			JSON.stringify({ compaction: "auto", compactionEngine: "blackhole" }),
+		);
+		const handoffPath = join(storageDir, "compaction-recall.json");
+		writeFileSync(
+			handoffPath,
+			JSON.stringify({
+				generatedAt: new Date().toISOString(),
+				hostSessionId: "session-1",
+				results: [{ text: "stale" }],
+			}),
+		);
+		try {
+			const runtime = extensionHookFixture(storageDir, false, { ICE_CODING_AGENT_DIR: agentRoot });
+			await runtime.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, runtime.ctx);
+			await runtime.handlers.get("session_before_compact")?.(
+				{
+					type: "session_before_compact",
+					preparation: {
+						messagesToSummarize: [{ role: "user", content: "Checkpoint disabled" }],
+						fileOps: { read: [], edited: [], written: [] },
+					},
+					reason: "manual",
+				},
+				runtime.ctx,
+			);
+			expect(existsSync(handoffPath)).toBe(false);
+			expect(runtime.requests.some((url) => url.includes("/recall"))).toBe(false);
+		} finally {
+			rmSync(agentRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("persists checkpointRecall across config reloads", async () => {
+		const storageDir = mkdtempSync(join(tmpdir(), "ice-cognee-checkpoint-config-"));
+		const configPath = join(storageDir, "config.json");
+		try {
+			const initial = resolveIceCogneeConfig({}, {});
+			await saveIceCogneeConfig(configPath, { ...initial, checkpointRecall: true });
+			expect((await loadIceCogneeConfig(configPath, {})).checkpointRecall).toBe(true);
+		} finally {
+			rmSync(storageDir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not write the checkpoint-recall handoff when disabled or Blackhole is inactive", async () => {
+		const agentRoot = mkdtempSync(join(tmpdir(), "ice-cognee-checkpoint-off-"));
+		const storageDir = join(agentRoot, "ice-cognee");
+		try {
+			const runtime = extensionHookFixture(storageDir, false, { ICE_CODING_AGENT_DIR: agentRoot });
+			await runtime.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, runtime.ctx);
+			await runtime.handlers.get("session_before_compact")?.(
+				{
+					type: "session_before_compact",
+					preparation: {
+						firstKeptEntryId: "keep-1",
+						tokensBefore: 42,
+						messagesToSummarize: [{ role: "user", content: "Anything" }],
+						turnPrefixMessages: [],
+						fileOps: { read: [], edited: [], written: [] },
+					},
+					reason: "manual",
+				},
+				runtime.ctx,
+			);
+			expect(runtime.requests.some((url) => url.includes("/recall"))).toBe(false);
+			expect(existsSync(join(storageDir, "compaction-recall.json"))).toBe(false);
 		} finally {
 			rmSync(agentRoot, { recursive: true, force: true });
 		}
