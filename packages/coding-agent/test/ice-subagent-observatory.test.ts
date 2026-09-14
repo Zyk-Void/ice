@@ -486,6 +486,7 @@ describe("subagent observatory reducer", () => {
 		const projected = projectDurableSubagentJob({
 			...source,
 			job: { ...source.job, role: "explore\nrow", model: "faux\tmodel", resultRef: "job:job-secret\nrow" },
+			budget: { ...source.budget!, ownerActiveJobs: 2, ownerQueuedJobs: 3, ownerActiveJobsCap: 4 },
 		});
 		expect(projected).toMatchObject({
 			jobId: "job-secret",
@@ -493,6 +494,9 @@ describe("subagent observatory reducer", () => {
 			role: "explore row",
 			model: "faux model",
 			plannedOutputBytes: 24 * 1024,
+			ownerActiveJobs: 2,
+			ownerQueuedJobs: 3,
+			ownerActiveJobsCap: 4,
 			resultRef: "job:job-secret row",
 		});
 		expect(JSON.stringify(projected)).not.toContain("task=secret transcript");

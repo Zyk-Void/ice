@@ -83,6 +83,7 @@ import iceSubagents, {
 	runResolvedReviewBatch,
 	runResolvedSubagentBatch,
 	runSubagentWithRecovery,
+	SUBAGENT_BATCH_LIMITS,
 	SUBAGENT_PROFILE_ALIASES,
 	SUBAGENT_PROFILE_LIMITS,
 	SUBAGENT_PROFILES,
@@ -6315,7 +6316,7 @@ describe("ICE subagent contracts", () => {
 						return batchResult(task);
 					},
 				},
-				{ concurrency: 5 },
+				{ concurrency: SUBAGENT_BATCH_LIMITS.maxConcurrency + 1 },
 			),
 		).rejects.toThrowError(/concurrency/i);
 		expect(calls).toBe(0);
@@ -7421,17 +7422,19 @@ describe("ICE subagent contracts", () => {
 		}
 	});
 
-	it("accepts a third delegate_async child into the durable FIFO queue", async () => {
+	it("accepts children beyond the default active-job concurrency into the durable FIFO queue", async () => {
 		const harness = await createAsyncToolHarness();
 		try {
 			harness.faux.setResponses([
 				fauxAssistantMessage('{"summary":"one","evidence":{"paths":["src"]}}'),
 				fauxAssistantMessage('{"summary":"two","evidence":{"paths":["src"]}}'),
 				fauxAssistantMessage('{"summary":"three","evidence":{"paths":["src"]}}'),
+				fauxAssistantMessage('{"summary":"four","evidence":{"paths":["src"]}}'),
+				fauxAssistantMessage('{"summary":"five","evidence":{"paths":["src"]}}'),
 			]);
 			const tool = harness.tools.get("delegate_async");
 			const accepted = await Promise.all(
-				["one", "two", "three"].map((name) =>
+				["one", "two", "three", "four", "five"].map((name) =>
 					tool.execute(
 						`async-${name}`,
 						{
@@ -7449,8 +7452,14 @@ describe("ICE subagent contracts", () => {
 					),
 				),
 			);
-			expect(accepted.map((result) => result.details.accepted.status)).toEqual(["created", "created", "queued"]);
-			expect(accepted[2]).toMatchObject({ isError: false, details: { accepted: { status: "queued" } } });
+			expect(accepted.map((result) => result.details.accepted.status)).toEqual([
+				"created",
+				"created",
+				"created",
+				"created",
+				"queued",
+			]);
+			expect(accepted[4]).toMatchObject({ isError: false, details: { accepted: { status: "queued" } } });
 		} finally {
 			await harness.handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, harness.context);
 			harness.faux.unregister();

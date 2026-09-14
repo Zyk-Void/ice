@@ -90,6 +90,7 @@ interface W5ToolResult {
 }
 
 interface W5Tool {
+	executionMode?: "sequential" | "parallel";
 	execute: (...args: unknown[]) => Promise<W5ToolResult>;
 }
 
@@ -155,6 +156,11 @@ afterEach(async () => {
 });
 
 describe("W5 writer workflow end-to-end adversarial gate", () => {
+	it("serializes multiple writer tool calls to protect workspace boundaries", () => {
+		const tools = registeredWriterTools();
+		expect(tools.get("delegate_write").executionMode).toBe("sequential");
+	});
+
 	it("runs a faux writer through delegate_write, inspection, and successful integration", async () => {
 		const { cwd, head } = await createGitWorkspace();
 		const agentDir = await mkdtemp(join(tmpdir(), "ice-w5-agent-"));
