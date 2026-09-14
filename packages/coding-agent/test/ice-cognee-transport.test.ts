@@ -1,3 +1,4 @@
+import type { ReadableStreamReadResult } from "node:stream/web";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type CogneeClientConfig, CogneeError, createCogneeClient } from "../src/ice-cognee-client.ts";
 
@@ -45,7 +46,10 @@ function streamResponse(init: ResponseInit = {}, cancelImpl: () => Promise<void>
 describe("ice-cognee bounded transport", () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
-		vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("Unexpected real fetch"))));
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(() => Promise.reject(new Error("Unexpected real fetch"))),
+		);
 	});
 
 	afterEach(() => {
@@ -70,10 +74,12 @@ describe("ice-cognee bounded transport", () => {
 			}, 30);
 		}, 30);
 		const settled = vi.fn();
-		const result = clientWith(fetchImpl).recall("query").catch((error: unknown) => {
-			settled();
-			return error;
-		});
+		const result = clientWith(fetchImpl)
+			.recall("query")
+			.catch((error: unknown) => {
+				settled();
+				return error;
+			});
 		await vi.advanceTimersByTimeAsync(49);
 		expect(settled).not.toHaveBeenCalled();
 		await vi.advanceTimersByTimeAsync(1);
@@ -152,17 +158,23 @@ describe("ice-cognee bounded transport", () => {
 
 	it("does not compare decoded bytes to an encoded Content-Length", async () => {
 		await expect(
-			clientWith(async () => new Response('["decoded"]', {
-				headers: { "content-length": "5", "content-encoding": "gzip" },
-			})).recall("query"),
+			clientWith(
+				async () =>
+					new Response('["decoded"]', {
+						headers: { "content-length": "5", "content-encoding": "gzip" },
+					}),
+			).recall("query"),
 		).resolves.toEqual([{ text: "decoded" }]);
 	});
 
 	it("still bounds decoded bytes when Content-Length describes a compressed body", async () => {
 		await expect(
-			clientWith(async () => new Response(`"${"x".repeat(BYTE_LIMIT)}"`, {
-				headers: { "content-length": "5", "content-encoding": "gzip" },
-			})).recall("query"),
+			clientWith(
+				async () =>
+					new Response(`"${"x".repeat(BYTE_LIMIT)}"`, {
+						headers: { "content-length": "5", "content-encoding": "gzip" },
+					}),
+			).recall("query"),
 		).rejects.toMatchObject({ kind: "response_too_large" });
 	});
 
@@ -196,7 +208,9 @@ describe("ice-cognee bounded transport", () => {
 
 	it("normalizes successful chunked UTF-8 JSON, preserves request binding, and releases its reader", async () => {
 		const stream = streamResponse();
-		const payload = encoder.encode(JSON.stringify({ results: [{ text: "café", score: 0.8, metadata: { source: "test" } }] }));
+		const payload = encoder.encode(
+			JSON.stringify({ results: [{ text: "café", score: 0.8, metadata: { source: "test" } }] }),
+		);
 		const split = payload.indexOf(0xc3) + 1;
 		stream.response.headers.set("content-length", String(payload.byteLength));
 		stream.controller.enqueue(payload.slice(0, split));
@@ -208,7 +222,10 @@ describe("ice-cognee bounded transport", () => {
 		await expect(clientWith(fetchImpl).recall("query", { topK: 1, signal: parent.signal })).resolves.toEqual([
 			{ text: "café", score: 0.8, metadata: { source: "test" } },
 		]);
-		expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))).toMatchObject({ datasets: ["transport-test"], topK: 1 });
+		expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))).toMatchObject({
+			datasets: ["transport-test"],
+			topK: 1,
+		});
 		expect(stream.body.locked).toBe(false);
 		expect(stream.cancel).not.toHaveBeenCalled();
 		expect(removeListener).toHaveBeenCalledOnce();
@@ -221,8 +238,13 @@ describe("ice-cognee bounded transport", () => {
 	});
 
 	it.each([
-		[401, "auth_failed"], [403, "auth_failed"], [404, "not_found"], [408, "server_error"],
-		[429, "server_error"], [500, "server_error"], [400, "malformed"],
+		[401, "auth_failed"],
+		[403, "auth_failed"],
+		[404, "not_found"],
+		[408, "server_error"],
+		[429, "server_error"],
+		[500, "server_error"],
+		[400, "malformed"],
 	])("preserves HTTP %i classification %s without consuming its body", async (status, kind) => {
 		const stream = streamResponse({ status: Number(status), headers: { "content-length": "invalid" } });
 		const getReader = vi.spyOn(stream.body, "getReader");
@@ -232,14 +254,20 @@ describe("ice-cognee bounded transport", () => {
 	});
 
 	it("classifies fetch rejection as unreachable", async () => {
-		await expect(clientWith(async () => { throw new TypeError("Offline"); }).recall("query")).rejects.toMatchObject({
+		await expect(
+			clientWith(async () => {
+				throw new TypeError("Offline");
+			}).recall("query"),
+		).rejects.toMatchObject({
 			kind: "unreachable",
 		});
 	});
 
 	it("classifies a mid-body transport failure as unreachable", async () => {
 		const stream = streamResponse();
-		const result = clientWith(async () => stream.response).recall("query").catch((error: unknown) => error);
+		const result = clientWith(async () => stream.response)
+			.recall("query")
+			.catch((error: unknown) => error);
 		await vi.advanceTimersByTimeAsync(0);
 		stream.controller.error(new Error("Connection reset"));
 		expect(await result).toMatchObject({ kind: "unreachable" });
@@ -248,7 +276,9 @@ describe("ice-cognee bounded transport", () => {
 
 	it("observes a late fetch rejection after a header timeout", async () => {
 		const headers = deferred<Response>();
-		const result = clientWith(() => headers.promise).recall("query").catch((error: unknown) => error);
+		const result = clientWith(() => headers.promise)
+			.recall("query")
+			.catch((error: unknown) => error);
 		await vi.advanceTimersByTimeAsync(50);
 		expect(await result).toMatchObject({ kind: "timeout" });
 		headers.reject(new Error("Late fetch rejection"));
@@ -259,7 +289,9 @@ describe("ice-cognee bounded transport", () => {
 		const headers = deferred<Response>();
 		const cleanup = deferred<void>();
 		const stream = streamResponse({}, () => cleanup.promise);
-		const result = clientWith(() => headers.promise).recall("query").catch((error: unknown) => error);
+		const result = clientWith(() => headers.promise)
+			.recall("query")
+			.catch((error: unknown) => error);
 		await vi.advanceTimersByTimeAsync(50);
 		expect(await result).toMatchObject({ kind: "timeout" });
 		headers.resolve(stream.response);
@@ -275,8 +307,12 @@ describe("ice-cognee bounded transport", () => {
 		const reader = stream.body.getReader();
 		vi.spyOn(stream.body, "getReader").mockReturnValue(reader);
 		vi.spyOn(reader, "read").mockImplementation(() => read.promise);
-		vi.spyOn(reader, "cancel").mockImplementation(() => { throw new Error("Cancel failed"); });
-		const result = clientWith(async () => stream.response).recall("query").catch((error: unknown) => error);
+		vi.spyOn(reader, "cancel").mockImplementation(() => {
+			throw new Error("Cancel failed");
+		});
+		const result = clientWith(async () => stream.response)
+			.recall("query")
+			.catch((error: unknown) => error);
 		await vi.advanceTimersByTimeAsync(50);
 		expect(await result).toMatchObject({ kind: "timeout" });
 		expect(stream.body.locked).toBe(false);
@@ -303,15 +339,17 @@ describe("ice-cognee bounded transport", () => {
 			vi.setSystemTime(Date.now() + 60);
 			return parse(text);
 		});
-		await expect(clientWith(async () => new Response("[]")).recall("query")).rejects.toMatchObject({ kind: "timeout" });
+		await expect(clientWith(async () => new Response("[]")).recall("query")).rejects.toMatchObject({
+			kind: "timeout",
+		});
 	});
 
 	it.each(["timeout", "aborted"])("does not swallow rememberEntry %s during body decoding", async (kind) => {
 		const stream = streamResponse();
 		const parent = new AbortController();
-		const result = clientWith(async () => stream.response).rememberEntry(
-			{ entry: {}, sessionId: "test" }, { signal: parent.signal, timeoutMs: 20 },
-		).catch((error: unknown) => error);
+		const result = clientWith(async () => stream.response)
+			.rememberEntry({ entry: {}, sessionId: "test" }, { signal: parent.signal, timeoutMs: 20 })
+			.catch((error: unknown) => error);
 		await vi.advanceTimersByTimeAsync(0);
 		if (kind === "aborted") parent.abort();
 		await vi.advanceTimersByTimeAsync(20);
@@ -320,17 +358,24 @@ describe("ice-cognee bounded transport", () => {
 	});
 
 	it.each(["", "{broken", "null"])("retains rememberEntry optional acknowledgement handling for %j", async (body) => {
-		await expect(clientWith(async () => new Response(body)).rememberEntry({ entry: {}, sessionId: "test" })).resolves.toEqual({});
+		await expect(
+			clientWith(async () => new Response(body)).rememberEntry({ entry: {}, sessionId: "test" }),
+		).resolves.toEqual({});
 	});
 
 	it("decodes a normal rememberEntry acknowledgement", async () => {
-		await expect(clientWith(async () => new Response('{"entry_id":"e1"}')).rememberEntry({
-			entry: {}, sessionId: "test",
-		})).resolves.toEqual({ entryId: "e1" });
+		await expect(
+			clientWith(async () => new Response('{"entry_id":"e1"}')).rememberEntry({
+				entry: {},
+				sessionId: "test",
+			}),
+		).resolves.toEqual({ entryId: "e1" });
 	});
 
 	it("cancels unread write acknowledgements and preserves optional agent 404 handling", async () => {
-		const streams = [202, 202, 404, 404].map((status) => streamResponse({ status }, () => new Promise<void>(() => {})));
+		const streams = [202, 202, 404, 404].map((status) =>
+			streamResponse({ status }, () => new Promise<void>(() => {})),
+		);
 		let next = 0;
 		const client = clientWith(async () => streams[next++].response);
 		await expect(client.remember({ text: "test", nodeSet: "test" })).resolves.toBeUndefined();
