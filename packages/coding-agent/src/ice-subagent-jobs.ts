@@ -49,6 +49,8 @@ export interface SubagentJobContract {
 	maxToolCalls: number;
 	maxOutputBytes: number;
 	maxTotalTokens?: number;
+	temperature?: number;
+	topP?: number;
 	tools: readonly string[];
 	sourceHash?: string;
 	/** Deterministic model candidates tried at admission (primary, fallback); parent is implicit. */
@@ -714,6 +716,16 @@ function validJobRecord(value: unknown): value is SubagentJobRecord {
 					!Number.isSafeInteger(contract.maxTotalTokens) ||
 					contract.maxTotalTokens < 1_024 ||
 					contract.maxTotalTokens > 1_000_000)) ||
+			(contract.temperature !== undefined &&
+				(typeof contract.temperature !== "number" ||
+					!Number.isFinite(contract.temperature) ||
+					contract.temperature < 0 ||
+					contract.temperature > 2)) ||
+			(contract.topP !== undefined &&
+				(typeof contract.topP !== "number" ||
+					!Number.isFinite(contract.topP) ||
+					contract.topP < 0 ||
+					contract.topP > 1)) ||
 			!["timeoutMs", "maxTurns", "maxToolCalls", "maxOutputBytes"].every(
 				(key) => typeof contract[key] === "number" && Number.isSafeInteger(contract[key]) && contract[key] >= 0,
 			) ||

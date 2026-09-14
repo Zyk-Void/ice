@@ -74,11 +74,15 @@ import {
 import { resolveToCwd } from "./core/tools/path-utils.ts";
 import {
 	type IceAgentViewBridge,
+	type IceAgentViewColor,
 	type IceAgentViewControlState,
 	type IceAgentViewLiveSessionControl,
 	type IceAgentViewPresentation,
 	type IceAgentViewPresentationPatch,
+	isIceAgentViewColor,
+	isSubagentProfileColor,
 	normalizeIceAgentViewPresentation,
+	type SubagentProfileColor,
 } from "./ice-agent-view-bridge.ts";
 import {
 	getConfiguredIceVerifierArgv,
@@ -240,6 +244,10 @@ export const SUBAGENT_PROFILE_LIMITS = {
 	maxTimeoutMs: 10 * 60 * 1_000,
 	minOutputBytes: 1_024,
 	maxOutputBytes: 64 * 1_024,
+	minTemperature: 0,
+	maxTemperature: 2,
+	minTopP: 0,
+	maxTopP: 1,
 } as const;
 
 export interface UnsafeSubagentStartupArgOptions {
@@ -374,6 +382,7 @@ export type SubagentFailureCode =
 	| "preflight_failed"
 	| "verification_failure"
 	| "batch_budget_exhausted"
+	| "provider_option_unsupported"
 	| "writer_precondition"
 	| "writer_workspace_failure"
 	| "writer_patch_failure"
@@ -456,6 +465,12 @@ export interface SubagentProfile {
 	thinkingLevel: SubagentThinkingLevel;
 	timeoutMs: number;
 	maxOutputBytes: number;
+	temperature?: number;
+	topP?: number;
+	/** Appearance-only semantic theme token; it never affects authority. */
+	color?: SubagentProfileColor;
+	/** Discovery-only flag; direct explicit role resolution remains allowed. */
+	hidden?: boolean;
 	resources?: SubagentResourceSelection;
 	unsafeHostExec?: boolean;
 	requestedModel?: string;
@@ -489,6 +504,11 @@ export interface SubagentProfileSummary {
 	effectiveMaxToolCalls?: number;
 	effectiveMaxOutputBytes?: number;
 	effectiveMaxTotalTokens?: number;
+	requestedTemperature?: number;
+	effectiveTemperature?: number;
+	requestedTopP?: number;
+	effectiveTopP?: number;
+	color?: SubagentProfileColor;
 	effectiveSettingSources?: Readonly<{
 		thinking: string;
 		timeoutMs: string;
@@ -496,6 +516,8 @@ export interface SubagentProfileSummary {
 		maxToolCalls: string;
 		maxOutputBytes: string;
 		maxTotalTokens: string;
+		temperature: string;
+		topP: string;
 	}>;
 	profileDiagnostics?: readonly string[];
 	unsafeHostExec: boolean;
@@ -763,6 +785,8 @@ export interface SubagentExecutionOverrideInput {
 	maxToolCalls?: number;
 	maxOutputBytes?: number;
 	maxTotalTokens?: number;
+	temperature?: number;
+	topP?: number;
 }
 
 export interface SubagentExecutionContract {
@@ -772,6 +796,8 @@ export interface SubagentExecutionContract {
 	maxToolCalls: number;
 	maxOutputBytes: number;
 	maxTotalTokens?: number;
+	temperature?: number;
+	topP?: number;
 }
 
 export const SUBAGENT_EXECUTION_LIMITS = {
@@ -783,6 +809,10 @@ export const SUBAGENT_EXECUTION_LIMITS = {
 	maxOutputBytes: 64 * 1_024,
 	minTotalTokens: 1_024,
 	maxTotalTokens: 1_000_000,
+	minTemperature: 0,
+	maxTemperature: 2,
+	minTopP: 0,
+	maxTopP: 1,
 } as const;
 
 export interface SubagentRequest {
@@ -1134,7 +1164,7 @@ export interface SubagentRequirementSummary {
 export interface SubagentLaunchProvenance {
 	profile: Pick<
 		ResolvedSubagentProfile,
-		"name" | "source" | "sourcePath" | "canonicalPath" | "sourceHash" | "unsafeHostExec"
+		"name" | "source" | "sourcePath" | "canonicalPath" | "sourceHash" | "unsafeHostExec" | "color"
 	>;
 	resources: ResolvedSubagentResources;
 	projectTrusted: boolean;
@@ -1153,6 +1183,8 @@ export interface SubagentLaunchProvenance {
 		maxToolCalls: number;
 		maxOutputBytes: number;
 		maxTotalTokens?: number;
+		temperature?: number;
+		topP?: number;
 		tools?: readonly string[];
 		sources: {
 			thinking: string;
@@ -1161,6 +1193,8 @@ export interface SubagentLaunchProvenance {
 			maxToolCalls: string;
 			maxOutputBytes: string;
 			maxTotalTokens: string;
+			temperature: string;
+			topP: string;
 		};
 		restrictionsApplied: readonly string[];
 	};
@@ -1195,6 +1229,8 @@ export interface SubagentLaunchPreflightTask {
 		maxToolCalls: number;
 		maxOutputBytes: number;
 		maxTotalTokens?: number;
+		temperature?: number;
+		topP?: number;
 		tools: readonly string[] | undefined;
 	};
 	outputSchema?: { schemaBytes: number; maxPayloadBytes: number };
@@ -1373,6 +1409,7 @@ export interface SubagentEvent {
 	parentSessionId: string;
 	childSessionId?: string;
 	profile: SubagentProfile["name"];
+	color?: SubagentProfileColor;
 	status: SubagentStatus;
 	toolName?: string;
 	toolCallId?: string;
@@ -1931,6 +1968,42 @@ function parseProfileThinkingLevel(
 	return value as SubagentThinkingLevel;
 }
 
+function parseStrictProfileNumber(
+	value: unknown,
+	label: string,
+	minimum: number,
+	maximum: number,
+	sourcePath: string,
+): number | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "number" || !Number.isFinite(value) || value < minimum || value > maximum) {
+		throw new SubagentError(
+			"malformed_result",
+			`Invalid ${label} metadata in ${sourcePath}; expected a finite number in [${minimum}, ${maximum}].`,
+		);
+	}
+	return value;
+}
+
+function parseProfileColor(value: unknown, sourcePath: string): SubagentProfileColor | undefined {
+	if (value === undefined) return undefined;
+	if (!isSubagentProfileColor(value)) {
+		throw new SubagentError(
+			"malformed_result",
+			`Invalid color metadata in ${sourcePath}; expected a semantic theme color token.`,
+		);
+	}
+	return value;
+}
+
+function parseProfileHidden(value: unknown, sourcePath: string): boolean | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "boolean") {
+		throw new SubagentError("malformed_result", `Invalid hidden metadata in ${sourcePath}; expected a boolean.`);
+	}
+	return value;
+}
+
 function parseBoundedProfileNumber(
 	value: unknown,
 	label: string,
@@ -2046,6 +2119,12 @@ function loadProfilesFromDirectory(
 				"max-output-bytes",
 				"maxOutputBytes",
 				"max_output_bytes",
+				"temperature",
+				"top-p",
+				"topP",
+				"top_p",
+				"color",
+				"hidden",
 				"skills",
 				"prompts",
 				"context",
@@ -2095,6 +2174,22 @@ function loadProfilesFromDirectory(
 			const mcpTools = parseSelectedMcpTools(frontmatter.mcp ?? frontmatter.mcpTools ?? frontmatter.mcp_tools);
 			const requestedTools = parseRoleTools(frontmatter.tools);
 			const roleTags = parseRoleTags(frontmatter.tags);
+			const temperature = parseStrictProfileNumber(
+				frontmatter.temperature,
+				"temperature",
+				SUBAGENT_PROFILE_LIMITS.minTemperature,
+				SUBAGENT_PROFILE_LIMITS.maxTemperature,
+				sourcePath,
+			);
+			const topP = parseStrictProfileNumber(
+				frontmatter["top-p"] ?? frontmatter.topP ?? frontmatter.top_p,
+				"top-p",
+				SUBAGENT_PROFILE_LIMITS.minTopP,
+				SUBAGENT_PROFILE_LIMITS.maxTopP,
+				sourcePath,
+			);
+			const color = parseProfileColor(frontmatter.color, sourcePath);
+			const hidden = parseProfileHidden(frontmatter.hidden, sourcePath);
 			const profile: ResolvedSubagentProfile = {
 				name,
 				description,
@@ -2126,6 +2221,10 @@ function loadProfilesFromDirectory(
 					diagnostics,
 					true,
 				),
+				...(temperature !== undefined ? { temperature } : {}),
+				...(topP !== undefined ? { topP } : {}),
+				...(color !== undefined ? { color } : {}),
+				...(hidden !== undefined ? { hidden } : {}),
 				resources: parseRoleResources(frontmatter),
 				unsafeHostExec: parseUnsafeHostExecEligibility(
 					frontmatter["ice-unsafe-host-exec"] ?? frontmatter.iceUnsafeHostExec,
@@ -3742,9 +3841,26 @@ function profileSummary(
 		source: profile.source,
 		sourcePath: profile.sourcePath,
 		...(profile.tags ? { tags: profile.tags } : {}),
+		...(profile.color ? { color: profile.color } : {}),
 		effectiveThinkingLevel: profile.thinkingLevel,
 		effectiveTimeoutMs: profile.timeoutMs,
+		effectiveMaxTurns: 12,
+		effectiveMaxToolCalls: 40,
 		effectiveMaxOutputBytes: profile.maxOutputBytes,
+		...(profile.temperature !== undefined
+			? { requestedTemperature: profile.temperature, effectiveTemperature: profile.temperature }
+			: {}),
+		...(profile.topP !== undefined ? { requestedTopP: profile.topP, effectiveTopP: profile.topP } : {}),
+		effectiveSettingSources: Object.freeze({
+			thinking: "bundled",
+			timeoutMs: "bundled",
+			maxTurns: "bundled",
+			maxToolCalls: "bundled",
+			maxOutputBytes: "bundled",
+			maxTotalTokens: "bundled",
+			temperature: "bundled",
+			topP: "bundled",
+		}),
 		profileDiagnostics: Object.freeze(profileDiagnostics),
 		unsafeHostExec: profile.unsafeHostExec === true,
 		requestedTools: profile.requestedTools,
@@ -3788,16 +3904,18 @@ export function listSubagentProfiles(
 			else shadowedProjectSources.set(name, profile.sourcePath);
 		}
 	}
-	const summaries: SubagentProfileSummary[] = [...profiles.values()].map((profile) =>
-		profileSummary(
-			profile,
-			options,
-			undefined,
-			shadowedProjectSources.has(profile.name)
-				? [`shadowed trusted project definition: ${shadowedProjectSources.get(profile.name)}`]
-				: [],
-		),
-	);
+	const summaries: SubagentProfileSummary[] = [...profiles.values()]
+		.filter((profile) => !profile.hidden)
+		.map((profile) =>
+			profileSummary(
+				profile,
+				options,
+				undefined,
+				shadowedProjectSources.has(profile.name)
+					? [`shadowed trusted project definition: ${shadowedProjectSources.get(profile.name)}`]
+					: [],
+			),
+		);
 	if (options.includeSelf)
 		summaries.unshift(
 			profileSummary(
@@ -3840,7 +3958,7 @@ export function listSubagentProfiles(
 		});
 	}
 	for (const profile of projectProfiles.values()) {
-		if (!options.projectTrusted) {
+		if (!options.projectTrusted && !profile.hidden) {
 			summaries.push(
 				profileSummary(profile, options, "untrusted", [
 					"Project profile is hidden until project trust is established.",
@@ -4472,7 +4590,7 @@ export function normalizeSubagentAcceptanceCriteria(
  * run is consumed, and an empty tools array means no tools (never fallback).
  */
 export function normalizeSubagentExecutionOverride(
-	profile: Pick<ResolvedSubagentProfile, "thinkingLevel" | "maxOutputBytes">,
+	profile: Pick<ResolvedSubagentProfile, "thinkingLevel" | "maxOutputBytes" | "temperature" | "topP">,
 	execution: SubagentExecutionOverrideInput | undefined,
 ): SubagentExecutionContract {
 	if (execution === undefined) {
@@ -4482,6 +4600,8 @@ export function normalizeSubagentExecutionOverride(
 			maxTurns: SUBAGENT_EXECUTION_LIMITS.maxTurns,
 			maxToolCalls: SUBAGENT_EXECUTION_LIMITS.maxToolCalls,
 			maxOutputBytes: profile.maxOutputBytes,
+			...(profile.temperature !== undefined ? { temperature: profile.temperature } : {}),
+			...(profile.topP !== undefined ? { topP: profile.topP } : {}),
 		});
 	}
 	if (typeof execution !== "object" || execution === null || Array.isArray(execution)) {
@@ -4494,6 +4614,8 @@ export function normalizeSubagentExecutionOverride(
 		"maxToolCalls",
 		"maxOutputBytes",
 		"maxTotalTokens",
+		"temperature",
+		"topP",
 		"hooks",
 		"model",
 	]);
@@ -4546,18 +4668,24 @@ export function normalizeSubagentExecutionOverride(
 		}
 		return value;
 	};
-	const maxTurns = checkBudget(
-		execution.maxTurns,
-		"maxTurns",
-		SUBAGENT_EXECUTION_LIMITS.minTurns,
-		SUBAGENT_EXECUTION_LIMITS.maxTurns,
-	);
-	const maxToolCalls = checkBudget(
-		execution.maxToolCalls,
-		"maxToolCalls",
-		SUBAGENT_EXECUTION_LIMITS.minToolCalls,
-		SUBAGENT_EXECUTION_LIMITS.maxToolCalls,
-	);
+	const maxTurns =
+		execution.maxTurns === undefined
+			? SUBAGENT_EXECUTION_LIMITS.maxTurns
+			: checkBudget(
+					execution.maxTurns,
+					"maxTurns",
+					SUBAGENT_EXECUTION_LIMITS.minTurns,
+					SUBAGENT_EXECUTION_LIMITS.maxTurns,
+				);
+	const maxToolCalls =
+		execution.maxToolCalls === undefined
+			? SUBAGENT_EXECUTION_LIMITS.maxToolCalls
+			: checkBudget(
+					execution.maxToolCalls,
+					"maxToolCalls",
+					SUBAGENT_EXECUTION_LIMITS.minToolCalls,
+					SUBAGENT_EXECUTION_LIMITS.maxToolCalls,
+				);
 	const maxOutputBytes =
 		execution.maxOutputBytes === undefined
 			? Math.min(profile.maxOutputBytes, SUBAGENT_EXECUTION_LIMITS.maxOutputBytes)
@@ -4576,6 +4704,30 @@ export function normalizeSubagentExecutionOverride(
 					SUBAGENT_EXECUTION_LIMITS.minTotalTokens,
 					SUBAGENT_EXECUTION_LIMITS.maxTotalTokens,
 				);
+	const checkSampling = (
+		value: number | undefined,
+		label: string,
+		minimum: number,
+		maximum: number,
+	): number | undefined => {
+		if (value === undefined) return undefined;
+		if (!Number.isFinite(value) || value < minimum || value > maximum) {
+			throw new SubagentError("malformed_result", `Subagent execution ${label} is outside the bounded range.`);
+		}
+		return value;
+	};
+	const temperature = checkSampling(
+		execution.temperature ?? profile.temperature,
+		"temperature",
+		SUBAGENT_EXECUTION_LIMITS.minTemperature,
+		SUBAGENT_EXECUTION_LIMITS.maxTemperature,
+	);
+	const topP = checkSampling(
+		execution.topP ?? profile.topP,
+		"topP",
+		SUBAGENT_EXECUTION_LIMITS.minTopP,
+		SUBAGENT_EXECUTION_LIMITS.maxTopP,
+	);
 	return Object.freeze({
 		thinking: execution.thinking ?? profile.thinkingLevel,
 		tools,
@@ -4583,6 +4735,8 @@ export function normalizeSubagentExecutionOverride(
 		maxToolCalls,
 		maxOutputBytes,
 		...(maxTotalTokens !== undefined ? { maxTotalTokens } : {}),
+		...(temperature !== undefined ? { temperature } : {}),
+		...(topP !== undefined ? { topP } : {}),
 	});
 }
 
@@ -4621,6 +4775,8 @@ function resolveIceContractForRequest(
 	if (request.execution?.maxTotalTokens !== undefined) {
 		call.maxTotalTokens = validatedExecution.maxTotalTokens;
 	}
+	if (request.execution?.temperature !== undefined) call.temperature = validatedExecution.temperature;
+	if (request.execution?.topP !== undefined) call.topP = validatedExecution.topP;
 	const contract = resolveIceSubagentContract({
 		global: globalSettings,
 		project: projectSettings,
@@ -4632,6 +4788,8 @@ function resolveIceContractForRequest(
 			thinking: profile.thinkingLevel,
 			timeoutMs: profile.timeoutMs,
 			maxOutputBytes: profile.maxOutputBytes,
+			temperature: profile.temperature,
+			topP: profile.topP,
 		},
 	});
 	return contract;
@@ -4893,6 +5051,8 @@ export function normalizeSubagentRequest(
 		maxToolCalls: iceContract.values.maxToolCalls,
 		maxOutputBytes: iceContract.values.maxOutputBytes,
 		...(iceContract.values.maxTotalTokens !== undefined ? { maxTotalTokens: iceContract.values.maxTotalTokens } : {}),
+		...(iceContract.values.temperature !== undefined ? { temperature: iceContract.values.temperature } : {}),
+		...(iceContract.values.topP !== undefined ? { topP: iceContract.values.topP } : {}),
 	});
 
 	return {
@@ -5993,6 +6153,7 @@ export interface NativeSubagentSession {
 	profile: ResolvedSubagentProfile;
 	tools: string[];
 	prompt: string;
+	diagnostics?: readonly SubagentDiagnostic[];
 }
 
 export interface SubagentLiveSession {
@@ -6001,6 +6162,7 @@ export interface SubagentLiveSession {
 	readonly taskId?: string;
 	readonly model?: string;
 	readonly authority?: "safe" | "yolo";
+	readonly color?: IceAgentViewColor;
 	readonly presentation?: IceAgentViewPresentation;
 	readonly session: CreateAgentSessionResult["session"];
 	readonly control?: IceAgentViewLiveSessionControl;
@@ -6012,6 +6174,7 @@ export interface SubagentLiveSessionRegistration {
 	readonly taskId?: string;
 	readonly model?: string;
 	readonly authority?: "safe" | "yolo";
+	readonly color?: IceAgentViewColor;
 	readonly presentation?: IceAgentViewPresentation;
 	readonly session: CreateAgentSessionResult["session"];
 	readonly control?: IceAgentViewLiveSessionControl;
@@ -6022,8 +6185,11 @@ export class SubagentLiveSessionRegistry {
 	private readonly listeners = new Set<() => void>();
 
 	register(input: SubagentLiveSessionRegistration): () => void {
+		const { color: requestedColor, ...sessionInput } = input;
+		const color = isIceAgentViewColor(requestedColor) ? requestedColor : undefined;
 		const session = Object.freeze({
-			...input,
+			...sessionInput,
+			...(color ? { color } : {}),
 			...(input.presentation ? { presentation: normalizeIceAgentViewPresentation(input.presentation) } : {}),
 		});
 		this.sessions.set(input.runId, session);
@@ -6252,6 +6418,49 @@ function mergeTrustedChildContext(
 		merged.push(file);
 	}
 	return merged;
+}
+
+const SUBAGENT_OPENAI_SAMPLING_APIS = new Set(["azure-openai-responses", "openai-completions", "openai-responses"]);
+
+interface SubagentSamplingResolution {
+	options: Pick<StreamOptions, "temperature" | "samplingParams">;
+	diagnostics: readonly SubagentDiagnostic[];
+}
+
+function resolveSubagentSamplingOptions(
+	model: Model<Api>,
+	execution: Pick<SubagentExecutionContract, "thinking" | "temperature" | "topP">,
+): SubagentSamplingResolution {
+	const diagnostics: SubagentDiagnostic[] = [];
+	const options: Pick<StreamOptions, "temperature" | "samplingParams"> = {};
+	const compatibility = model.compat as { supportsTemperature?: boolean } | undefined;
+	if (execution.temperature !== undefined) {
+		const unsupported =
+			model.api === "anthropic-messages" &&
+			(compatibility?.supportsTemperature === false || execution.thinking !== "off");
+		if (unsupported) {
+			diagnostics.push({
+				code: "provider_option_unsupported",
+				message:
+					execution.thinking !== "off"
+						? "Profile temperature was omitted because Anthropic extended thinking does not accept temperature."
+						: "Profile temperature was omitted because the selected Anthropic model does not support it.",
+			});
+		} else {
+			options.temperature = execution.temperature;
+		}
+	}
+	if (execution.topP !== undefined) {
+		if (SUBAGENT_OPENAI_SAMPLING_APIS.has(model.api)) {
+			options.samplingParams = { top_p: execution.topP };
+		} else {
+			diagnostics.push({
+				code: "provider_option_unsupported",
+				message: `Profile top-p was omitted because ${model.api} is not an OpenAI-compatible sampling API.`,
+			});
+		}
+	}
+	return { options, diagnostics: Object.freeze(diagnostics) };
 }
 
 /**
@@ -6484,6 +6693,42 @@ export async function createNativeSubagentSession(
 			};
 		}
 	).agent;
+	const streamDiagnostics: SubagentDiagnostic[] = [];
+	if (
+		(created.session.model ?? options.model) &&
+		(options.request.execution.temperature !== undefined || options.request.execution.topP !== undefined)
+	) {
+		streamDiagnostics.push(
+			...resolveSubagentSamplingOptions(created.session.model ?? options.model!, options.request.execution)
+				.diagnostics,
+		);
+	}
+	if (
+		childAgent?.streamFunction &&
+		(options.request.execution.temperature !== undefined || options.request.execution.topP !== undefined)
+	) {
+		const originalStreamFunction = childAgent.streamFunction;
+		childAgent.streamFunction = ((model: Model<Api>, context: Context, streamOptions: StreamOptions = {}) => {
+			const sampling = resolveSubagentSamplingOptions(model, options.request.execution);
+			for (const diagnostic of sampling.diagnostics) {
+				if (!streamDiagnostics.some((entry) => entry.message === diagnostic.message))
+					streamDiagnostics.push(diagnostic);
+			}
+			const inheritedSamplingParams = streamOptions.samplingParams;
+			const profileSamplingParams = sampling.options.samplingParams;
+			const samplingParams =
+				profileSamplingParams && inheritedSamplingParams?.top_p === undefined
+					? { ...inheritedSamplingParams, ...profileSamplingParams }
+					: inheritedSamplingParams;
+			return originalStreamFunction(model, context, {
+				...streamOptions,
+				...(streamOptions.temperature === undefined && sampling.options.temperature !== undefined
+					? { temperature: sampling.options.temperature }
+					: {}),
+				...(samplingParams !== undefined ? { samplingParams } : {}),
+			});
+		}) as StreamFunction;
+	}
 	if (options.tokenBudgetLedger && childAgent?.streamFunction) {
 		const originalStreamFunction = childAgent.streamFunction;
 		childAgent.streamFunction = ((model: Model<Api>, context: Context, streamOptions: StreamOptions = {}) => {
@@ -6541,7 +6786,13 @@ export async function createNativeSubagentSession(
 			options.tokenBudgetLedger?.phase === "finalizing" ||
 			options.shouldStopAfterTurn!();
 	}
-	return { session: created.session, profile, tools: childTools, prompt };
+	return {
+		session: created.session,
+		profile,
+		tools: childTools,
+		prompt,
+		...(streamDiagnostics.length > 0 ? { diagnostics: Object.freeze([...streamDiagnostics]) } : {}),
+	};
 }
 
 const WRITER_SYSTEM_PROMPT =
@@ -7262,6 +7513,7 @@ export class NativeSubagentRunner {
 			runId,
 			parentSessionId: normalized.parentSessionId,
 			profile: profile.name,
+			color: profile.color,
 			source: profile.source,
 			batchId: options.batchId,
 			model: modelLabel(options.model),
@@ -7364,6 +7616,7 @@ export class NativeSubagentRunner {
 					this.agentViewBridge?.registerHistoricalSnapshot({
 						runId,
 						role: profile.name,
+						color: profile.color,
 						taskId: options.taskId,
 						model: modelLabel(options.model ?? childSession.model),
 						authority: options.unsafeHostExec === true ? "yolo" : "safe",
@@ -7690,6 +7943,7 @@ export class NativeSubagentRunner {
 			}
 			const created = startup.value;
 			childSession = created.session;
+			if (created.diagnostics) tokenDiagnostics.push(...created.diagnostics);
 			if (tokenBudgetLedger && childSession.model) {
 				tokenBudgetLedger.setHardCapMode(
 					SUBAGENT_HARD_CAP_APIS.has(childSession.model.api) ? "enforced" : "aggregate-soft",
@@ -7948,6 +8202,7 @@ export class NativeSubagentRunner {
 			releaseLiveSession = this.liveSessionRegistry?.register({
 				runId,
 				role: profile.name,
+				color: profile.color,
 				taskId: options.taskId,
 				model: modelLabel(options.model ?? childSession.model),
 				authority: options.unsafeHostExec === true ? "yolo" : "safe",
@@ -9194,6 +9449,7 @@ export function createSubagentLaunchProvenance(
 			canonicalPath: request.profile.canonicalPath,
 			sourceHash: request.profile.sourceHash,
 			unsafeHostExec: request.profile.unsafeHostExec === true,
+			...(request.profile.color ? { color: request.profile.color } : {}),
 		},
 		resources: {
 			skills: [...request.resources.skills],
@@ -9219,6 +9475,8 @@ export function createSubagentLaunchProvenance(
 				maxToolCalls: request.iceContract.sources.maxToolCalls,
 				maxOutputBytes: request.iceContract.sources.maxOutputBytes,
 				maxTotalTokens: request.iceContract.sources.maxTotalTokens,
+				temperature: request.iceContract.sources.temperature,
+				topP: request.iceContract.sources.topP,
 			},
 			restrictionsApplied: [...request.iceContract.restrictionsApplied],
 		},
@@ -9377,6 +9635,10 @@ export function buildSubagentLaunchPreflight(
 				...(task.request.execution.maxTotalTokens !== undefined
 					? { maxTotalTokens: task.request.execution.maxTotalTokens }
 					: {}),
+				...(task.request.execution.temperature !== undefined
+					? { temperature: task.request.execution.temperature }
+					: {}),
+				...(task.request.execution.topP !== undefined ? { topP: task.request.execution.topP } : {}),
 				tools: task.request.execution.tools,
 			},
 			...(task.request.outputSchema
@@ -9497,6 +9759,8 @@ export function formatSubagentLaunchDigest(preflight: SubagentLaunchPreflight, m
 				`  tools: ${task.tools.join(", ")}`,
 				`  execution: thinking=${task.execution.thinking} timeout=${task.execution.timeoutMs}ms turns=${task.execution.maxTurns} tools=${task.execution.maxToolCalls} output=${task.execution.maxOutputBytes} bytes${
 					task.execution.maxTotalTokens !== undefined ? ` tokens=${task.execution.maxTotalTokens}` : ""
+				}${task.execution.temperature !== undefined ? ` temperature=${task.execution.temperature}` : ""}${
+					task.execution.topP !== undefined ? ` topP=${task.execution.topP}` : ""
 				}`,
 				task.outputSchema
 					? `  output schema: ${task.outputSchema.schemaBytes} bytes, payload <= ${task.outputSchema.maxPayloadBytes} bytes`
@@ -10299,6 +10563,15 @@ const subagentExecutionParameters = Type.Object(
 		maxTurns: Type.Optional(Type.Integer({ minimum: 1, maximum: 64 })),
 		maxToolCalls: Type.Optional(Type.Integer({ minimum: 0, maximum: 512 })),
 		maxOutputBytes: Type.Optional(Type.Integer({ minimum: 1024, maximum: 65536 })),
+		temperature: Type.Optional(
+			Type.Number({
+				minimum: SUBAGENT_EXECUTION_LIMITS.minTemperature,
+				maximum: SUBAGENT_EXECUTION_LIMITS.maxTemperature,
+			}),
+		),
+		topP: Type.Optional(
+			Type.Number({ minimum: SUBAGENT_EXECUTION_LIMITS.minTopP, maximum: SUBAGENT_EXECUTION_LIMITS.maxTopP }),
+		),
 		maxTotalTokens: Type.Optional(
 			Type.Integer({
 				minimum: SUBAGENT_EXECUTION_LIMITS.minTotalTokens,
@@ -11544,6 +11817,17 @@ class SubagentObservatoryView extends Container {
 		return this.jobs?.list().map(projectDurableSubagentJob) ?? [];
 	}
 
+	private colorForObservatoryRow(row: string): IceAgentViewColor | undefined {
+		for (const snapshot of [...this.store.getState().active, ...this.store.getState().recent]) {
+			if (!snapshot.color) continue;
+			const identifiers = [snapshot.taskId, snapshot.role, snapshot.runId?.slice(0, 6)].filter(
+				(value): value is string => value !== undefined && value.length > 0,
+			);
+			if (identifiers.some((identifier) => row.includes(` ${identifier} `))) return snapshot.color;
+		}
+		return undefined;
+	}
+
 	private entryKeys(): readonly string[] {
 		const durableJobs = this.durableJobs();
 		return Object.freeze([
@@ -11629,6 +11913,7 @@ class SubagentObservatoryView extends Container {
 					...(this.inspectionNotice ? ["", `! ${this.inspectionNotice}`] : []),
 				];
 		for (const [index, row] of rows.entries()) {
+			const profileColor = this.colorForObservatoryRow(row);
 			const color =
 				index === 0
 					? "accent"
@@ -11638,7 +11923,7 @@ class SubagentObservatoryView extends Container {
 							? "muted"
 							: row === "VERIFICATION FAILED" || row.startsWith("! ")
 								? "error"
-								: "text";
+								: (profileColor ?? "text");
 			this.addChild(new Text(this.theme.fg(color, row), 1, 0));
 		}
 		this.tui.requestRender();
@@ -11832,6 +12117,10 @@ export function formatIceSubagentSettingsSummary(settingsManager: SettingsManage
 				`turns=${contract.values.maxTurns} [${contract.sources.maxTurns}]`,
 				`toolCalls=${contract.values.maxToolCalls} [${contract.sources.maxToolCalls}]`,
 				`output=${contract.values.maxOutputBytes} [${contract.sources.maxOutputBytes}]`,
+				...(contract.values.temperature !== undefined
+					? [`temperature=${contract.values.temperature} [${contract.sources.temperature}]`]
+					: []),
+				...(contract.values.topP !== undefined ? [`topP=${contract.values.topP} [${contract.sources.topP}]`] : []),
 				...(contract.values.maxTotalTokens !== undefined
 					? [`tokens=${contract.values.maxTotalTokens} [${contract.sources.maxTotalTokens}]`]
 					: []),
@@ -11890,6 +12179,8 @@ function applyIceProfileSettingsSummary(
 				thinking: profile.effectiveThinkingLevel,
 				timeoutMs: profile.effectiveTimeoutMs,
 				maxOutputBytes: profile.effectiveMaxOutputBytes,
+				temperature: profile.requestedTemperature,
+				topP: profile.requestedTopP,
 			},
 		});
 		const diagnostics = [
@@ -11907,6 +12198,8 @@ function applyIceProfileSettingsSummary(
 			...(contract.values.maxTotalTokens !== undefined
 				? { effectiveMaxTotalTokens: contract.values.maxTotalTokens }
 				: {}),
+			...(contract.values.temperature !== undefined ? { effectiveTemperature: contract.values.temperature } : {}),
+			...(contract.values.topP !== undefined ? { effectiveTopP: contract.values.topP } : {}),
 			effectiveSettingSources: Object.freeze({ ...contract.sources }),
 			profileDiagnostics: Object.freeze(diagnostics),
 			...(contract.denied ? { availability: "invalid" as const } : {}),
@@ -13506,6 +13799,10 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 						...(normalized.execution.maxTotalTokens !== undefined
 							? { maxTotalTokens: normalized.execution.maxTotalTokens }
 							: {}),
+						...(normalized.execution.temperature !== undefined
+							? { temperature: normalized.execution.temperature }
+							: {}),
+						...(normalized.execution.topP !== undefined ? { topP: normalized.execution.topP } : {}),
 						tools: acceptedTools,
 						sourceHash: normalized.profile.sourceHash,
 						...(normalized.modelCandidates ? { modelCandidates: [...normalized.modelCandidates] } : {}),

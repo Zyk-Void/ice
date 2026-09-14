@@ -1,5 +1,6 @@
 import { relative, resolve, sep } from "node:path";
 import { stripTerminalSequences } from "@zykairotis/ice-tui";
+import { isSubagentProfileColor, type SubagentProfileColor } from "./ice-agent-view-bridge.ts";
 import type {
 	SubagentJobInspection,
 	SubagentJobResultEnvelope,
@@ -99,6 +100,7 @@ export interface SubagentProgressSnapshot {
 	readonly taskId?: string;
 	readonly batchIndex?: number;
 	readonly role?: string;
+	readonly color?: SubagentProfileColor;
 	readonly model?: string;
 	readonly status: string;
 	readonly phase: ObservatoryPhase;
@@ -150,6 +152,7 @@ export interface ObservatoryWorkflowInput {
 	readonly taskId?: string;
 	readonly batchIndex?: number;
 	readonly role?: string;
+	readonly color?: SubagentProfileColor;
 	readonly model?: string;
 	readonly phase: ObservatoryPhase;
 	readonly status: string;
@@ -765,6 +768,7 @@ function createSnapshot(input: {
 	taskId?: string;
 	batchIndex?: number;
 	role?: string;
+	color?: SubagentProfileColor;
 	model?: string;
 	attempt?: 1 | 2;
 	currentTool?: string;
@@ -792,6 +796,7 @@ function createSnapshot(input: {
 		...(input.taskId ? { taskId: input.taskId } : {}),
 		...(input.batchIndex !== undefined ? { batchIndex: input.batchIndex } : {}),
 		...(input.role ? { role: boundedText(input.role, OBSERVATORY_PATH_MAX_BYTES) } : {}),
+		...(isSubagentProfileColor(input.color) ? { color: input.color } : {}),
 		...(input.model ? { model: boundedText(input.model, OBSERVATORY_PATH_MAX_BYTES) } : {}),
 		status: input.status,
 		phase: input.phase,
@@ -1050,6 +1055,7 @@ export function reduceObservatoryEvent(state: ObservatoryState, input: Observato
 		taskId: input.taskId ?? input.event.taskId ?? existing?.taskId,
 		batchIndex: existing?.batchIndex,
 		role: input.event.profile,
+		color: isSubagentProfileColor(input.event.color) ? input.event.color : existing?.color,
 		model: input.model ?? existing?.model,
 		attempt,
 		currentTool: input.event.toolName ?? existing?.currentTool,
@@ -1100,6 +1106,7 @@ export function reduceWorkflowProgress(state: ObservatoryState, input: Observato
 		taskId: input.taskId ?? existing?.taskId,
 		batchIndex: input.batchIndex ?? existing?.batchIndex,
 		role: input.role ?? existing?.role,
+		color: isSubagentProfileColor(input.color) ? input.color : existing?.color,
 		model: input.model ?? existing?.model,
 		attempt,
 		currentTool: input.currentTool ?? existing?.currentTool,
