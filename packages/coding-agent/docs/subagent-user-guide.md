@@ -45,12 +45,14 @@ name: api-review
 description: Review API compatibility and input-validation changes with file evidence.
 tools: [read, grep, find, ls]
 tags: [api, review]
+temperature: 0.2
+top-p: 0.8
 ---
 Inspect the requested API surface. Return concrete findings with existing in-scope paths.
 Distinguish verified behavior, risks, and unrun checks. Do not claim edits or passing tests without evidence.
 ```
 
-Use lowercase kebab-case names. Unknown profile metadata is rejected. Supported operational fields include tools, tags, thinking/thinkingLevel, timeout/timeoutMs, max-output-bytes, skills, prompts, context, optional `hooks` IDs, exact `model`/`fallbackModel` references, and explicit `mcp` server/tool selectors (for example `mcp: [search/docs]`). Import provenance fields are retained. Models follow the deterministic order: explicit call model, else file primary, else file fallback, else the captured parent (duplicates collapse; omitted fields reach the parent). Each configured candidate is resolved through Ice's catalog with existing-auth, text input, usable context/output metadata, explicit reasoning requirements, and route-policy checks; availability failures advance with a bounded skip reason while policy denials reject the launch. Selected MCP tools are opt-in and dispatch only through the parent-owned adapter with hooks, budgets, cancellation, and bounded output; without parent authorization the launch fails closed. Global-first precedence applies throughout ice: an explicit global value beats a trusted-project value, then the built-in default. Denies, mode restrictions, and trust requirements still win over any preference.
+Use lowercase kebab-case names. Unknown profile metadata is rejected. Supported operational fields include tools, tags, thinking/thinkingLevel, timeout/timeoutMs, max-output-bytes, temperature, top-p, `color` (a bounded semantic theme token), `hidden`, skills, prompts, context, optional `hooks` IDs, exact `model`/`fallbackModel` references, and explicit `mcp` server/tool selectors (for example `mcp: [search/docs]`). Import provenance fields are retained. Models follow the deterministic order: explicit call model, else file primary, else file fallback, else the captured parent (duplicates collapse; omitted fields reach the parent). Each configured candidate is resolved through Ice's catalog with existing-auth, text input, usable context/output metadata, explicit reasoning requirements, and route-policy checks; availability failures advance with a bounded skip reason while policy denials reject the launch. Selected MCP tools are opt-in and dispatch only through the parent-owned adapter with hooks, budgets, cancellation, and bounded output; without parent authorization the launch fails closed. Global-first precedence applies throughout ice: an explicit call value beats an explicit global value, which beats a trusted-project value, then the profile/bundled default. Denies, mode restrictions, and trust requirements still win over any preference. `hidden` affects discovery only: hidden profiles are omitted from listing/search/suggestions but remain directly resolvable subject to normal trust and policy.
 
 Global (user) > trusted project is the file-agent source precedence; bundled roles and aliases were removed. Profile tools are requests: effective tools are narrowed by the parent, execution mode, deny lists, and caller subset. Role expertise does not grant write/Bash/network authority. Source hashes are checked again before use. `review_batch` uses self-delegation with a bounded reviewer snapshot; explicitly named file agents remain available through delegate/delegate_batch.
 
@@ -122,7 +124,7 @@ Use existing global `<agentDir>/settings.json` (normally `~/.ice/agent/settings.
 }
 ```
 
-Deny wins. Empty allowed-role lists are neutral. Invalid policy blocks admission. Settings changes affect future launches and revoke active/queued authority at safe boundaries rather than silently granting more capability.
+Deny wins. Empty allowed-role lists are neutral. Invalid policy blocks admission. Settings changes affect future launches and revoke active/queued authority at safe boundaries rather than silently granting more capability. Turn/tool limits remain settings-contract controls and are not duplicated in profile frontmatter. Profile `temperature` is passed through typed stream options when supported; `top-p` is mapped to `top_p` only for OpenAI-compatible adapters. Anthropic temperature and non-OpenAI top-p requests are omitted with a bounded provider-compatibility diagnostic. Sampling preferences apply to work and the bounded final report.
 
 ### Optional aggregate token budget
 

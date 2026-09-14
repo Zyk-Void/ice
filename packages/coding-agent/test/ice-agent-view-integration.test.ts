@@ -6,7 +6,7 @@ import type { Api, Model } from "@zykairotis/ice-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession, AgentSessionEvent } from "../src/core/agent-session.ts";
 import type { CreateAgentSessionResult } from "../src/core/sdk.ts";
-import { IceAgentViewBridge } from "../src/ice-agent-view-bridge.ts";
+import { IceAgentViewBridge, type IceAgentViewColor } from "../src/ice-agent-view-bridge.ts";
 import {
 	createSubagentLiveSessionControl,
 	NativeSubagentRunner,
@@ -714,6 +714,19 @@ describe("ICE agent-view integration", () => {
 		}
 	});
 
+	it("drops invalid live profile colors at the registry boundary", () => {
+		const registry = new SubagentLiveSessionRegistry();
+		const release = registry.register({
+			runId: "run-invalid-color",
+			role: "scout",
+			session: passiveSession("child-invalid-color", "/repo"),
+			color: "not-a-theme-token" as unknown as IceAgentViewColor,
+		});
+
+		expect(registry.get("run-invalid-color")).not.toHaveProperty("color");
+		release();
+	});
+
 	it("keeps parent identity stable while cycling live and historical views and preserving UI state", () => {
 		const bridge = new IceAgentViewBridge();
 		const parent = passiveSession("parent", "/repo");
@@ -724,9 +737,11 @@ describe("ICE agent-view integration", () => {
 		const registry = new SubagentLiveSessionRegistry();
 		bridge.setParentSession(parent);
 		bridge.connectLiveSessions(registry);
-		const releaseA = registry.register({ runId: "run-a", role: "scout", session: childA });
-		const releaseB = registry.register({ runId: "run-b", role: "coder", session: childB });
+		const releaseA = registry.register({ runId: "run-a", role: "scout", session: childA, color: "success" });
+		const releaseB = registry.register({ runId: "run-b", role: "coder", session: childB, color: "warning" });
 
+		expect(bridge.getView("run-a")).toMatchObject({ color: "success" });
+		expect(bridge.getView("run-b")).toMatchObject({ color: "warning" });
 		bridge.setUiState("parent", { editorDraft: "parent draft", followTranscript: false, scrollOffset: 4 });
 		bridge.setUiState("run-a", { editorDraft: "child A draft", followTranscript: true, scrollOffset: 8 });
 		bridge.setUiState("run-b", { editorDraft: "child B draft", followTranscript: false, scrollOffset: 12 });
@@ -750,12 +765,13 @@ describe("ICE agent-view integration", () => {
 			runId: "run-a",
 			role: "scout",
 			status: "completed",
+			color: "success",
 			finishedAt: Date.now(),
 			messages: childA.messages,
 		});
 		releaseA();
 		releaseB();
-		expect(bridge.getView("run-a")?.kind).toBe("historical-subagent");
+		expect(bridge.getView("run-a")).toMatchObject({ kind: "historical-subagent", color: "success" });
 		expect(bridge.getView("run-a")?.session).toBeUndefined();
 		expect(bridge.requestDisplay("run-a")).toBe(true);
 		expect(bridge.getView("parent")?.session).toBe(parent);

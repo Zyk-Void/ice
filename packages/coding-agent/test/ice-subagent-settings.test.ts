@@ -52,6 +52,10 @@ describe("ICE subagent control settings", () => {
 		expect(() => parseIceSubagentSettings({ restrictions: { denyTools: ["invalid tool identifier"] } })).toThrowError(
 			/denyTools|unknown/i,
 		);
+		expect(() => parseIceSubagentSettings({ defaults: { temperature: Number.NaN } })).toThrowError(/temperature/i);
+		expect(() => parseIceSubagentSettings({ defaults: { temperature: 2.1 } })).toThrowError(/temperature/i);
+		expect(() => parseIceSubagentSettings({ defaults: { topP: -0.1 } })).toThrowError(/topP/i);
+		expect(() => parseIceSubagentSettings({ defaults: { topP: 1.1 } })).toThrowError(/topP/i);
 	});
 
 	it("parses bounded preferences and role overrides", () => {
@@ -67,6 +71,8 @@ describe("ICE subagent control settings", () => {
 		expect(parsed.restrictions.maxTurns).toBe(16);
 		expect(parsed.restrictions.maxTotalTokens).toBe(32_768);
 		expect(parsed.restrictions.denyRoles).toEqual(["bulk"]);
+		const sampling = parseIceSubagentSettings({ defaults: { temperature: 0.4, topP: 0.8 } });
+		expect(sampling.defaults).toMatchObject({ temperature: 0.4, topP: 0.8 });
 	});
 
 	it("resolves global/project/role/call layers with deny-first restrictions", () => {
@@ -102,6 +108,21 @@ describe("ICE subagent control settings", () => {
 		});
 		expect(deniedRole.denied?.code).toBe("role_denied");
 		expect(deniedRole.denied?.message).toMatch(/denied by ice/i);
+		const sampling = resolveIceSubagentContract({
+			role: "explore",
+			global: parseIceSubagentSettings({
+				defaults: { temperature: 0.2, topP: 0.4 },
+				roleDefaults: { explore: { temperature: 0.3 } },
+			}),
+			project: parseIceSubagentSettings({
+				defaults: { temperature: 0.9, topP: 0.9 },
+				roleDefaults: { explore: { temperature: 0.8, topP: 0.7 } },
+			}),
+			call: { temperature: 0.6 },
+		});
+		expect(sampling.temperature).toMatchObject({ value: 0.6, source: "call" });
+		expect(sampling.topP).toMatchObject({ value: 0.4, source: "global" });
+		expect(sampling.values).toMatchObject({ temperature: 0.6, topP: 0.4 });
 	});
 
 	it("keeps legacy project-first precedence only with an explicit opt-out", () => {

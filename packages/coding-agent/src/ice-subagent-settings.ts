@@ -30,6 +30,8 @@ export interface IceSubagentPreferenceFields {
 	maxToolCalls?: number;
 	maxOutputBytes?: number;
 	maxTotalTokens?: number;
+	temperature?: number;
+	topP?: number;
 }
 
 export interface IceSubagentSettingsInput {
@@ -84,6 +86,10 @@ export const ICE_SUBAGENT_SETTINGS_LIMITS = {
 	maxOutputBytes: 64 * 1_024,
 	minTotalTokens: 1_024,
 	maxTotalTokens: 1_000_000,
+	minTemperature: 0,
+	maxTemperature: 2,
+	minTopP: 0,
+	maxTopP: 1,
 	maxRoles: 64,
 	maxRoleNameBytes: 64,
 	maxRoleDefaults: 64,
@@ -119,6 +125,8 @@ const KNOWN_PREFERENCE_KEYS = new Set([
 	"maxToolCalls",
 	"maxOutputBytes",
 	"maxTotalTokens",
+	"temperature",
+	"topP",
 ]);
 const KNOWN_RESTRICTION_KEYS = new Set([
 	"maxTimeoutMs",
@@ -142,6 +150,13 @@ function fail(path: string, message: string): Error {
 function checkPositiveInteger(value: unknown, path: string, minimum: number, maximum: number): number {
 	if (typeof value !== "number" || !Number.isInteger(value) || value < minimum || value > maximum) {
 		throw fail(path, `expected integer in [${minimum}, ${maximum}]`);
+	}
+	return value;
+}
+
+function checkFiniteNumber(value: unknown, path: string, minimum: number, maximum: number): number {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < minimum || value > maximum) {
+		throw fail(path, `expected finite number in [${minimum}, ${maximum}]`);
 	}
 	return value;
 }
@@ -214,6 +229,22 @@ function parsePreferenceFields(
 			`${path}.maxTotalTokens`,
 			ICE_SUBAGENT_SETTINGS_LIMITS.minTotalTokens,
 			ICE_SUBAGENT_SETTINGS_LIMITS.maxTotalTokens,
+		);
+	}
+	if (raw.temperature !== undefined) {
+		fields.temperature = checkFiniteNumber(
+			raw.temperature,
+			`${path}.temperature`,
+			ICE_SUBAGENT_SETTINGS_LIMITS.minTemperature,
+			ICE_SUBAGENT_SETTINGS_LIMITS.maxTemperature,
+		);
+	}
+	if (raw.topP !== undefined) {
+		fields.topP = checkFiniteNumber(
+			raw.topP,
+			`${path}.topP`,
+			ICE_SUBAGENT_SETTINGS_LIMITS.minTopP,
+			ICE_SUBAGENT_SETTINGS_LIMITS.maxTopP,
 		);
 	}
 	return { fields: Object.freeze(fields), diagnostics };
@@ -575,6 +606,8 @@ export interface IceResolvedSubagentContract {
 	maxToolCalls: IceResolvedField<number>;
 	maxOutputBytes: IceResolvedField<number>;
 	maxTotalTokens: IceResolvedField<number | undefined>;
+	temperature: IceResolvedField<number | undefined>;
+	topP: IceResolvedField<number | undefined>;
 	allowedRoles: IceResolvedField<readonly string[] | undefined>;
 	role: IceResolvedField<string>;
 	diagnostics: readonly string[];
@@ -587,6 +620,8 @@ export interface IceResolvedSubagentContract {
 		maxToolCalls: number;
 		maxOutputBytes: number;
 		maxTotalTokens?: number;
+		temperature?: number;
+		topP?: number;
 	};
 	/** W06: legacy flat projection for compact consumers (sources only). */
 	sources: {
@@ -596,6 +631,8 @@ export interface IceResolvedSubagentContract {
 		maxToolCalls: IceSettingSource;
 		maxOutputBytes: IceSettingSource;
 		maxTotalTokens: IceSettingSource;
+		temperature: IceSettingSource;
+		topP: IceSettingSource;
 	};
 	/** W06: caps that clamped a preference value (empty when none applied). */
 	restrictionsApplied: readonly string[];
@@ -752,7 +789,7 @@ export function resolveIceSubagentContract(input: IceResolverInput): IceResolved
 	const maxToolCalls = resolveField("maxToolCalls", call.maxToolCalls);
 	const maxOutputBytes = resolveField("maxOutputBytes", call.maxOutputBytes);
 	const resolveOptionalField = (
-		key: "maxTotalTokens",
+		key: "maxTotalTokens" | "temperature" | "topP",
 		callValue: number | undefined,
 	): IceResolvedField<number | undefined> => {
 		let value: number | undefined = bundled[key];
@@ -779,6 +816,8 @@ export function resolveIceSubagentContract(input: IceResolverInput): IceResolved
 		return { value, source };
 	};
 	const maxTotalTokens = resolveOptionalField("maxTotalTokens", call.maxTotalTokens);
+	const temperature = resolveOptionalField("temperature", call.temperature);
+	const topP = resolveOptionalField("topP", call.topP);
 
 	// W06: enforced hard caps use the most restrictive applicable cap and are not
 	// another preference layer. Preference values above a cap are clamped with an
@@ -893,6 +932,8 @@ export function resolveIceSubagentContract(input: IceResolverInput): IceResolved
 		maxToolCalls: cappedMaxToolCalls,
 		maxOutputBytes: cappedMaxOutputBytes,
 		maxTotalTokens: cappedMaxTotalTokens,
+		temperature,
+		topP,
 		allowedRoles: {
 			value: allowedRoles,
 			source: projectParsed.allowedRoles && projectParsed.allowedRoles.length > 0 ? "project" : "global",
@@ -908,6 +949,8 @@ export function resolveIceSubagentContract(input: IceResolverInput): IceResolved
 			maxToolCalls: cappedMaxToolCalls.value,
 			maxOutputBytes: cappedMaxOutputBytes.value,
 			...(cappedMaxTotalTokens.value !== undefined ? { maxTotalTokens: cappedMaxTotalTokens.value } : {}),
+			...(temperature.value !== undefined ? { temperature: temperature.value } : {}),
+			...(topP.value !== undefined ? { topP: topP.value } : {}),
 		},
 		sources: {
 			thinking: thinking.source,
@@ -916,6 +959,8 @@ export function resolveIceSubagentContract(input: IceResolverInput): IceResolved
 			maxToolCalls: cappedMaxToolCalls.source,
 			maxOutputBytes: cappedMaxOutputBytes.source,
 			maxTotalTokens: cappedMaxTotalTokens.source,
+			temperature: temperature.source,
+			topP: topP.source,
 		},
 		restrictionsApplied: Object.freeze(restrictionsApplied),
 		...(denied ? { denied } : {}),

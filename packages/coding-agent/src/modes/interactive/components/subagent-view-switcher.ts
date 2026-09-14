@@ -98,7 +98,7 @@ export class SubagentFooterSwitcher implements Component {
 
 	private styleView(view: IceAgentViewDescriptor, text: string, viewing: boolean): string {
 		if (!this.appearance || !this.isCustomized())
-			return viewing ? this.theme.fg("accent", text) : this.theme.fg("muted", text);
+			return viewing ? this.theme.fg(view.color ?? "accent", text) : this.theme.fg(view.color ?? "muted", text);
 		if (view.kind === "subagent" && view.live && view.controlState === "awaiting-extension")
 			return applyTextPresentation(this.appearance.attention, text);
 		const status = String(view.status ?? "").toLowerCase();
@@ -252,7 +252,7 @@ export class SubagentFooterSwitcher implements Component {
 						displayed.kind === "subagent" && displayed.live ? this.appearance.running : this.appearance.muted,
 						text,
 					)
-				: this.theme.fg("accent", text),
+				: this.theme.fg(displayed.color ?? "accent", text),
 		];
 	}
 
@@ -322,12 +322,13 @@ export class SubagentFooterSwitcher implements Component {
 		const marker = displayed ? "●" : ">";
 		const status = `${agentSwitcherStatus(view)}${displayed ? " · viewing" : ""}`;
 		const row = `Agents  ${marker} ${typeMarker} ${formatAgentSwitcherLabel(view)}  ${status}`;
+		const styledRow = this.styleView(view, padVisible(row, width), displayed);
 		const attentionHint =
 			view.kind === "subagent" && view.live && view.controlState === "awaiting-extension"
 				? " · E extend · X stop"
 				: "";
 		return [
-			padVisible(row, width),
+			styledRow,
 			this.isCustomized() && this.appearance
 				? applyTextPresentation(
 						this.appearance.muted,
