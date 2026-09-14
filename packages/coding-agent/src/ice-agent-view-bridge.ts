@@ -31,6 +31,8 @@ export interface IceAgentViewPresentation {
 	readonly finalReportMessageIndex?: number;
 	/** True while the child is expected to emit an internal machine report. */
 	readonly protocolReportPending?: boolean;
+	/** True while the child AgentSession is compacting its in-memory transcript. */
+	readonly compacting?: boolean;
 	readonly finalizationStarted?: boolean;
 	/** Bounded, redacted runtime state for a live child awaiting a time decision. */
 	readonly runtimeAttention?: SubagentRuntimeAttention;
@@ -437,6 +439,7 @@ export function normalizeIceAgentViewPresentation(
 		...(typeof input.protocolReportPending === "boolean"
 			? { protocolReportPending: input.protocolReportPending }
 			: {}),
+		...(typeof input.compacting === "boolean" ? { compacting: input.compacting } : {}),
 		...(typeof input.finalizationStarted === "boolean" ? { finalizationStarted: input.finalizationStarted } : {}),
 		...(runtimeAttention ? { runtimeAttention } : {}),
 		...(finalResult ? { finalResult } : {}),

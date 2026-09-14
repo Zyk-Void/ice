@@ -136,6 +136,22 @@ async function createWorkspace(): Promise<string> {
 	return cwd;
 }
 
+async function createFauxChildRuntime(cwd: string, faux: ReturnType<typeof registerFauxProvider>) {
+	const authStorage = AuthStorage.inMemory();
+	await authStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
+	const modelRuntime = await ModelRuntime.create({
+		credentials: authStorage,
+		modelsPath: join(cwd, "models.json"),
+	});
+	const model = faux.getModel();
+	modelRuntime.registerProvider(model.provider, {
+		baseUrl: model.baseUrl,
+		api: model.api,
+		models: [model],
+	});
+	return { model, modelRuntime };
+}
+
 function createNoopExtensionRunner() {
 	return {
 		hasHandlers: vi.fn(() => false),
@@ -4025,6 +4041,24 @@ describe("ICE subagent contracts", () => {
 			},
 		);
 		expect(subsetCapture?.tools).toEqual(["read"]);
+		expect(subsetCapture?.settingsManager?.getMidRunCompaction()).toBe("resume");
+
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ compaction: { midRunCompaction: "off" } }));
+		let explicitOffCapture: CreateAgentSessionOptions | undefined;
+		await createNativeSubagentSession(
+			{ request: subset, parentActiveTools: ["delegate", "read", "grep", "find", "ls"], agentDir },
+			async (options) => {
+				explicitOffCapture = options;
+				return {
+					session: {
+						sessionId: "explicit-off-child",
+						messages: [],
+					} as unknown as CreateAgentSessionResult["session"],
+					extensionsResult: { extensions: [], errors: [], runtime: createExtensionRuntime() },
+				};
+			},
+		);
+		expect(explicitOffCapture?.settingsManager?.getMidRunCompaction()).toBe("off");
 
 		const settingsManager = SettingsManager.inMemory();
 		settingsManager.setIceSettingsValue("global", { subagents: { restrictions: { denyTools: ["find"] } } });
@@ -4374,6 +4408,418 @@ describe("ICE subagent contracts", () => {
 				verified: true,
 				paths: [join(cwd, "src")],
 			});
+		} finally {
+			faux.unregister();
+		}
+	});
+
+	it("compacts a long-running native child and resumes with the same authority", async () => {
+		const cwd = await createWorkspace();
+		const agentDir = join(cwd, ".ice-agent");
+		await mkdir(agentDir, { recursive: true });
+		await writeFile(join(cwd, "src", "large.txt"), "child context\n");
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({
+				compaction: {
+					thresholdPercent: 1,
+					reserveTokens: 128,
+					keepRecentTokens: 1,
+					midRunCompaction: "resume",
+				},
+			}),
+		);
+		const faux = registerFauxProvider();
+		try {
+			const authStorage = AuthStorage.inMemory();
+			await authStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
+			const modelRuntime = await ModelRuntime.create({
+				credentials: authStorage,
+				modelsPath: join(cwd, "models.json"),
+			});
+			const model = faux.getModel();
+			modelRuntime.registerProvider(model.provider, {
+				baseUrl: model.baseUrl,
+				api: model.api,
+				models: [model],
+			});
+			faux.setResponses([
+				fauxAssistantMessage("partial child response", { stopReason: "length" }),
+				fauxAssistantMessage("The child task context was compacted and is ready to resume."),
+				fauxAssistantMessage('{"summary":"compacted child report","evidence":{"paths":["src/large.txt"]}}'),
+			]);
+			const normalized = normalizeSubagentRequest(request(cwd), cwd, { agentDir });
+			const events: iceSubagentsModule.SubagentEvent[] = [];
+			const bridge = new IceAgentViewBridge();
+			const result = await new NativeSubagentRunner({ agentDir, agentViewBridge: bridge }).runResolved(
+				normalized,
+				["delegate", "read"],
+				{ model, modelRuntime, onEvent: (event) => events.push(event) },
+			);
+
+			expect(result.status).toBe("completed");
+			expect(result.summary).toBe("compacted child report");
+			const compactionEvents = events.filter(
+				(event) => event.type === "subagent_compaction_start" || event.type === "subagent_compaction_end",
+			);
+			expect(compactionEvents).toEqual([
+				expect.objectContaining({
+					type: "subagent_compaction_start",
+					status: "running",
+					compactionReason: "overflow",
+					compactionStatus: "started",
+				}),
+				expect.objectContaining({
+					type: "subagent_compaction_end",
+					status: "running",
+					compactionReason: "overflow",
+					compactionStatus: "completed",
+					compactionWillRetry: true,
+				}),
+			]);
+			expect(compactionEvents.every((event) => !Object.hasOwn(event, "summary"))).toBe(true);
+			expect(bridge.getView(normalized.runId)?.presentation).toMatchObject({ compacting: false });
+		} finally {
+			faux.unregister();
+		}
+	});
+
+	it("preserves child model, tools, and scope across overflow compaction", async () => {
+		const cwd = await createWorkspace();
+		const agentDir = join(cwd, ".ice-agent");
+		await mkdir(agentDir, { recursive: true });
+		await writeFile(join(cwd, "src", "app.ts"), "export const app = true;\n");
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ compaction: { keepRecentTokens: 1, reserveTokens: 128, midRunCompaction: "resume" } }),
+		);
+		const faux = registerFauxProvider();
+		try {
+			const authStorage = AuthStorage.inMemory();
+			await authStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
+			const modelRuntime = await ModelRuntime.create({
+				credentials: authStorage,
+				modelsPath: join(cwd, "models.json"),
+			});
+			const model = faux.getModel();
+			modelRuntime.registerProvider(model.provider, {
+				baseUrl: model.baseUrl,
+				api: model.api,
+				models: [model],
+			});
+			faux.setResponses([
+				fauxAssistantMessage("partial child response", { stopReason: "length" }),
+				fauxAssistantMessage("The child context was compacted."),
+				fauxAssistantMessage("The child resumed after compaction."),
+			]);
+			const normalized = normalizeSubagentRequest(request(cwd), cwd, { agentDir });
+			const child = await createNativeSubagentSession({
+				request: normalized,
+				parentActiveTools: ["delegate", "read"],
+				model,
+				modelRuntime,
+				agentDir,
+			});
+			const events: AgentSessionEvent[] = [];
+			const unsubscribe = child.session.subscribe((event) => events.push(event));
+			try {
+				await child.session.prompt(child.prompt, { expandPromptTemplates: false, source: "extension" });
+				expect(events.some((event) => event.type === "compaction_start" && event.reason === "overflow")).toBe(true);
+				expect(events.some((event) => event.type === "compaction_end" && event.willRetry)).toBe(true);
+				expect(child.session.messages.some((message) => message.role === "compactionSummary")).toBe(true);
+				expect(child.session.model).toBe(model);
+				expect(child.session.getActiveToolNames()).toEqual(["read"]);
+				await expect(
+					child.session
+						.getToolDefinition("read")!
+						.execute(
+							"read-after-compaction-outside-scope",
+							{ path: join(cwd, "package.json") },
+							undefined,
+							undefined,
+							undefined as unknown as ExtensionContext,
+						),
+				).rejects.toThrow(/outside the approved subagent scope/);
+			} finally {
+				unsubscribe();
+				child.session.dispose();
+			}
+		} finally {
+			faux.unregister();
+		}
+	});
+
+	it("cancels a native child while overflow compaction is in flight", async () => {
+		const cwd = await createWorkspace();
+		const agentDir = join(cwd, ".ice-agent");
+		await mkdir(agentDir, { recursive: true });
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ compaction: { keepRecentTokens: 1, reserveTokens: 128, midRunCompaction: "resume" } }),
+		);
+		const faux = registerFauxProvider({ tokensPerSecond: 80 });
+		let cancelTimer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const { model, modelRuntime } = await createFauxChildRuntime(cwd, faux);
+			let summaryCallStarted = false;
+			const controller = new AbortController();
+			const events: iceSubagentsModule.SubagentEvent[] = [];
+			faux.setResponses([
+				fauxAssistantMessage("partial child response", { stopReason: "length" }),
+				() => {
+					summaryCallStarted = true;
+					return fauxAssistantMessage("x".repeat(4_000));
+				},
+				fauxAssistantMessage('{"summary":"must not continue","evidence":{"paths":["src"]}}'),
+			]);
+			const normalized = normalizeSubagentRequest(request(cwd), cwd, { agentDir });
+			const result = await new NativeSubagentRunner({ agentDir }).runResolved(normalized, ["delegate", "read"], {
+				model,
+				modelRuntime,
+				signal: controller.signal,
+				onEvent: (event) => {
+					events.push(event);
+					if (event.type !== "subagent_compaction_start") return;
+					const cancelAfterSummaryStarts = (): void => {
+						if (summaryCallStarted) {
+							controller.abort();
+							return;
+						}
+						cancelTimer = setTimeout(cancelAfterSummaryStarts, 0);
+					};
+					cancelTimer = setTimeout(cancelAfterSummaryStarts, 0);
+				},
+			});
+
+			expect(result.status).toBe("cancelled");
+			expect(faux.state.callCount).toBe(2);
+			expect(events.filter((event) => event.type === "subagent_compaction_start")).toHaveLength(1);
+			expect(events.filter((event) => event.type === "subagent_compaction_end")).toEqual([
+				expect.objectContaining({
+					type: "subagent_compaction_end",
+					status: "running",
+					compactionReason: "overflow",
+					compactionStatus: "aborted",
+					compactionWillRetry: false,
+				}),
+			]);
+			expect(events.at(-1)?.type).toBe("subagent_cancelled");
+		} finally {
+			if (cancelTimer) clearTimeout(cancelTimer);
+			faux.unregister();
+		}
+	});
+
+	it("preserves task and report semantics across native child compaction", async () => {
+		const cwd = await createWorkspace();
+		const agentDir = join(cwd, ".ice-agent");
+		await mkdir(agentDir, { recursive: true });
+		await writeFile(join(cwd, "src", "semantic.txt"), "semantic evidence\n");
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ compaction: { keepRecentTokens: 1, reserveTokens: 128, midRunCompaction: "resume" } }),
+		);
+		const taskMarker = "SEMANTIC_TASK_OBJECTIVE_91";
+		const acceptanceMarker = "SEMANTIC_ACCEPTANCE_REQUIREMENT_37";
+		const reportMarker = "SEMANTIC_REPORT_MODE_62";
+		const summaryMarker = `${taskMarker} ${acceptanceMarker} ${reportMarker}`;
+		const faux = registerFauxProvider();
+		try {
+			const { model, modelRuntime } = await createFauxChildRuntime(cwd, faux);
+			let compactionContext: Context | undefined;
+			let resumedContext: Context | undefined;
+			faux.setResponses([
+				fauxAssistantMessage("partial child response", { stopReason: "length" }),
+				(context) => {
+					compactionContext = context;
+					return fauxAssistantMessage(`Preserved summary: ${summaryMarker}`);
+				},
+				(context) => {
+					resumedContext = context;
+					return fauxAssistantMessage(
+						JSON.stringify({
+							summary: "semantic child report",
+							evidence: { paths: ["src/semantic.txt"] },
+							requirements: [
+								{
+									id: "preserve-semantics",
+									status: "satisfied",
+									note: summaryMarker,
+									evidencePaths: ["src/semantic.txt"],
+								},
+							],
+						}),
+					);
+				},
+			]);
+			const normalized = normalizeSubagentRequest(
+				{
+					...request(cwd),
+					task: `Complete ${taskMarker} while retaining the approved evidence contract.`,
+					contextPacket: {
+						items: [{ id: "report-mode", kind: "parent_note", content: reportMarker }],
+					},
+					acceptanceCriteria: [
+						{
+							id: "preserve-semantics",
+							requirement: `The final report must retain ${acceptanceMarker}.`,
+							required: true,
+							evidence: "path",
+							dimension: "correctness",
+						},
+					],
+				},
+				cwd,
+				{ agentDir },
+			);
+			const result = await new NativeSubagentRunner({ agentDir }).runResolved(normalized, ["delegate", "read"], {
+				model,
+				modelRuntime,
+			});
+
+			expect(result.status).toBe("completed");
+			expect(JSON.stringify(compactionContext)).toContain(taskMarker);
+			expect(JSON.stringify(compactionContext)).toContain(acceptanceMarker);
+			expect(JSON.stringify(compactionContext)).toContain(reportMarker);
+			expect(JSON.stringify(resumedContext)).toContain(summaryMarker);
+			expect(result.requirementClaims).toEqual([
+				expect.objectContaining({ id: "preserve-semantics", status: "satisfied" }),
+			]);
+		} finally {
+			faux.unregister();
+		}
+	});
+
+	it("continues model-driven child tool work after overflow compaction", async () => {
+		const cwd = await createWorkspace();
+		const agentDir = join(cwd, ".ice-agent");
+		await mkdir(agentDir, { recursive: true });
+		await writeFile(join(cwd, "src", "after-compaction.txt"), "post-compaction evidence\n");
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ compaction: { keepRecentTokens: 1, reserveTokens: 128, midRunCompaction: "resume" } }),
+		);
+		const faux = registerFauxProvider();
+		try {
+			const { model, modelRuntime } = await createFauxChildRuntime(cwd, faux);
+			let finalContext: Context | undefined;
+			faux.setResponses([
+				fauxAssistantMessage("partial child response", { stopReason: "length" }),
+				fauxAssistantMessage("overflow summary retained the task"),
+				fauxAssistantMessage(
+					fauxToolCall("read", { path: "src/after-compaction.txt" }, { id: "post-compaction-read" }),
+					{ stopReason: "toolUse" },
+				),
+				(context) => {
+					finalContext = context;
+					return fauxAssistantMessage(
+						'{"summary":"tool continuation complete","evidence":{"paths":["src/after-compaction.txt"]}}',
+					);
+				},
+			]);
+			const normalized = normalizeSubagentRequest(request(cwd), cwd, { agentDir });
+			const events: iceSubagentsModule.SubagentEvent[] = [];
+			const result = await new NativeSubagentRunner({ agentDir }).runResolved(normalized, ["delegate", "read"], {
+				model,
+				modelRuntime,
+				onEvent: (event) => events.push(event),
+			});
+
+			expect(result).toMatchObject({
+				status: "completed",
+				summary: "tool continuation complete",
+				evidence: { paths: ["src/after-compaction.txt"] },
+			});
+			expect(events).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						type: "subagent_tool_start",
+						toolName: "read",
+						toolCallId: "post-compaction-read",
+					}),
+					expect.objectContaining({
+						type: "subagent_tool_end",
+						toolName: "read",
+						toolCallId: "post-compaction-read",
+					}),
+				]),
+			);
+			expect(JSON.stringify(finalContext)).toContain("post-compaction evidence");
+			expect(faux.state.callCount).toBe(4);
+		} finally {
+			faux.unregister();
+		}
+	});
+
+	it("keeps repeated native child compactions bounded and reconstructible", async () => {
+		const cwd = await createWorkspace();
+		const agentDir = join(cwd, ".ice-agent");
+		await mkdir(agentDir, { recursive: true });
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({
+				compaction: {
+					thresholdPercent: 1,
+					keepRecentTokens: 1,
+					reserveTokens: 128,
+					midRunCompaction: "resume",
+				},
+			}),
+		);
+		const faux = registerFauxProvider();
+		try {
+			const { model, modelRuntime } = await createFauxChildRuntime(cwd, faux);
+			faux.setResponses([
+				fauxAssistantMessage("first child response"),
+				fauxAssistantMessage("threshold summary one"),
+				() => fauxAssistantMessage("second child response"),
+				() => fauxAssistantMessage("threshold history two"),
+				() => fauxAssistantMessage("threshold turn prefix two"),
+			]);
+			const normalized = normalizeSubagentRequest(request(cwd), cwd, { agentDir });
+			const child = await createNativeSubagentSession({
+				request: normalized,
+				parentActiveTools: ["delegate", "read"],
+				model,
+				modelRuntime,
+				agentDir,
+			});
+			const events: AgentSessionEvent[] = [];
+			const unsubscribe = child.session.subscribe((event) => events.push(event));
+			try {
+				await child.session.prompt(`${child.prompt}\nfirst context ${"x".repeat(8_000)}`, {
+					expandPromptTemplates: false,
+					source: "extension",
+				});
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				await child.session.prompt(`${child.prompt}\nsecond context ${"y".repeat(8_000)}`, {
+					expandPromptTemplates: false,
+					source: "extension",
+				});
+				const compactionEntries = child.session.sessionManager
+					.getEntries()
+					.filter((entry) => entry.type === "compaction");
+				const context = child.session.sessionManager.buildSessionContext();
+				expect(compactionEntries).toHaveLength(2);
+				expect(compactionEntries[0]?.type === "compaction" ? compactionEntries[0].summary : "").toContain(
+					"threshold summary one",
+				);
+				expect(compactionEntries[1]?.type === "compaction" ? compactionEntries[1].summary : "").toContain(
+					"threshold history two",
+				);
+				expect(compactionEntries[1]?.type === "compaction" ? compactionEntries[1].summary : "").toContain(
+					"threshold turn prefix two",
+				);
+				expect(events.filter((event) => event.type === "compaction_start")).toHaveLength(2);
+				expect(events.filter((event) => event.type === "compaction_end")).toHaveLength(2);
+				expect(context.messages.filter((message) => message.role === "compactionSummary")).toHaveLength(1);
+				expect(JSON.stringify(context)).toContain("threshold history two");
+				expect(JSON.stringify(context)).toContain("threshold turn prefix two");
+				expect(faux.state.callCount).toBe(5);
+			} finally {
+				unsubscribe();
+				child.session.dispose();
+			}
 		} finally {
 			faux.unregister();
 		}
