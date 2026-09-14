@@ -2,10 +2,15 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
 	chmodSync,
+	closeSync,
+	constants,
 	existsSync,
+	fchmodSync,
+	fstatSync,
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
+	openSync,
 	readdirSync,
 	readFileSync,
 	realpathSync,
@@ -60,7 +65,7 @@ import type { ModelRuntime } from "./core/model-runtime.ts";
 import { DefaultResourceLoader } from "./core/resource-loader.ts";
 import { type CreateAgentSessionOptions, type CreateAgentSessionResult, createAgentSession } from "./core/sdk.ts";
 import { type ReadonlySessionManager, SessionManager, sessionEntryToContextMessages } from "./core/session-manager.ts";
-import { type IceSettingsValue, SettingsManager } from "./core/settings-manager.ts";
+import { type IceSettingsValue, type RetrySettings, SettingsManager } from "./core/settings-manager.ts";
 import type { Skill } from "./core/skills.ts";
 import {
 	createBashToolDefinition,
@@ -169,6 +174,7 @@ import {
 } from "./ice-subagent-telemetry.ts";
 import {
 	formatSubagentToolActivity,
+	type SubagentRetryState,
 	SubagentRunSupervisor,
 	SubagentRunSupervisorRegistry,
 	type SubagentRuntimeAttention,
@@ -617,6 +623,19 @@ export const SUBAGENT_REPORT_LIMITS = {
 	maxEvidencePathBytes: 4096,
 } as const;
 
+export const SUBAGENT_WRAP_UP_LIMITS = {
+	turnReserve: 1,
+	toolReserve: 1,
+	wallReserveRatio: 0.2,
+	minimumWallReserveMs: 1_000,
+	maximumWallReserveMs: 10_000,
+} as const;
+
+export const SUBAGENT_REPORT_ARTIFACT_LIMITS = {
+	maxBytes: 512 * 1024,
+	inlineSummaryBytes: 8 * 1024,
+} as const;
+
 /** Bounded final-report protocol states. A malformed report is never a verified completion. */
 export type SubagentReportProtocolStatus = "valid" | "malformed" | "missing" | "truncated";
 
@@ -628,6 +647,17 @@ export interface SubagentRequirementClaim {
 	status: SubagentRequirementClaimStatus;
 	note?: string;
 	evidencePaths?: string[];
+}
+
+export interface SubagentReportArtifact {
+	schemaVersion: 1;
+	id: string;
+	path: string;
+	bytes: number;
+	originalBytes: number;
+	sha256: string;
+	contentType: "text/plain" | "application/json";
+	truncated: boolean;
 }
 
 /**
@@ -992,7 +1022,7 @@ export interface SubagentUsage {
 }
 
 export interface SubagentDiagnostic {
-	code: SubagentFailureCode | "output_truncated";
+	code: SubagentFailureCode | "output_truncated" | "report_spilled" | "report_artifact_failure";
 	message: string;
 	retryable?: boolean;
 }
@@ -1101,6 +1131,8 @@ export interface SubagentResult {
 	scopeTargets?: string[];
 	/** Runtime-owned bounded projection of observed work; survives report-protocol failures. */
 	workArtifact?: SubagentWorkArtifact;
+	/** Bounded local capture for oversized final or partial assistant output. */
+	reportArtifact?: SubagentReportArtifact;
 	/** Child claims for parent acceptance criteria; untrusted until parent-verified. */
 	requirementClaims?: readonly SubagentRequirementClaim[];
 	/** Parent-verified requirement states; present when acceptance criteria were declared. */
@@ -1312,6 +1344,8 @@ export interface ReviewBatchResult {
 export interface SubagentBatchRunOptions {
 	concurrency?: number;
 	modelRuntime?: ModelRuntime;
+	/** Parent-resolved retry policy copied into each isolated child session. */
+	settingsManager?: SettingsManager;
 	unsafeHostExec?: boolean;
 	totalBudgetBytes?: number;
 	totalTokenBudget?: number;
@@ -1363,6 +1397,8 @@ export interface SubagentEvent {
 		| "subagent_progress"
 		| "subagent_tool_start"
 		| "subagent_tool_end"
+		| "subagent_retry"
+		| "subagent_wrap_up"
 		| "subagent_token_budget"
 		| "subagent_completed"
 		| "subagent_failed"
@@ -1378,6 +1414,7 @@ export interface SubagentEvent {
 	toolCallId?: string;
 	path?: string;
 	attention?: SubagentRuntimeAttention;
+	retry?: SubagentRetryState;
 	model?: string;
 	taskId?: string;
 	attempt?: 1 | 2;
@@ -5154,6 +5191,73 @@ export function truncateSubagentOutput(text: string, maxBytes: number): { text: 
 	return { text: bytes.subarray(0, end).toString("utf8"), truncated: true };
 }
 
+export function writeSubagentReportArtifact(options: {
+	runId: string;
+	content: string;
+	artifactRoot?: string;
+	contentType?: SubagentReportArtifact["contentType"];
+}): SubagentReportArtifact | undefined {
+	if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(options.runId)) return undefined;
+	const originalBytes = Buffer.byteLength(options.content, "utf8");
+	if (originalBytes === 0) return undefined;
+	const bounded = truncateSubagentOutput(
+		redactCredentialText(options.content),
+		SUBAGENT_REPORT_ARTIFACT_LIMITS.maxBytes,
+	);
+	const bytes = Buffer.from(bounded.text, "utf8");
+	const artifactRoot = resolve(options.artifactRoot ?? join(getAgentDir(), "artifacts", "subagent"));
+	const runDirectory = join(artifactRoot, options.runId);
+	const extension = options.contentType === "application/json" ? "json" : "txt";
+	const artifactPath = join(runDirectory, `report.${extension}`);
+	let artifactFile: number | undefined;
+	try {
+		// Check existing components before recursive creation, then check again after
+		// creation. The root and run directory are private, so an untrusted child
+		// cannot replace their components during the write in normal operation.
+		assertNoSymlinkComponents(artifactRoot);
+		mkdirSync(artifactRoot, { recursive: true, mode: 0o700 });
+		chmodSync(artifactRoot, 0o700);
+		assertNoSymlinkComponents(artifactRoot);
+		const canonicalRoot = canonicalPath(artifactRoot);
+		const canonicalRunDirectory = join(canonicalRoot, options.runId);
+		if (!isPathWithin(canonicalRoot, canonicalRunDirectory))
+			throw new Error("Artifact run directory escaped its root.");
+		mkdirSync(runDirectory, { recursive: false, mode: 0o700 });
+		chmodSync(runDirectory, 0o700);
+		assertNoSymlinkComponents(runDirectory);
+		if (canonicalPath(runDirectory) !== canonicalRunDirectory) throw new Error("Artifact run directory changed.");
+		const openFlags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
+		artifactFile = openSync(artifactPath, openFlags, 0o444);
+		if (!fstatSync(artifactFile).isFile()) throw new Error("Artifact output is not a regular file.");
+		writeFileSync(artifactFile, bytes);
+		fchmodSync(artifactFile, 0o444);
+		closeSync(artifactFile);
+		artifactFile = undefined;
+		return Object.freeze({
+			schemaVersion: 1,
+			id: options.runId,
+			path: artifactPath,
+			bytes: bytes.byteLength,
+			originalBytes,
+			sha256: hashSource(bytes),
+			contentType: options.contentType ?? "text/plain",
+			truncated: bounded.truncated,
+		});
+	} catch {
+		if (artifactFile !== undefined) {
+			try {
+				closeSync(artifactFile);
+			} catch {
+				// The descriptor may already be closed after a failed write.
+			}
+		}
+		// Do not remove the run directory by pathname after a failed write. A
+		// same-user race could retarget that pathname and make recursive cleanup
+		// destructive. The private artifact root may retain this bounded orphan.
+		return undefined;
+	}
+}
+
 function extractAssistantText(messages: readonly AgentMessage[], startIndex = 0): string {
 	for (let index = messages.length - 1; index >= startIndex; index--) {
 		const message = messages[index];
@@ -5179,6 +5283,11 @@ const SUBAGENT_EXTENSION_PROMPT =
 	`${SUBAGENT_EXTENSION_MARKER} Your execution window was extended. Continue the already-authorized task from the current child session state. ` +
 	"Do not repeat completed exploration unnecessarily. Scope, authority, model, output budget, and evidence requirements remain unchanged. " +
 	"Return the required final bounded JSON report when the task is complete. This is an internal continuation request, not a new task or permission grant.";
+const SUBAGENT_WRAP_UP_MARKER = "[ICE VOID SUBAGENT WRAP UP]";
+const SUBAGENT_WRAP_UP_PROMPT =
+	`${SUBAGENT_WRAP_UP_MARKER} Remaining execution capacity is reserved for completion. Stop broad exploration and do not start new tool work. ` +
+	"Use the current child session state to produce the required final response now, following the active final-output contract exactly. Preserve only observed, in-scope evidence. " +
+	"This is an internal wrap-up request, not a new task or permission grant.";
 const SUBAGENT_REPORT_REPAIR_MARKER = "[ICE VOID SUBAGENT REPORT REPAIR]";
 const SUBAGENT_REPORT_REPAIR_PROMPT =
 	`${SUBAGENT_REPORT_REPAIR_MARKER} Your previous final report did not satisfy the required bounded JSON envelope. ` +
@@ -5870,6 +5979,8 @@ export interface NativeSubagentSessionOptions {
 	agentDir?: string;
 	sessionStartEvent?: SessionStartEvent;
 	hookRuntime?: SubagentHookRuntime;
+	/** Parent-resolved retry policy, copied into the isolated child settings manager. */
+	retrySettings?: Pick<RetrySettings, "enabled" | "maxRetries" | "baseDelayMs">;
 	/** Parent-owned MCP dispatch for explicitly selected server/tool entries. */
 	mcpDispatch?: IceSubagentMcpAdapter["dispatch"];
 	/** Parent MCP tool allowlist snapshot; selected child MCP tools must be a subset. */
@@ -6367,6 +6478,7 @@ export async function createNativeSubagentSession(
 			: undefined,
 	});
 	await resourceLoader.reload();
+	if (options.retrySettings) settingsManager.applyOverrides({ retry: options.retrySettings });
 	// Revalidate after loader reads and immediately before session creation.
 	revalidateSubagentProfile(profile);
 	revalidateSubagentResources(options.request.resources);
@@ -7037,6 +7149,8 @@ export function assertIceSubagentBackendPolicy(): void {
 export interface NativeSubagentRunnerOptions {
 	createSession?: (options: CreateAgentSessionOptions) => Promise<CreateAgentSessionResult>;
 	agentDir?: string;
+	/** Root for bounded oversized child-report captures. */
+	artifactRoot?: string;
 	/** Optional parent-owned MCP adapter supplied by the host integration. */
 	mcpAdapter?: IceSubagentMcpAdapter;
 	liveSessionRegistry?: SubagentLiveSessionRegistry;
@@ -7074,6 +7188,7 @@ export interface NativeSubagentRunOptions {
 export class NativeSubagentRunner {
 	private readonly createSession: (options: CreateAgentSessionOptions) => Promise<CreateAgentSessionResult>;
 	private readonly agentDir?: string;
+	private readonly artifactRoot?: string;
 	private readonly liveSessionRegistry?: SubagentLiveSessionRegistry;
 	private readonly agentViewBridge?: IceAgentViewBridge;
 	private readonly supervisorRegistry: SubagentRunSupervisorRegistry<SubagentResult>;
@@ -7086,6 +7201,7 @@ export class NativeSubagentRunner {
 		assertIceSubagentBackendPolicy();
 		this.createSession = options.createSession ?? createAgentSession;
 		this.agentDir = options.agentDir;
+		this.artifactRoot = options.artifactRoot;
 		this.liveSessionRegistry = options.liveSessionRegistry;
 		this.agentViewBridge = options.agentViewBridge;
 		this.mcpAdapter = options.mcpAdapter;
@@ -7306,6 +7422,9 @@ export class NativeSubagentRunner {
 		let reportOnly = false;
 		let authorityRevoked = false;
 		let lastProgressAt = 0;
+		let retryState: SubagentRetryState | undefined;
+		let wrapUpRequested = false;
+		let wrapUpPromptStarted = false;
 		let terminalStatus: string | undefined;
 		// W15/W16: enforced turn and tool-call budgets. Reservation happens before
 		// dispatch so parallel scheduling cannot oversubscribe the shared counter;
@@ -7335,6 +7454,26 @@ export class NativeSubagentRunner {
 			}
 			if (reservedToolCalls > 0) reservedToolCalls -= 1;
 			if (executed) dispatchedToolCalls += 1;
+		};
+		const wrapUpWallReserveMs = Math.min(
+			SUBAGENT_WRAP_UP_LIMITS.maximumWallReserveMs,
+			Math.max(
+				SUBAGENT_WRAP_UP_LIMITS.minimumWallReserveMs,
+				Math.floor(normalized.timeoutMs * SUBAGENT_WRAP_UP_LIMITS.wallReserveRatio),
+			),
+		);
+		const requestWrapUpIfNeeded = (): boolean => {
+			if (wrapUpRequested || wrapUpPromptStarted || reportOnly || liveControl?.isControlled()) return false;
+			const turnThreshold = maxTurns > SUBAGENT_WRAP_UP_LIMITS.turnReserve && observedTurns >= maxTurns - 1;
+			const toolThreshold =
+				maxToolCalls > SUBAGENT_WRAP_UP_LIMITS.toolReserve &&
+				dispatchedToolCalls + reservedToolCalls >= maxToolCalls - 1;
+			const wallThreshold = Date.now() >= attemptDeadline - wrapUpWallReserveMs;
+			if (!turnThreshold && !toolThreshold && !wallThreshold) return false;
+			wrapUpRequested = true;
+			supervisor?.setPhase("wrapping_up");
+			emit("subagent_wrap_up", "running");
+			return true;
 		};
 		let childAbortPromise: Promise<void> | undefined;
 		const abortChild = async (): Promise<void> => {
@@ -7401,6 +7540,7 @@ export class NativeSubagentRunner {
 			toolCallId?: string,
 			attention?: SubagentRuntimeAttention,
 			tokenBudgetPhase?: SubagentTokenBudgetTracePhase,
+			retry?: SubagentRetryState,
 		) => {
 			if (
 				type === "subagent_completed" ||
@@ -7421,12 +7561,40 @@ export class NativeSubagentRunner {
 				...(safePath ? { path: safePath } : {}),
 				...(attention ? { attention } : {}),
 				...(tokenBudgetPhase ? { tokenBudgetPhase } : {}),
+				...(retry ? { retry } : {}),
 			});
 		};
 		const observeAssistantText = (): string => {
 			const text = extractAssistantText(childSession?.messages ?? []);
 			observedOutputBytes = Buffer.byteLength(text);
 			return text;
+		};
+		const spillAssistantOutput = (
+			text: string,
+			contentType: SubagentReportArtifact["contentType"] = "text/plain",
+		): SubagentReportArtifact | undefined =>
+			Buffer.byteLength(text, "utf8") > normalized.maxOutputBytes
+				? writeSubagentReportArtifact({
+						runId,
+						content: text,
+						artifactRoot: this.artifactRoot,
+						contentType,
+					})
+				: undefined;
+		const reportSpillDiagnostic = (
+			text: string,
+			artifact: SubagentReportArtifact | undefined,
+		): SubagentDiagnostic | undefined => {
+			if (Buffer.byteLength(text, "utf8") <= normalized.maxOutputBytes) return undefined;
+			return artifact
+				? {
+						code: "report_spilled",
+						message: `Oversized child output was preserved at ${artifact.path} (${artifact.originalBytes} bytes${artifact.truncated ? ", artifact truncated" : ""}).`,
+					}
+				: {
+						code: "report_artifact_failure",
+						message: "Oversized child output could not be preserved as a local artifact.",
+					};
 		};
 		const observeUsage = (): SubagentUsage | undefined => {
 			if (!childSession) return undefined;
@@ -7606,6 +7774,7 @@ export class NativeSubagentRunner {
 					model: options.model,
 					modelRuntime: options.modelRuntime,
 					agentDir: this.agentDir,
+					retrySettings: options.settingsManager?.getRetrySettings(),
 					unsafeHostExec: options.unsafeHostExec,
 					mcpDispatch: mcpRuntime.dispatch,
 					parentMcpTools: mcpRuntime.parentMcpTools,
@@ -7657,7 +7826,8 @@ export class NativeSubagentRunner {
 							authorityRevoked = true;
 							return true;
 						}
-						return observedTurns >= maxTurns;
+						if (observedTurns >= maxTurns) return true;
+						return requestWrapUpIfNeeded();
 					},
 				},
 				this.createSession,
@@ -7720,6 +7890,34 @@ export class NativeSubagentRunner {
 				() => updatePresentation({ protocolReportPending: false }),
 			);
 			unsubscribeChild = childSession.subscribe((event: AgentSessionEvent) => {
+				if (event.type === "auto_retry_start") {
+					const diagnostic = truncateSubagentOutput(redactCredentialText(event.errorMessage), 512).text;
+					retryState = Object.freeze({
+						state: "scheduled" as const,
+						attempt: event.attempt,
+						maxAttempts: event.maxAttempts,
+						delayMs: event.delayMs,
+						...(diagnostic ? { diagnostic } : {}),
+					});
+					updatePresentation({ retry: retryState });
+					emit("subagent_retry", "running", undefined, undefined, undefined, undefined, undefined, retryState);
+					return;
+				}
+				if (event.type === "auto_retry_end") {
+					const diagnostic = event.finalError
+						? truncateSubagentOutput(redactCredentialText(event.finalError), 512).text
+						: undefined;
+					retryState = Object.freeze({
+						state: event.success ? ("recovered" as const) : ("failed" as const),
+						attempt: event.attempt,
+						maxAttempts: retryState?.maxAttempts ?? event.attempt,
+						...(retryState?.delayMs !== undefined ? { delayMs: retryState.delayMs } : {}),
+						...(diagnostic ? { diagnostic } : {}),
+					});
+					updatePresentation({ retry: retryState });
+					emit("subagent_retry", "running", undefined, undefined, undefined, undefined, undefined, retryState);
+					return;
+				}
 				if (event.type === "message_end" && event.message.role === "assistant" && tokenUsageReconciler) {
 					const assistant = event.message as AssistantMessage;
 					const estimate = estimateSubagentRequestTokens(childSession!.messages, assistant);
@@ -8037,6 +8235,8 @@ export class NativeSubagentRunner {
 						finalResult: { status, diagnostic: diagnosticMessage },
 					});
 					const partialReport = observeAssistantText();
+					const reportArtifact = spillAssistantOutput(partialReport);
+					const spillDiagnostic = reportSpillDiagnostic(partialReport, reportArtifact);
 					return {
 						...base,
 						childSessionId: childSession!.sessionId,
@@ -8058,6 +8258,7 @@ export class NativeSubagentRunner {
 							},
 							{ terminal: true },
 						),
+						...(reportArtifact ? { reportArtifact } : {}),
 						diagnostics: [
 							{
 								code:
@@ -8070,6 +8271,7 @@ export class NativeSubagentRunner {
 												: "output_truncated",
 								message: diagnosticMessage,
 							},
+							...(spillDiagnostic ? [spillDiagnostic] : []),
 						],
 					};
 				})();
@@ -8083,6 +8285,8 @@ export class NativeSubagentRunner {
 					...(failure.retryable ? { retryable: true } : {}),
 				};
 				const assistantText = childSession ? observeAssistantText() : "";
+				const reportArtifact = childSession ? spillAssistantOutput(assistantText) : undefined;
+				const spillDiagnostic = childSession ? reportSpillDiagnostic(assistantText, reportArtifact) : undefined;
 				const usage = observeUsage();
 				const status = control === "cancelled" ? "cancelled" : control === "timed_out" ? "timed_out" : "failed";
 				if (childSession) {
@@ -8120,7 +8324,8 @@ export class NativeSubagentRunner {
 								),
 							}
 						: {}),
-					diagnostics: [diagnostic],
+					...(reportArtifact ? { reportArtifact } : {}),
+					diagnostics: [diagnostic, ...(spillDiagnostic ? [spillDiagnostic] : [])],
 					...(usage ? { usage } : {}),
 				};
 			};
@@ -8272,11 +8477,13 @@ export class NativeSubagentRunner {
 
 			let runContinuation: () => Promise<SubagentResult>;
 			let runAfterInitial: (reportStartIndex: number) => Promise<SubagentResult>;
+			let runWrapUp: () => Promise<SubagentResult>;
 			let runFinalization: () => Promise<SubagentResult>;
 			let reportRepairAttempted = false;
 			const completeFromParsedReport = async (
 				report: SubagentParsedReport,
 				lastAssistant: AssistantMessage | undefined,
+				rawReportForArtifact?: string,
 			): Promise<SubagentResult> => {
 				if (authorityRevoked || (options.isAuthorityStillValid && !(await options.isAuthorityStillValid()))) {
 					authorityRevoked = true;
@@ -8332,7 +8539,7 @@ export class NativeSubagentRunner {
 					return protocolFailureResult(
 						"truncated",
 						"The complete parent-facing result envelope exceeded the approved UTF-8 output budget.",
-						JSON.stringify(report),
+						rawReportForArtifact ?? JSON.stringify(report),
 					);
 				}
 				const completedResult: SubagentResult = {
@@ -8346,7 +8553,7 @@ export class NativeSubagentRunner {
 						return protocolFailureResult(
 							"truncated",
 							"The complete parent-facing result envelope exceeded the approved UTF-8 output budget.",
-							JSON.stringify(report),
+							rawReportForArtifact ?? JSON.stringify(report),
 						);
 					}
 				} catch {
@@ -8495,7 +8702,7 @@ export class NativeSubagentRunner {
 				const parsed = parseSubagentReportOutcome(rawReport, normalized.maxOutputBytes, normalized.outputSchema);
 				if (parsed.kind !== "valid")
 					return tokenFallbackResult("Token budget finalization returned an invalid report.", true);
-				const finalResult = await completeFromParsedReport(parsed.report, finalAssistant);
+				const finalResult = await completeFromParsedReport(parsed.report, finalAssistant, rawReport);
 				tokenBudgetLedger.settle();
 				return finalResult;
 			};
@@ -8544,6 +8751,8 @@ export class NativeSubagentRunner {
 				const candidates = [...extractCandidateEvidencePaths(rawReport)]
 					.filter((path, index, all) => all.indexOf(path) === index)
 					.slice(0, CANDIDATE_EVIDENCE_PATH_LIMIT);
+				const reportArtifact = spillAssistantOutput(rawReport, "application/json");
+				const spillDiagnostic = reportSpillDiagnostic(rawReport, reportArtifact);
 				const artifact = buildWorkArtifact(
 					{ status: protocolStatus, diagnostic },
 					{
@@ -8571,7 +8780,11 @@ export class NativeSubagentRunner {
 					observedOutputBytes,
 					partial: false,
 					workArtifact: artifact,
-					diagnostics: [{ code: "report_protocol_failure", message: diagnostic }],
+					...(reportArtifact ? { reportArtifact } : {}),
+					diagnostics: [
+						{ code: "report_protocol_failure", message: diagnostic },
+						...(spillDiagnostic ? [spillDiagnostic] : []),
+					],
 					...(usage ? { usage } : {}),
 				};
 			};
@@ -8601,7 +8814,7 @@ export class NativeSubagentRunner {
 				}
 				const outcome = parseSubagentReportOutcome(rawReport, normalized.maxOutputBytes, normalized.outputSchema);
 				if (outcome.kind === "valid") {
-					return await completeFromParsedReport(outcome.report, lastAssistant);
+					return await completeFromParsedReport(outcome.report, lastAssistant, rawReport);
 				}
 				return protocolFailureResult(
 					outcome.kind === "truncated" ? "truncated" : "malformed",
@@ -8684,7 +8897,7 @@ export class NativeSubagentRunner {
 						const lastAssistant = [...session.messages.slice(repairStartIndex)]
 							.reverse()
 							.find((message) => message.role === "assistant") as AssistantMessage | undefined;
-						return await completeFromParsedReport(repairOutcome.report, lastAssistant);
+						return await completeFromParsedReport(repairOutcome.report, lastAssistant, rawRepair);
 					}
 					return {
 						...preserved,
@@ -8719,6 +8932,38 @@ export class NativeSubagentRunner {
 				}
 				reportRepairAttempted = true;
 				return attemptReportRepair(reportStartIndex, parsed);
+			};
+			runWrapUp = async (): Promise<SubagentResult> => {
+				wrapUpPromptStarted = true;
+				reportOnly = true;
+				supervisor?.setPhase("wrapping_up");
+				try {
+					childSession!.setActiveToolsByName([]);
+				} catch {
+					// The independent beforeTool guard still denies any wrap-up tool dispatch.
+				}
+				const turnLimit = chargeTurn("wrap-up");
+				if (turnLimit) return turnLimit;
+				const turnsBefore = observedTurns;
+				const wrapUpStartIndex = childSession!.messages.length;
+				const outcome = await awaitPrompt(
+					childSession!.prompt(SUBAGENT_WRAP_UP_PROMPT, {
+						expandPromptTemplates: false,
+						source: "extension",
+					}),
+				);
+				if (observedTurns === turnsBefore) observedTurns += 1;
+				if (outcome.kind === "needs_time") return retainForExtension(runWrapUp);
+				if (
+					outcome.kind === "cancelled" ||
+					outcome.kind === "timed_out" ||
+					outcome.kind === "output_truncated" ||
+					outcome.kind === "tool_budget_exhausted"
+				) {
+					return controlledFailure(outcome.kind);
+				}
+				if (outcome.kind === "error") throw classifySubagentFailure(outcome.error, "runtime", childToolFailed);
+				return runAfterInitial(wrapUpStartIndex);
 			};
 			runFinalization = async (): Promise<SubagentResult> => {
 				const turnLimit = chargeTurn("final report");
@@ -8786,6 +9031,7 @@ export class NativeSubagentRunner {
 					}
 					supervisor?.resumeFromControlledWait();
 				}
+				if (wrapUpRequested && !wrapUpPromptStarted) return runWrapUp();
 				const tokenBoundary = await ensureTokenWorkCapacity(INTERACTIVE_FINAL_REPORT_PROMPT);
 				if (tokenBoundary) return tokenBoundary;
 				if (liveControl?.hasSteered()) {
@@ -8915,6 +9161,8 @@ export class NativeSubagentRunner {
 				...(retrySafeStartup ? { retryable: true } : {}),
 			};
 			const assistantText = childSession ? observeAssistantText() : "";
+			const reportArtifact = childSession ? spillAssistantOutput(assistantText) : undefined;
+			const spillDiagnostic = childSession ? reportSpillDiagnostic(assistantText, reportArtifact) : undefined;
 			const usage = observeUsage();
 			const status = control === "cancelled" ? "cancelled" : control === "timed_out" ? "timed_out" : "failed";
 			if (childSession) {
@@ -8953,7 +9201,8 @@ export class NativeSubagentRunner {
 							),
 						}
 					: {}),
-				diagnostics: [diagnostic],
+				...(reportArtifact ? { reportArtifact } : {}),
+				diagnostics: [diagnostic, ...(spillDiagnostic ? [spillDiagnostic] : [])],
 				...(usage ? { usage } : {}),
 			});
 		} finally {
@@ -9137,7 +9386,10 @@ export async function runSubagentWithRecovery(
 		const attemptSummary = {
 			attempt,
 			status: result.status,
-			...(result.status !== "completed" && result.diagnostics[0]?.code
+			...(result.status !== "completed" &&
+			result.diagnostics[0]?.code &&
+			result.diagnostics[0].code !== "report_spilled" &&
+			result.diagnostics[0].code !== "report_artifact_failure"
 				? { failureCode: result.diagnostics[0].code }
 				: {}),
 			observedOutputBytes: result.observedOutputBytes,
@@ -9824,6 +10076,7 @@ export async function runResolvedSubagentBatch(
 								tokenBudgetLedger,
 								model: request.retryModel ?? task.model,
 								modelRuntime: options.modelRuntime,
+								settingsManager: options.settingsManager,
 								projectTrusted: request.projectTrusted,
 								unsafeHostExec: options.unsafeHostExec,
 								taskId: task.id,
@@ -10673,6 +10926,9 @@ function formatToolResult(result: SubagentResult, verification: SubagentVerifica
 				: `Parent verification: failed. ${verification.reason}`,
 		...(requirementRows.length > 0 ? [requirementRows.join("\n")] : []),
 		...(artifactRows.length > 0 ? [artifactRows.join("\n")] : []),
+		result.reportArtifact
+			? `Oversized report capture: ${result.reportArtifact.path} (${result.reportArtifact.originalBytes} bytes${result.reportArtifact.truncated ? ", artifact truncated" : ""}).`
+			: undefined,
 		result.attention ? formatRuntimeAttention(result.attention) : undefined,
 		verification.unresolvedClaims.length > 0
 			? `Unresolved claims for parent synthesis: ${verification.unresolvedClaims.join(" | ")}`
@@ -10726,6 +10982,9 @@ function formatSubagentJobInspection(inspection: SubagentJobInspection): string 
 					]
 						.filter((part): part is string => part !== undefined)
 						.join(" ")
+				: undefined,
+			result?.reportArtifact
+				? `Oversized report capture: ${result.reportArtifact.path} (${result.reportArtifact.originalBytes} bytes${result.reportArtifact.truncated ? ", artifact truncated" : ""}).`
 				: undefined,
 			result && result.diagnostics.length > 0
 				? `Diagnostics: ${result.diagnostics.map((diagnostic) => diagnostic.code).join(", ")}.`
@@ -12208,6 +12467,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	}
 	const subYoloEnabled = (): boolean => flagEnabled(ice, "sub-yolo");
 	const agentDir = options.agentDir ?? getAgentDir();
+	const subagentArtifactRoot = join(agentDir, "artifacts", "subagent");
 	const registeredMcpProxy: IceSubagentMcpAdapter = {
 		getIdentity: () => parentMcpAdapters.get(ice.events),
 		listAuthorizedTools: () => parentMcpAdapters.get(ice.events)?.listAuthorizedTools() ?? [],
@@ -12252,6 +12512,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	options.agentViewBridge?.connectLiveSessions(liveSessions);
 	const runner = new NativeSubagentRunner({
 		agentDir,
+		artifactRoot: subagentArtifactRoot,
 		liveSessionRegistry: liveSessions,
 		agentViewBridge: options.agentViewBridge,
 		supervisorRegistry,
@@ -13269,6 +13530,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 						tokenBudgetLedger,
 						model: childRequest.retryModel ?? model,
 						modelRuntime: ctx.modelRegistry.getRuntime(),
+						settingsManager,
 						projectTrusted: childRequest.projectTrusted,
 						unsafeHostExec,
 						attempt,
@@ -13634,6 +13896,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 								tokenBudgetLedger,
 								model,
 								modelRuntime,
+								settingsManager,
 								projectTrusted: childRequest.projectTrusted,
 								unsafeHostExec,
 								attempt,
@@ -13897,6 +14160,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					totalBudgetBytes: params.totalBudgetBytes,
 					totalTokenBudget: params.totalTokenBudget,
 					modelRuntime: ctx.modelRegistry.getRuntime(),
+					settingsManager,
 					unsafeHostExec,
 					signal,
 					timeoutMs: params.timeoutMs,
@@ -14076,6 +14340,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					totalBudgetBytes: params.totalBudgetBytes,
 					totalTokenBudget: params.totalTokenBudget,
 					modelRuntime: ctx.modelRegistry.getRuntime(),
+					settingsManager,
 					unsafeHostExec,
 					signal,
 					timeoutMs: params.timeoutMs,
@@ -14395,6 +14660,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 		}
 		jobs = new SubagentJobRegistry({
 			ownerSessionId: ctx.sessionManager.getSessionId(),
+			reportArtifactRoot: subagentArtifactRoot,
 			persist: (snapshot) => ice.appendEntry(JOB_ENTRY_TYPE, snapshot),
 			notify: queueCompletion,
 		});
