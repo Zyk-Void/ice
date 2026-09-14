@@ -78,12 +78,13 @@ describe("Mistral reasoning mode selection", () => {
 		expect(payload.promptMode).toBeUndefined();
 	});
 
-	it("uses the session id as prompt cache key", async () => {
+	it("uses promptCacheKey independently from the session id", async () => {
 		const payload = await capturePayload(getModel("mistral", "mistral-large-latest"), {
 			sessionId: "session-123",
+			promptCacheKey: "shared-fork-prefix",
 		});
 
-		expect(payload.promptCacheKey).toBe("session-123");
+		expect(payload.promptCacheKey).toBe("shared-fork-prefix");
 	});
 
 	it("omits prompt cache key when cache retention is disabled", async () => {

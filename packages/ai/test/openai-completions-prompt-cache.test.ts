@@ -93,6 +93,7 @@ describe("openai-completions prompt caching", () => {
 		options?: {
 			cacheRetention?: "none" | "short" | "long";
 			sessionId?: string;
+			promptCacheKey?: string;
 			headers?: Record<string, string>;
 		},
 		model: Model<"openai-completions"> = createModel(),
@@ -119,6 +120,17 @@ describe("openai-completions prompt caching", () => {
 		expect(payload?.prompt_cache_retention).toBeUndefined();
 	});
 
+	it("uses promptCacheKey for the cache payload while keeping session affinity separate", async () => {
+		const model = createModel({ compat: { sendSessionAffinityHeaders: true } });
+		const { payload, headers } = await captureRequest(
+			{ sessionId: "child-session", promptCacheKey: "shared-fork-prefix" },
+			model,
+		);
+
+		expect(payload?.prompt_cache_key).toBe("shared-fork-prefix");
+		expect(headers.session_id).toBe("child-session");
+	});
+
 	it("sets prompt_cache_retention to 24h for direct OpenAI requests when cacheRetention is long", async () => {
 		const { payload } = await captureRequest({ cacheRetention: "long", sessionId: "session-456" });
 
@@ -134,7 +146,11 @@ describe("openai-completions prompt caching", () => {
 	});
 
 	it("omits prompt cache fields when cacheRetention is none", async () => {
-		const { payload } = await captureRequest({ cacheRetention: "none", sessionId: "session-789" });
+		const { payload } = await captureRequest({
+			cacheRetention: "none",
+			sessionId: "session-789",
+			promptCacheKey: "shared-fork-prefix",
+		});
 
 		expect(payload?.prompt_cache_key).toBeUndefined();
 		expect(payload?.prompt_cache_retention).toBeUndefined();

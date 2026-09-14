@@ -209,6 +209,14 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 */
 	sessionId?: string;
 	/**
+	 * Optional prompt-cache key independent from the conversation/session identity.
+	 * Adapters may use this only for prompt-cache affinity (including provider
+	 * request headers); it must never be used for continuation state, WebSocket
+	 * session reuse, or response
+	 * identifiers. When omitted, supported adapters may fall back to sessionId.
+	 */
+	promptCacheKey?: string;
+	/**
 	 * WebSocket connect timeout in milliseconds for providers that support
 	 * WebSocket transports. This covers the connection/open handshake only;
 	 * stream idleness after connection uses timeoutMs.

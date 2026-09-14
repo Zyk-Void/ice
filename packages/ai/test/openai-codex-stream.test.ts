@@ -554,9 +554,9 @@ describe("openai-codex streaming", () => {
 				expect(headers?.has("session_id")).toBe(false);
 				expect(headers?.get("x-client-request-id")).toBe(sessionId);
 
-				// Verify sessionId is set in request body as prompt_cache_key
+				// Session identity stays in headers while prompt cache affinity uses its separate key.
 				const body = decodeCodexRequestBody(init?.body);
-				expect(body?.prompt_cache_key).toBe(sessionId);
+				expect(body?.prompt_cache_key).toBe("shared-fork-prefix");
 
 				return new Response(stream, {
 					status: 200,
@@ -586,7 +586,12 @@ describe("openai-codex streaming", () => {
 			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
 		};
 
-		const streamResult = streamOpenAICodexResponses(model, context, { apiKey: token, sessionId, transport: "sse" });
+		const streamResult = streamOpenAICodexResponses(model, context, {
+			apiKey: token,
+			sessionId,
+			promptCacheKey: "shared-fork-prefix",
+			transport: "sse",
+		});
 		await streamResult.result();
 	});
 
@@ -2129,6 +2134,181 @@ describe("openai-codex streaming", () => {
 			deltaRequests: 1,
 			lastDeltaInputItems: 2,
 			lastPreviousResponseId: "resp_1",
+		});
+	});
+
+	it("isolates websocket continuation state for siblings sharing a prompt cache key", async () => {
+		const token = mockToken();
+		const sentBodies: Array<{
+			connectionId: number;
+			input: unknown[];
+			previous_response_id?: string;
+			prompt_cache_key?: string;
+		}> = [];
+		const connectionSessions = new Map<number, string | undefined>();
+		let connections = 0;
+		let responses = 0;
+
+		class MockWebSocket {
+			static OPEN = 1;
+			static CLOSED = 3;
+			readyState = MockWebSocket.OPEN;
+			private readonly connectionId = ++connections;
+			private listeners = new Map<string, Set<(event: unknown) => void>>();
+
+			constructor(_url: string, protocols?: string | string[] | { headers?: Record<string, string> }) {
+				const headers =
+					protocols && typeof protocols === "object" && !Array.isArray(protocols) ? protocols.headers : undefined;
+				connectionSessions.set(this.connectionId, headers?.["session-id"]);
+				queueMicrotask(() => this.dispatch("open", {}));
+			}
+
+			addEventListener(type: string, listener: (event: unknown) => void): void {
+				let listeners = this.listeners.get(type);
+				if (!listeners) {
+					listeners = new Set();
+					this.listeners.set(type, listeners);
+				}
+				listeners.add(listener);
+			}
+
+			removeEventListener(type: string, listener: (event: unknown) => void): void {
+				this.listeners.get(type)?.delete(listener);
+			}
+
+			send(data: string): void {
+				const body = JSON.parse(data) as {
+					input: unknown[];
+					previous_response_id?: string;
+					prompt_cache_key?: string;
+				};
+				sentBodies.push({ ...body, connectionId: this.connectionId });
+				const responseId = `sibling-response-${++responses}`;
+				const events = [
+					{ type: "response.created", response: { id: responseId } },
+					{
+						type: "response.output_item.added",
+						item: {
+							type: "message",
+							id: `message-${responses}`,
+							role: "assistant",
+							status: "in_progress",
+							content: [],
+						},
+					},
+					{
+						type: "response.output_item.done",
+						item: {
+							type: "message",
+							id: `message-${responses}`,
+							role: "assistant",
+							status: "completed",
+							content: [{ type: "output_text", text: `reply-${responses}` }],
+						},
+					},
+					{
+						type: "response.completed",
+						response: {
+							id: responseId,
+							status: "completed",
+							usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
+						},
+					},
+				];
+				queueMicrotask(() => {
+					for (const event of events) this.dispatch("message", { data: JSON.stringify(event) });
+				});
+			}
+
+			close(): void {
+				this.readyState = MockWebSocket.CLOSED;
+			}
+
+			private dispatch(type: string, event: unknown): void {
+				for (const listener of this.listeners.get(type) ?? []) listener(event);
+			}
+		}
+
+		vi.stubGlobal("WebSocket", MockWebSocket);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response("unexpected fetch", { status: 500 })),
+		);
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.1-codex",
+			name: "GPT-5.1 Codex",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const cacheKey = "shared-fork-prefix";
+		const firstContext: Context = {
+			systemPrompt: "You are a helpful assistant.",
+			messages: [{ role: "user", content: "Sibling A first", timestamp: 1 }],
+		};
+		const first = await streamOpenAICodexResponses(model, firstContext, {
+			apiKey: token,
+			sessionId: "child-session-a",
+			promptCacheKey: cacheKey,
+			transport: "websocket-cached",
+		}).result();
+		await streamOpenAICodexResponses(
+			model,
+			{
+				...firstContext,
+				messages: [...firstContext.messages, first, { role: "user", content: "Sibling A follow-up", timestamp: 2 }],
+			},
+			{
+				apiKey: token,
+				sessionId: "child-session-a",
+				promptCacheKey: cacheKey,
+				transport: "websocket-cached",
+			},
+		).result();
+		await streamOpenAICodexResponses(
+			model,
+			{
+				systemPrompt: "You are a helpful assistant.",
+				messages: [{ role: "user", content: "Sibling B first", timestamp: 3 }],
+			},
+			{
+				apiKey: token,
+				sessionId: "child-session-b",
+				promptCacheKey: cacheKey,
+				transport: "websocket-cached",
+			},
+		).result();
+
+		expect(connections).toBe(2);
+		expect([...connectionSessions.values()]).toEqual(["child-session-a", "child-session-b"]);
+		expect(sentBodies.map((body) => body.connectionId)).toEqual([1, 1, 2]);
+		expect(sentBodies.map((body) => body.prompt_cache_key)).toEqual([cacheKey, cacheKey, cacheKey]);
+		expect(sentBodies[0]?.previous_response_id).toBeUndefined();
+		expect(sentBodies[1]?.previous_response_id).toBe("sibling-response-1");
+		expect(sentBodies[2]?.previous_response_id).toBeUndefined();
+		expect(sentBodies[2]?.input).toEqual([
+			{ role: "user", content: [{ type: "input_text", text: "Sibling B first" }] },
+		]);
+		expect(getOpenAICodexWebSocketDebugStats("child-session-a")).toMatchObject({
+			requests: 2,
+			connectionsCreated: 1,
+			connectionsReused: 1,
+			deltaRequests: 1,
+			lastPreviousResponseId: "sibling-response-1",
+		});
+		expect(getOpenAICodexWebSocketDebugStats("child-session-b")).toMatchObject({
+			requests: 1,
+			connectionsCreated: 1,
+			connectionsReused: 0,
+			fullContextRequests: 1,
+			deltaRequests: 0,
+			lastPreviousResponseId: undefined,
 		});
 	});
 

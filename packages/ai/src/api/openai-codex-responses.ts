@@ -280,7 +280,11 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			);
 			const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
 			const codexSessionId = clampOpenAIPromptCacheKey(cacheSessionId);
-			let body = buildRequestBody(model, context, options, codexSessionId, grammarToolInputProperties);
+			const promptCacheKey =
+				options?.cacheRetention === "none"
+					? undefined
+					: clampOpenAIPromptCacheKey(options?.promptCacheKey ?? options?.sessionId);
+			let body = buildRequestBody(model, context, options, promptCacheKey, grammarToolInputProperties);
 			const nextBody = await options?.onPayload?.(body, model);
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
@@ -538,7 +542,7 @@ function buildRequestBody(
 	model: Model<"openai-codex-responses">,
 	context: Context,
 	options: OpenAICodexResponsesOptions | undefined,
-	cacheSessionId: string | undefined,
+	promptCacheKey: string | undefined,
 	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
 		context.tools,
 		model.compat?.supportsOpenAIGrammarTools ?? false,
@@ -566,7 +570,7 @@ function buildRequestBody(
 		input: messages,
 		text: { verbosity: options?.textVerbosity || "low" },
 		include: ["reasoning.encrypted_content"],
-		prompt_cache_key: cacheSessionId,
+		prompt_cache_key: promptCacheKey,
 		...(options?.maxTokens !== undefined || options?.hardMaxOutputTokens !== undefined
 			? { max_output_tokens: clampMaxTokensToHardLimit(options?.maxTokens, options?.hardMaxOutputTokens) }
 			: {}),

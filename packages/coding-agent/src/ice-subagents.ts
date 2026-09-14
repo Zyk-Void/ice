@@ -5321,9 +5321,129 @@ export function normalizeWriterRequest(
 
 type SelectedPromptContent = { name: string; content: string };
 
+function compareSubagentCacheText(left: string, right: string): number {
+	return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function stableSubagentCacheJson(value: unknown): string {
+	if (value === null) return "null";
+	if (value === undefined) return "undefined";
+	if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+		return JSON.stringify(value);
+	}
+	if (Array.isArray(value)) return `[${value.map(stableSubagentCacheJson).join(",")}]`;
+	if (typeof value === "object") {
+		return `{${Object.entries(value as Record<string, unknown>)
+			.sort(([left], [right]) => compareSubagentCacheText(left, right))
+			.map(([key, child]) => `${JSON.stringify(key)}:${stableSubagentCacheJson(child)}`)
+			.join(",")}}`;
+	}
+	throw new Error("Subagent prompt cache material must be JSON-compatible.");
+}
+
+function sortSubagentCacheCollection<T>(values: readonly T[]): T[] {
+	return [...values].sort((left, right) =>
+		compareSubagentCacheText(stableSubagentCacheJson(left), stableSubagentCacheJson(right)),
+	);
+}
+
 function loadSelectedPromptContent(resource: SubagentResourceProvenance): SelectedPromptContent {
 	const { body } = parseFrontmatter<Record<string, unknown>>(readValidatedResource(resource).toString("utf8"));
 	return { name: resource.name, content: redactCredentialText(body.trim()) };
+}
+
+/**
+ * Derive a provider prompt-cache key from the common, non-task fork contract.
+ * The task is intentionally excluded because sibling tasks must retain distinct
+ * conversation/session identities while sharing only the stable prefix affinity.
+ */
+export function deriveSubagentPromptCacheKey(
+	request: NormalizedSubagentRequest,
+	model: Model<Api> | undefined,
+	childTools: readonly string[],
+	unsafeHostExec = false,
+): string | undefined {
+	if (request.contextMode !== "fork") return undefined;
+	const material = {
+		version: 1,
+		model: model
+			? {
+					api: model.api,
+					provider: model.provider,
+					id: model.id,
+					baseUrl: model.baseUrl,
+					compat: model.compat ?? null,
+				}
+			: null,
+		agentKind: request.agentKind,
+		role: request.role,
+		profile: {
+			name: request.profile.name,
+			source: request.profile.source,
+			sourceHash: request.profile.sourceHash,
+			systemPromptHash: hashSource(request.profile.systemPrompt),
+		},
+		contextMode: request.contextMode,
+		scope: {
+			// Scope order is an authority set, not a semantic message sequence.
+			roots: sortSubagentCacheCollection(request.scope.roots),
+			targets: sortSubagentCacheCollection(request.scope.targets ?? []),
+		},
+		authority: {
+			projectTrusted: request.projectTrusted,
+			allowExternal: request.allowExternal,
+			unsafeHostExec,
+		},
+		execution: {
+			...request.execution,
+			tools: request.execution.tools ? sortSubagentCacheCollection(request.execution.tools) : undefined,
+		},
+		timeoutMs: request.timeoutMs,
+		// Only collections canonicalized in the provider-visible request are sorted above.
+		// Resource/tool ordering below remains provider-visible and therefore part of cache identity.
+		childTools: [...childTools],
+		resources: {
+			skills: request.resources.skills.map(({ kind, name, source, canonicalPath, sourceHash }) => ({
+				kind,
+				name,
+				source,
+				canonicalPath,
+				sourceHash,
+			})),
+			prompts: request.resources.prompts.map(({ kind, name, source, canonicalPath, sourceHash }) => ({
+				kind,
+				name,
+				source,
+				canonicalPath,
+				sourceHash,
+			})),
+			context: request.resources.context.map(({ kind, name, source, canonicalPath, sourceHash }) => ({
+				kind,
+				name,
+				source,
+				canonicalPath,
+				sourceHash,
+			})),
+		},
+		handoff: {
+			contextPacket: request.contextPacket.items,
+			fork: request.forkContext.messages,
+		},
+		selectedMcpTools: [...(request.selectedMcpTools ?? [])],
+		mcpAuthorizations: (request.mcpAuthorizations ?? []).map(({ selector, access, parameters, description }) => ({
+			selector,
+			access,
+			parameters: parameters ?? null,
+			description: description ?? null,
+		})),
+		delegatedTools: (request.delegatedTools ?? []).map(({ name, origin, access, fingerprint }) => ({
+			name,
+			origin,
+			access,
+			fingerprint,
+		})),
+	};
+	return `ice-fork-v1-${hashSource(stableSubagentCacheJson(material)).slice(0, 52)}`;
 }
 
 export function buildSubagentPrompt(
@@ -5331,8 +5451,12 @@ export function buildSubagentPrompt(
 	selectedPromptContents: readonly SelectedPromptContent[] = request.resources.prompts.map(loadSelectedPromptContent),
 	unsafeHostExec = false,
 ): string {
-	const scope = request.scope.roots.map((root) => `- ${root}`).join("\n");
-	const targets = request.scope.targets?.map((target) => `- ${relative(request.cwd, target) || "."}`).join("\n");
+	const scope = sortSubagentCacheCollection(request.scope.roots)
+		.map((root) => `- ${root}`)
+		.join("\n");
+	const targets = sortSubagentCacheCollection(request.scope.targets ?? [])
+		.map((target) => `- ${relative(request.cwd, target) || "."}`)
+		.join("\n");
 	const selectedPrompts = selectedPromptContents
 		.map(
 			({ name, content }) =>
@@ -5386,9 +5510,10 @@ export function buildSubagentPrompt(
 		: contextHandoff;
 	// W12/W15: the execution contract is advisory prompt context; runtime budgets
 	// and tool eligibility are enforced by NativeSubagentRunner, never by prose.
+	const executionTools = request.execution.tools ? sortSubagentCacheCollection(request.execution.tools) : undefined;
 	const executionContractNote =
-		request.execution.tools !== undefined
-			? `Execution contract: at most ${request.execution.maxTurns} model turns, ${request.execution.maxToolCalls} tool calls, tools [${request.execution.tools.join(", ") || "none"}]. Budgets are enforced by the runtime; do not attempt extra turns or tools.`
+		executionTools !== undefined
+			? `Execution contract: at most ${request.execution.maxTurns} model turns, ${request.execution.maxToolCalls} tool calls, tools [${executionTools.join(", ") || "none"}]. Budgets are enforced by the runtime; do not attempt extra turns or tools.`
 			: `Execution contract: at most ${request.execution.maxTurns} model turns and ${request.execution.maxToolCalls} tool calls. Budgets are enforced by the runtime; do not attempt extra turns or tools.`;
 	const tokenContractNote =
 		request.execution.maxTotalTokens === undefined
@@ -5412,6 +5537,8 @@ export function buildSubagentPrompt(
 				].join("\n")
 			: undefined,
 		selectedPrompts ? `Explicitly selected prompt content:\n${selectedPrompts}` : undefined,
+		`Keep the complete JSON report within ${request.maxOutputBytes} UTF-8 bytes.`,
+		reportContract,
 		...authorizedTaskHandoff,
 		acceptanceContract ? ["Acceptance criteria:", acceptanceContract].join("\n") : undefined,
 		outputSchemaContract,
@@ -6406,6 +6533,8 @@ export interface NativeSubagentSession {
 	tools: string[];
 	prompt: string;
 	diagnostics?: readonly SubagentDiagnostic[];
+	/** Stable affinity for the shared fork prefix; independent of child session identity. */
+	promptCacheKey?: string;
 }
 
 export interface SubagentLiveSession {
@@ -6925,6 +7054,12 @@ export async function createNativeSubagentSession(
 		if (!childTools.includes(definition.name)) childTools.push(definition.name);
 		eligibleToolSet.add(definition.name);
 	}
+	const promptCacheKey = deriveSubagentPromptCacheKey(
+		options.request,
+		options.model,
+		childTools,
+		options.unsafeHostExec === true,
+	);
 	const scopedMcpTools = wrapSubagentToolDefinitions([...mcpDefinitions, ...externalDefinitions], policyBox);
 	const created = await createSession({
 		cwd: options.request.cwd,
@@ -6976,6 +7111,15 @@ export async function createNativeSubagentSession(
 			...resolveSubagentSamplingOptions(created.session.model ?? options.model!, options.request.execution)
 				.diagnostics,
 		);
+	}
+	if (promptCacheKey && childAgent?.streamFunction) {
+		const originalStreamFunction = childAgent.streamFunction;
+		childAgent.streamFunction = ((model: Model<Api>, context: Context, streamOptions: StreamOptions = {}) =>
+			originalStreamFunction(model, context, {
+				...streamOptions,
+				promptCacheKey:
+					streamOptions.cacheRetention === "none" ? undefined : (streamOptions.promptCacheKey ?? promptCacheKey),
+			})) as StreamFunction;
 	}
 	if (
 		childAgent?.streamFunction &&
@@ -7070,6 +7214,7 @@ export async function createNativeSubagentSession(
 		tools: childTools,
 		prompt,
 		...(streamDiagnostics.length > 0 ? { diagnostics: Object.freeze([...streamDiagnostics]) } : {}),
+		...(promptCacheKey ? { promptCacheKey } : {}),
 	};
 }
 

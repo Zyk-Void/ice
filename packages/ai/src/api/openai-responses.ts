@@ -145,13 +145,14 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
+			const promptCacheKey = cacheRetention === "none" ? undefined : options?.promptCacheKey;
 			const compat = getCompat(model);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
 				context.tools,
 				compat.supportsOpenAIGrammarTools,
 			);
 			const client = createClient(model, context, apiKey, options?.headers, options?.fetch, cacheSessionId);
-			let params = buildParams(model, context, options, compat, grammarToolInputProperties);
+			let params = buildParams(model, context, options, compat, grammarToolInputProperties, promptCacheKey);
 			const corePreviousResponseId =
 				"previous_response_id" in params
 					? (params as ResponseCreateParamsStreaming & { previous_response_id?: string }).previous_response_id
@@ -403,6 +404,7 @@ function buildParams(
 		context.tools,
 		compat.supportsOpenAIGrammarTools,
 	),
+	promptCacheKey?: string,
 ) {
 	const toolPlacement = splitDeferredTools(context, compat.supportsToolSearch);
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
@@ -420,7 +422,8 @@ function buildParams(
 		model: model.id,
 		input: messages,
 		stream: true,
-		prompt_cache_key: cacheRetention === "none" ? undefined : clampOpenAIPromptCacheKey(options?.sessionId),
+		prompt_cache_key:
+			cacheRetention === "none" ? undefined : clampOpenAIPromptCacheKey(promptCacheKey ?? options?.sessionId),
 		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
 		prompt_cache_options: disableImplicitPromptCache ? { mode: "explicit" } : undefined,
 		store: false,
