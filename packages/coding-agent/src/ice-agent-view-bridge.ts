@@ -6,6 +6,22 @@ import { redactCredentialText } from "./utils/redact.ts";
 export type IceAgentViewKind = "parent" | "subagent" | "historical-subagent";
 export type IceAgentViewAuthority = "safe" | "yolo";
 
+/** Bounded semantic theme tokens accepted by subagent profile presentation metadata. */
+export const SUBAGENT_PROFILE_COLORS = ["accent", "success", "warning", "error", "muted", "dim", "text"] as const;
+export type SubagentProfileColor = (typeof SUBAGENT_PROFILE_COLORS)[number];
+
+export function isSubagentProfileColor(value: unknown): value is SubagentProfileColor {
+	return typeof value === "string" && SUBAGENT_PROFILE_COLORS.includes(value as SubagentProfileColor);
+}
+
+/** View-facing aliases retain the bridge vocabulary without widening the profile contract. */
+export const ICE_AGENT_VIEW_COLORS = SUBAGENT_PROFILE_COLORS;
+export type IceAgentViewColor = SubagentProfileColor;
+
+export function isIceAgentViewColor(value: unknown): value is IceAgentViewColor {
+	return isSubagentProfileColor(value);
+}
+
 export interface IceAgentViewFinalResult {
 	readonly status: string;
 	/** True only after the parent verifier has accepted the bounded child result. */
@@ -91,6 +107,7 @@ export interface IceAgentViewDescriptor {
 	readonly interactionMode?: IceAgentViewInteractionMode;
 	readonly controlState?: IceAgentViewControlState;
 	readonly authority?: IceAgentViewAuthority;
+	readonly color?: IceAgentViewColor;
 	readonly model?: string;
 	readonly status?: string;
 	readonly cwd?: string;
@@ -106,6 +123,7 @@ export interface IceAgentViewLiveSession {
 	readonly taskId?: string;
 	readonly model?: string;
 	readonly authority?: IceAgentViewAuthority;
+	readonly color?: IceAgentViewColor;
 	readonly presentation?: IceAgentViewPresentation;
 	readonly session: AgentSession;
 	readonly control?: IceAgentViewLiveSessionControl;
@@ -130,6 +148,7 @@ export interface IceAgentViewSnapshotInput {
 	readonly status: string;
 	readonly retentionState?: "reusable" | "history-only";
 	readonly authority?: IceAgentViewAuthority;
+	readonly color?: IceAgentViewColor;
 	readonly startedAt?: number;
 	readonly finishedAt: number;
 	readonly messages: readonly AgentMessage[];
@@ -508,6 +527,7 @@ export class IceAgentViewBridge {
 		const id = input.runId;
 		const clonedMessages = cloneBoundedMessages(input.messages);
 		const presentation = normalizeIceAgentViewPresentation(input.presentation, clonedMessages.sourceIndices);
+		const color = isIceAgentViewColor(input.color) ? input.color : undefined;
 		// Re-registering a run makes it the newest retained snapshot.
 		this.historical.delete(id);
 		this.interactionModes.delete(id);
@@ -525,6 +545,7 @@ export class IceAgentViewBridge {
 				readOnly: true,
 				interactionMode: "mirror" as const,
 				authority: input.authority,
+				...(color ? { color } : {}),
 				model: input.model,
 				status: input.status,
 				cwd: input.cwd,
@@ -597,6 +618,7 @@ export class IceAgentViewBridge {
 				interactionMode,
 				controlState,
 				authority: entry.authority,
+				color: entry.color,
 				presentation: runtimeAttention
 					? normalizeIceAgentViewPresentation({ ...entry.presentation, runtimeAttention })
 					: entry.presentation,

@@ -201,6 +201,20 @@ describe("subagent observatory reducer", () => {
 		]);
 	});
 
+	it("propagates bounded profile colors and rejects invalid runtime values", () => {
+		let state = createObservatoryState();
+		state = apply(state, runtimeEvent("subagent_started", "running", { event: { color: "success" } }));
+		expect(state.active[0]?.color).toBe("success");
+
+		state = apply(
+			state,
+			runtimeEvent("subagent_progress", "running", {
+				event: { color: "not-a-theme-token" as unknown as SubagentEvent["color"] },
+			}),
+		);
+		expect(state.active[0]?.color).toBe("success");
+	});
+
 	it("keeps batch children independent", () => {
 		let state = createObservatoryState();
 		state = apply(

@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added bounded file-agent profile preferences for `temperature`, `top-p`, `color`, and discovery-only `hidden`, with central policy resolution, requested/effective listing metadata, and provider-compatibility diagnostics.
+
 ### Breaking Changes
 
 - Renamed the product to ICE. The only supported executable is `ice`.

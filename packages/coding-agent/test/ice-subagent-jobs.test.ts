@@ -209,13 +209,21 @@ describe("durable subagent jobs", () => {
 				maxTurns: 8,
 				maxToolCalls: 16,
 				maxOutputBytes: 24 * 1024,
+				temperature: 0.2,
+				topP: 0.8,
 				tools: ["read"],
 				sourceHash: "a".repeat(64),
 			},
 		);
 		await flush();
 		const inspection = registry.inspect(accepted.jobId);
-		expect(inspection.job.contract).toMatchObject({ thinking: "high", maxTurns: 8, tools: ["read"] });
+		expect(inspection.job.contract).toMatchObject({
+			thinking: "high",
+			maxTurns: 8,
+			temperature: 0.2,
+			topP: 0.8,
+			tools: ["read"],
+		});
 		expect(inspection.result).toMatchObject({
 			status: "completed",
 			payload: { severity: "high" },
@@ -223,6 +231,16 @@ describe("durable subagent jobs", () => {
 			hookRecords: [{ hookId: "policy", outcome: "continue" }],
 		});
 		expect(snapshots.at(-1)?.job.contract?.sourceHash).toBe("a".repeat(64));
+
+		const trusted = structuredClone(snapshots.at(-1)!);
+		const invalidSampling = structuredClone(trusted);
+		invalidSampling.sequence += 1;
+		invalidSampling.job.contract!.temperature = 2.1;
+		const restored = createRegistry();
+		restored.restore(
+			[trusted, invalidSampling].map((snapshot) => ({ type: "custom", customType: JOB_ENTRY_TYPE, data: snapshot })),
+		);
+		expect(restored.inspect(accepted.jobId).job.contract).toMatchObject({ temperature: 0.2, topP: 0.8 });
 	});
 
 	it("persists a bounded token budget only under its immutable contract", async () => {
