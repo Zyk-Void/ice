@@ -619,6 +619,72 @@ describe("ICE subagent contracts", () => {
 		expect(manage?.description).toMatch(/preserves run ID.*model.*profile.*scope.*tool authority.*output budget/i);
 	});
 
+	it("exposes the retained-lifecycle management actions without authority fields", async () => {
+		const harness = await createAsyncToolHarness();
+		const manage = harness.tools.get("manage_subagent");
+		expect(manage).toBeDefined();
+		const schema = manage?.parameters as { properties?: Record<string, unknown> };
+		const actions = JSON.stringify(schema.properties?.action ?? {});
+		for (const action of ["inspect", "peek", "wait", "extend", "follow_up", "stop", "detach"]) {
+			expect(actions).toContain(`"${action}"`);
+		}
+		expect(schema.properties?.waitMs).toMatchObject({
+			minimum: 1,
+			maximum: iceSubagentsModule.SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS,
+		});
+		expect(manage?.description).toMatch(/detach retains the same child/i);
+		expect(manage?.description).toMatch(/instead of spending the extension reserve/i);
+	});
+
+	it("exposes background as a delegate control option that cannot widen authority", async () => {
+		const harness = await createAsyncToolHarness();
+		const delegate = harness.tools.get("delegate");
+		const schema = delegate?.parameters as { properties?: Record<string, unknown> };
+		expect(schema.properties?.background).toMatchObject({ type: "boolean" });
+		expect(schema.properties?.background).toHaveProperty("description");
+		for (const field of ["managed", "supervisor", "budget", "authority"]) {
+			expect(schema.properties).not.toHaveProperty(field);
+		}
+		expect(delegate?.description).toMatch(/background: true/);
+	});
+
+	it("routes manage_subagent actions through owner-scoped validation", async () => {
+		const harness = await createAsyncToolHarness();
+		const manage = harness.tools.get("manage_subagent")!;
+		type ManageOutcome = { isError?: boolean; details?: { error?: { code?: string; message?: string } } };
+		const execute = async (params: Record<string, unknown>): Promise<ManageOutcome> =>
+			(await manage.execute(
+				"call-manage",
+				{ runId: "run-unknown-0001", ...params } as never,
+				undefined,
+				undefined,
+				harness.context,
+			)) as ManageOutcome;
+
+		for (const action of ["peek", "inspect", "detach", "stop", "extend"] as const) {
+			const rejected = await execute({ action });
+			expect(rejected.isError).toBe(true);
+			expect(rejected.details?.error?.code).toBe("child_protocol_failure");
+		}
+		// Only the detach branch reports the detach-specific rejection.
+		expect((await execute({ action: "detach" })).details?.error?.message).toMatch(/can be detached/i);
+		// follow_up requires a stable requestId and a bounded message.
+		expect((await execute({ action: "follow_up" })).details?.error?.code).toBe("malformed_result");
+
+		// waitMs is validated before ownership, proving the wait branch reaches the
+		// bounded management wait rather than any child execution path.
+		for (const waitMs of [0, iceSubagentsModule.SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS + 1]) {
+			const outOfWindow = await execute({ action: "wait", waitMs });
+			expect(outOfWindow.isError).toBe(true);
+			expect(outOfWindow.details?.error?.code).toBe("malformed_result");
+			expect(outOfWindow.details?.error?.message).toMatch(/Management wait must be an integer between 1 and/);
+		}
+		const inWindow = await execute({ action: "wait", waitMs: 50 });
+		expect(inWindow.isError).toBe(true);
+		expect(inWindow.details?.error?.code).toBe("child_protocol_failure");
+		expect(inWindow.details?.error?.message).toMatch(/owned by this parent session/);
+	});
+
 	it("shares one directories-only scope schema across delegated tools", async () => {
 		const harness = await createAsyncToolHarness();
 		type DirectToolSchema = { properties?: { scope?: object } };

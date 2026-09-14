@@ -10,6 +10,23 @@ Core design:
 
 > Ice decides, reasons, routes models, and owns interaction. ICE constrains, records, verifies, and recovers execution.
 
+## Implemented Managed Subagent Timeout Multiplexing — 2026-09-14
+
+A foreground `delegate` run no longer has to hold the parent tool call for its entire execution budget. `delegate` accepts an optional `background: true` control option: the parent receives a typed retained handle as soon as the child is admitted, while the same child session keeps running under the parent-owned supervisor. Nothing about the child changes — same run ID, child session, model, profile, scope, and tool authority; one initial task prompt; no replacement child and no prompt replay.
+
+The retained lifecycle is explicit and event driven (no polling):
+
+- `peek` returns the latest bounded observation immediately and mutates no budget and no authority.
+- `wait` blocks the parent tool call for a bounded `waitMs` window (default 30 s, maximum 60 s) until a terminal or attention state. Expiry reports the current state with `waitExpired` and never marks the child `timed_out`.
+- `extend` resumes a paused child with an explicit additional budget drawn from the extension reserve.
+- `detach` retains the same child under management so the parent can continue other work. A running child is retained in place and no budget changes; a paused child resumes under a **separate bounded retention pool** (default 2 minutes, surfaced in the runtime summary), never the extension reserve.
+- `stop` terminalizes deterministically as `cancelled`: an aborted child turn cannot downgrade an explicit parent decision into a generic failure or a silent completion.
+- Managed terminal results are published exactly once into a bounded retained-result ledger, and the ledger is populated *before* the terminal transition wakes any pending management wait, so a waiter never observes terminal state without a result. The same single publication covers a run that finishes inside its first budget, with no extension and no stop decision: its durable observer is notified once from the runner's terminal path, so an in-process retained run and a durable job each observe exactly one terminal result.
+
+Managed retention is in-process management, not durable background work: no queue, no cross-process recovery, bounded retention. Durable owner-scoped work remains the `delegate_async` job surface. A retained child stays bound to the parent **run** signal rather than to the launching tool call, exactly like `delegate_async`'s parent-run tie: a normal run completion never aborts that signal, so handing back the managed handle does not cancel the child. Termination comes only from an explicit parent abort, compact, or dispose of the launching run, from `manage_subagent stop`, or from session shutdown through `runner.shutdown()`.
+
+Reproducible checks: `packages/coding-agent/test/ice-subagent-timeout-multiplexing.test.ts` (16 cases), `test/ice-subagent-timeout-supervisor.test.ts`, and the `manage_subagent` / `delegate` schema and execute-path contracts in `test/ice-subagents.test.ts`.
+
 ## Implemented Subagent File Agents, Self-Delegation, and Model Fallback — 2026-09-10
 
 The completion implementation and reproducible checks are recorded in `.artifacts/ice-self-user-ready-20260910/`. Self launches now snapshot actual parent instructions automatically, allow only additive task guidance, and optionally inherit loaded skills. Child-safe extension tools and selected MCP tools use explicit parent-owned adapters with real schemas, live revocation, hooks, bounded output, and cancellation. Child sessions do not install ambient packages or load ambient extensions. Runtime stream failures cannot trigger task replay; only proven pre-effect startup failure may use a second attempt with remaining shared budgets. Accepted queued work retains route/capability/resource fingerprints. The user guide and HTML operator explainer describe migration and untested live-adapter boundaries.
@@ -303,11 +320,11 @@ Rules:
 - Safe delegated children are read-only and receive no Bash, edit/write, network/MCP, Cognee/Blackhole/guard extension, credential expansion, or recursive `delegate` capability by default. Explicit `--sub-yolo` is the separately gated unsafe host-execution exception; it grants only capabilities requested by the selected profile that are also active in the trusted parent, including Bash, edit, and write when both sides permit them, but not child extensions, MCP, or recursive delegation.
 - Child result is typed, bounded evidence rather than trusted authority or an injected transcript.
 - Parent owns integration and verification.
-- Cancellation and timeout propagate to the child and terminate the run deterministically.
+- Cancellation and timeout propagate to the child and terminate the run deterministically. A foreground child may also be launched in managed mode (`delegate` with `background: true`), which returns a retained handle at admission while the same session continues under the supervisor; managed runs are observed and controlled with `manage_subagent` (`peek`, `wait`, `extend`, `detach`, `stop`). Detaching a paused child draws on a separate bounded retention pool rather than the extension reserve, and a stop always terminalizes as `cancelled`.
 - Explicit trusted configurable roles/resources are implemented as Phase A capabilities; trust grants eligibility, selection grants inclusion, and policy remains authoritative.
 - Parallel read fan-out comes after single-child lifecycle and accounting are stable; use conservative bounded concurrency.
 - Writers require isolated worktrees/workspaces and return observed patches/branches for parent verification, except the explicit trusted YOLO direct-parent-workspace path, which reports no isolation and requires no patch integration.
-- Background workers require durable owner-scoped job state, recovery, cancellation, retention, and completion delivery; do not model them as a boolean on the foreground runner.
+- Background workers require durable owner-scoped job state, recovery, cancellation, retention, and completion delivery; the durable `delegate_async` job surface owns that contract. The foreground `delegate` `background` option is *not* a durable worker: it is in-process managed retention of the same child (bounded observation, bounded retention, no queue, no cross-process recovery) and must not be used for work that has to survive the parent process.
 - No recursive delegation by default; hierarchical swarms are not a target architecture.
 
 #### Hivemind coordination layer
