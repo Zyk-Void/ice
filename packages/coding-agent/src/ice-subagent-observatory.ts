@@ -245,9 +245,12 @@ export interface DurableSubagentJobResultView {
 	readonly model?: string;
 	readonly resultRef: string;
 	readonly summary?: string;
+	readonly reportMode?: "plain_final_turn" | "structured_report";
 	readonly verification?: {
 		readonly verified: boolean;
 		readonly reason?: string;
+		readonly kind?: "structured" | "plain_bounds";
+		readonly structuredVerified?: boolean;
 	};
 	readonly evidence: readonly string[];
 	readonly budget?: SubagentTokenBudgetSummary;
@@ -255,7 +258,7 @@ export interface DurableSubagentJobResultView {
 	readonly diagnostics: readonly string[];
 	/** Runtime-owned bounded work projection preserved across report-protocol failures. */
 	readonly workArtifact?: {
-		readonly reportProtocolStatus: "valid" | "malformed" | "missing" | "truncated";
+		readonly reportProtocolStatus: "valid" | "malformed" | "missing" | "truncated" | "plain";
 		readonly reportProtocolDiagnostic?: string;
 		readonly touchedPaths: readonly string[];
 		readonly candidateEvidencePaths: readonly string[];
@@ -479,6 +482,10 @@ export function projectDurableSubagentJobResult(
 				...(sanitizeDetailText(result.verification.reason, OBSERVATORY_SUMMARY_MAX_BYTES)
 					? { reason: sanitizeDetailText(result.verification.reason, OBSERVATORY_SUMMARY_MAX_BYTES) }
 					: {}),
+				...(result.verification.kind !== undefined ? { kind: result.verification.kind } : {}),
+				...(result.verification.structuredVerified !== undefined
+					? { structuredVerified: result.verification.structuredVerified }
+					: {}),
 			})
 		: undefined;
 	const diagnostics = Object.freeze(
@@ -536,6 +543,7 @@ export function projectDurableSubagentJobResult(
 		...(metadata.model ? { model: sanitizeDetailText(metadata.model, OBSERVATORY_PATH_MAX_BYTES) ?? "unknown" } : {}),
 		resultRef: sanitizeDetailText(metadata.resultRef, OBSERVATORY_PATH_MAX_BYTES) ?? `job:${jobId}`,
 		...(summary ? { summary } : {}),
+		...(result?.reportMode !== undefined ? { reportMode: result.reportMode } : {}),
 		...(verification ? { verification } : {}),
 		evidence,
 		...(tokenBudget ? { budget: tokenBudget } : {}),
@@ -567,14 +575,22 @@ export function formatDurableSubagentJobDetail(detail: DurableSubagentJobResultV
 		hasDetails = true;
 	}
 	if (detail.verification) {
-		rows.push("Verification", detail.verification.verified ? "VERIFIED" : "VERIFICATION FAILED");
+		rows.push(
+			"Verification",
+			!detail.verification.verified
+				? "VERIFICATION FAILED"
+				: detail.verification.kind === "plain_bounds"
+					? "ACCEPTED (plain bounds; no structured verification)"
+					: "VERIFIED",
+		);
 		if (detail.verification.reason) rows.push(detail.verification.reason);
 		rows.push("");
 		hasDetails = true;
 	}
 	if (detail.workArtifact) {
+		const plainTurn = detail.workArtifact.reportProtocolStatus === "plain";
 		rows.push(
-			"Preserved work artifact (runtime-owned, unverified)",
+			plainTurn ? "Work artifact (runtime-owned)" : "Preserved work artifact (runtime-owned, unverified)",
 			`report protocol: ${detail.workArtifact.reportProtocolStatus}${
 				detail.workArtifact.reportProtocolDiagnostic ? ` — ${detail.workArtifact.reportProtocolDiagnostic}` : ""
 			}`,

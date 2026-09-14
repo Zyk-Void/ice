@@ -100,7 +100,7 @@ class InteractiveChildSession {
 			this.onInitialTurnStarted();
 			await this.releaseInitialTurn;
 			this.messages.push(
-				assistantMessage('{"summary":"conversation JSON, not final","evidence":{"paths":["src"]}}'),
+				assistantMessage('{"summary":"conversation JSON, not final","evidence":{"paths":["src"]},"payload":{}}'),
 			);
 			this.isStreaming = false;
 			return;
@@ -116,7 +116,9 @@ class InteractiveChildSession {
 			if (this.finalization.wait) await this.finalization.wait;
 			if (this.finalization.error) throw this.finalization.error;
 			this.messages.push(
-				assistantMessage(this.finalization.text ?? '{"summary":"verified final","evidence":{"paths":["src"]}}'),
+				assistantMessage(
+					this.finalization.text ?? '{"summary":"verified final","evidence":{"paths":["src"]},"payload":{}}',
+				),
 			);
 			return;
 		}
@@ -145,6 +147,9 @@ function request(cwd: string): SubagentRequest {
 		task: "Inspect the scoped repository.",
 		scope: { roots: ["src"] },
 		cwd,
+		// These tests exercise the structured steered-finalization protocol, which
+		// only typed flows (outputSchema/acceptance criteria) still use.
+		outputSchema: { type: "object", additionalProperties: false },
 	};
 }
 
@@ -878,7 +883,7 @@ describe("ICE agent-view integration", () => {
 			releaseInitialTurn = resolve;
 		});
 		const child = new InteractiveChildSession(cwd, initialTurn, startInitialTurn, {
-			text: '{"summary":"bad evidence","evidence":{"paths":["missing"]}}',
+			text: '{"summary":"bad evidence","evidence":{"paths":["missing"]},"payload":{}}',
 		});
 		const registry = new SubagentLiveSessionRegistry();
 		const bridge = new IceAgentViewBridge();

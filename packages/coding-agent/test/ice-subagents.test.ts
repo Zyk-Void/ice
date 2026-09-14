@@ -389,7 +389,12 @@ function resolvedReviewTask(cwd: string, id: string, dimension: ReviewDimension)
 }
 
 function verificationFixture(cwd: string, role: "self" | "review" = "self") {
-	const normalized = normalizeSubagentRequest(request(cwd, role), cwd);
+	// The verification pipeline (evidence paths, payloads, requirement claims) is
+	// structured-report-only; plain final-turn runs stop at lineage/output checks.
+	const normalized = normalizeSubagentRequest(
+		{ ...request(cwd, role), outputSchema: { type: "object", additionalProperties: false } },
+		cwd,
+	);
 	const result: SubagentResult = {
 		runId: normalized.runId,
 		parentSessionId: "parent-1",
@@ -402,6 +407,7 @@ function verificationFixture(cwd: string, role: "self" | "review" = "self") {
 		partial: false,
 		diagnostics: [],
 		evidence: { paths: ["src"] },
+		payload: {},
 	};
 	return { normalized, result };
 }
@@ -4376,7 +4382,12 @@ describe("ICE subagent contracts", () => {
 		const cwd = await createWorkspace();
 		const faux = registerFauxProvider();
 		try {
-			faux.setResponses([fauxAssistantMessage('{"summary":"faux fact report","evidence":{"paths":["src"]}}')]);
+			// Plain final-turn mode: a single scripted assistant turn is ingested
+			// directly. If the runtime issued an extra finalization request, the
+			// exhausted faux queue would fail the run instead.
+			faux.setResponses([
+				fauxAssistantMessage("The runtime loads the generated provider catalog and selects the requested model."),
+			]);
 			const authStorage = AuthStorage.inMemory();
 			await authStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
 			const modelRuntime = await ModelRuntime.create({
@@ -4420,18 +4431,28 @@ describe("ICE subagent contracts", () => {
 			);
 			expect(result).toMatchObject({
 				status: "completed",
-				summary: "faux fact report",
-				evidence: { paths: ["src"] },
+				summary: "The runtime loads the generated provider catalog and selects the requested model.",
+				reportMode: "plain_final_turn",
+				observedTurns: 1,
 			});
+			// Plain mode verifies lineage and output bounds only; evidence claims are
+			// never asserted for an unstructured final answer.
 			expect(verifySubagentResult(result, normalized)).toMatchObject({
 				verified: true,
-				paths: [join(cwd, "src")],
+				paths: [],
 			});
+			// Runtime-owned touched-path/work-artifact telemetry is preserved on the
+			// result, but the "plain" protocol status keeps it out of evidence rows.
+			expect(result.workArtifact).toMatchObject({
+				runId: normalized.runId,
+				reportProtocol: { status: "plain" },
+				touchedPaths: [],
+			});
+			expect(result.workArtifact?.finishedAtMs).toBeDefined();
 		} finally {
 			faux.unregister();
 		}
 	});
-
 	it("compacts a long-running native child and resumes with the same authority", async () => {
 		const cwd = await createWorkspace();
 		const agentDir = join(cwd, ".ice-agent");
@@ -4843,6 +4864,48 @@ describe("ICE subagent contracts", () => {
 			faux.unregister();
 		}
 	});
+	it("bounds plain final answers by assistant UTF-8 bytes rather than runtime envelope bytes", async () => {
+		const cwd = await createWorkspace();
+		const runCase = async (rawAnswer: string) => {
+			const normalized = normalizeSubagentRequest({ ...request(cwd), execution: { maxOutputBytes: 1_024 } }, cwd);
+			const messages: AgentMessage[] = [];
+			const fakeSession = {
+				sessionId: `plain-byte-boundary-${rawAnswer.length}`,
+				model: {} as Model<Api>,
+				messages,
+				extensionRunner: createNoopExtensionRunner(),
+				subscribe: vi.fn(() => vi.fn()),
+				prompt: vi.fn(async () => {
+					messages.push({ role: "assistant", content: rawAnswer, stopReason: "stop" } as unknown as AgentMessage);
+				}),
+				abort: vi.fn(async () => {}),
+				dispose: vi.fn(),
+				getSessionStats: vi.fn(() => ({
+					tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+					cost: 0,
+				})),
+			} as unknown as CreateAgentSessionResult["session"];
+			return new NativeSubagentRunner({
+				createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
+			}).runResolved(normalized, ["delegate", "read"]);
+		};
+
+		const inBudget = "🙂".repeat(250);
+		const accepted = await runCase(inBudget);
+		expect(Buffer.byteLength(inBudget, "utf8")).toBe(1_000);
+		expect(accepted.status).toBe("completed");
+		expect(accepted.summary).toBe(inBudget);
+		expect(accepted.observedOutputBytes).toBe(1_000);
+		expect(Buffer.byteLength(JSON.stringify(accepted), "utf8")).toBeGreaterThan(1_024);
+
+		const overBudget = "🙂".repeat(300);
+		const truncated = await runCase(overBudget);
+		expect(truncated.status).toBe("completed");
+		expect(truncated.truncated).toBe(true);
+		expect(truncated.observedOutputBytes).toBeLessThanOrEqual(1_024);
+		expect(Buffer.byteLength(truncated.summary, "utf8")).toBe(truncated.observedOutputBytes);
+		expect(truncated.summary.endsWith("�")).toBe(false);
+	});
 
 	it("enforces maxTurns at native Ice turn boundaries", async () => {
 		const cwd = await createWorkspace();
@@ -5216,21 +5279,28 @@ describe("ICE subagent contracts", () => {
 				cost: 0,
 			})),
 		} as unknown as CreateAgentSessionResult["session"];
+		const structuredRequest = {
+			...request(cwd),
+			outputSchema: { type: "object" as const, additionalProperties: false },
+		};
 		const result = await new NativeSubagentRunner({
 			createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
-		}).run(request(cwd), ["delegate", "read"]);
-		// An oversized report is a bounded report-protocol failure after real work:
+		}).run(structuredRequest, ["delegate", "read"]);
+		// An oversized structured report is a bounded report-protocol failure after real work:
 		// never verified completed, never pretending no work happened.
 		expect(result.status).toBe("verification_failed");
 		expect(result.diagnostics[0]?.code).toBe("report_protocol_failure");
 		expect(result.observedOutputBytes).toBe(Buffer.byteLength(rawReport));
 		expect(result.workArtifact?.reportProtocol).toMatchObject({ status: "truncated" });
-		expect(verifySubagentResult(result, normalizeSubagentRequest(request(cwd), cwd)).verified).toBe(false);
+		expect(verifySubagentResult(result, normalizeSubagentRequest(structuredRequest, cwd)).verified).toBe(false);
 	});
 
 	it("uses a self-delegation structured report contract with findings", async () => {
 		const cwd = await createWorkspace();
-		const reviewRequest = normalizeSubagentRequest({ ...request(cwd), task: "Review security." }, cwd);
+		const reviewRequest = normalizeSubagentRequest(
+			{ ...request(cwd), task: "Review security.", outputSchema: { type: "object", additionalProperties: false } },
+			cwd,
+		);
 		expect(buildSubagentPrompt(reviewRequest)).toContain('"findings"');
 		expect(reviewRequest.agentKind).toBe("self");
 	});
@@ -5248,6 +5318,7 @@ describe("ICE subagent contracts", () => {
 					evidence: [{ path: "src" }],
 				},
 			],
+			payload: {},
 		});
 		const childMessages: AgentMessage[] = [];
 		const fakeSession = {
@@ -5272,7 +5343,10 @@ describe("ICE subagent contracts", () => {
 		} as unknown as CreateAgentSessionResult["session"];
 		const result = await new NativeSubagentRunner({
 			createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
-		}).run({ ...request(cwd), task: "Review security." }, ["delegate", "read"]);
+		}).run(
+			{ ...request(cwd), task: "Review security.", outputSchema: { type: "object", additionalProperties: false } },
+			["delegate", "read"],
+		);
 		expect(result.status).toBe("completed");
 		expect(result.findings).toEqual([
 			{
@@ -5298,7 +5372,8 @@ describe("ICE subagent contracts", () => {
 				},
 			],
 		};
-		expect(verifySubagentResult(result, task.request)).toMatchObject({
+		// Review verification is structured-report-only regardless of fixture mode.
+		expect(verifySubagentResult(result, { ...task.request, reportMode: "structured_report" })).toMatchObject({
 			verified: false,
 			reason: expect.stringMatching(/outside|exist/i),
 		});
@@ -5316,7 +5391,7 @@ describe("ICE subagent contracts", () => {
 			prompt: vi.fn(async () => {
 				messages.push({
 					role: "assistant",
-					content: '{"summary":"fact report","evidence":{"paths":["src"]}}',
+					content: '{"summary":"fact report","evidence":{"paths":["src"]},"payload":{}}',
 					stopReason: "stop",
 				});
 			}),
@@ -5330,12 +5405,16 @@ describe("ICE subagent contracts", () => {
 		const runner = new NativeSubagentRunner({
 			createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
 		});
-		const result = await runner.run(request(cwd), ["delegate", "read"]);
+		const result = await runner.run(
+			{ ...request(cwd), outputSchema: { type: "object", additionalProperties: false } },
+			["delegate", "read"],
+		);
 		expect(result).toMatchObject({
 			status: "completed",
 			summary: "fact report",
 			partial: false,
 			evidence: { paths: ["src"] },
+			reportMode: "structured_report",
 		});
 		expect(result.usage).toMatchObject({ inputTokens: 3, outputTokens: 4, cost: 0.01 });
 	});
@@ -6572,6 +6651,45 @@ describe("ICE subagent contracts", () => {
 		expect(result.reviewers[1]?.verification.verified).toBe(false);
 	});
 
+	it("resolves report mode per the ingestion matrix and forces reviewers through structured reports", async () => {
+		const cwd = await createWorkspace();
+		const rows = [
+			{
+				name: "ordinary delegate",
+				buildRequest: () => request(cwd),
+				expected: "plain_final_turn",
+			},
+			{
+				name: "output-schema delegate",
+				buildRequest: () => ({ ...request(cwd), outputSchema: { type: "object", additionalProperties: false } }),
+				expected: "structured_report",
+			},
+			{
+				name: "acceptance-criteria delegate",
+				buildRequest: () => ({
+					...request(cwd),
+					acceptanceCriteria: [{ id: "check-build", requirement: "The build passes.", required: true }],
+				}),
+				expected: "structured_report",
+			},
+		] as const;
+		for (const row of rows) {
+			const normalized = normalizeSubagentRequest(row.buildRequest(), cwd);
+			expect(normalized.reportMode, row.name).toBe(row.expected);
+		}
+		const handBuiltPlainReviewer = resolvedReviewTask(cwd, "forced-plain", "tests");
+		expect(handBuiltPlainReviewer.request.reportMode).toBe("plain_final_turn");
+		const runner: Pick<NativeSubagentRunner, "runResolved"> = {
+			runResolved: async (resolved) => {
+				expect(resolved.reportMode).toBe("structured_report");
+				expect(resolved.readOnlyReview).toBe(true);
+				return batchResult(handBuiltPlainReviewer);
+			},
+		};
+		const result = await runResolvedReviewBatch([handBuiltPlainReviewer], ["delegate", "read"], runner);
+		expect(result.reviewers[0]?.verification.verified).toBe(true);
+	});
+
 	it("cancels active and queued workers without launching new siblings", async () => {
 		const cwd = await createWorkspace();
 		const tasks = ["one", "two", "three", "four"].map((id) => resolvedBatchTask(cwd, id));
@@ -7110,10 +7228,11 @@ describe("ICE subagent contracts", () => {
 		expect(tools.get("delegate_async")?.parameters.properties).not.toHaveProperty("queue");
 		expect(tools.get("delegate_async")?.parameters.properties).not.toHaveProperty("plannedOutputBytes");
 		for (const name of ["delegate", "delegate_async", "delegate_batch", "review_batch"]) {
-			expect(tools.get(name)?.description).toContain(
-				"runtime owns the internal bounded structured final-report protocol",
-			);
+			expect(tools.get(name)?.description).toContain("internal bounded structured final-report protocol");
 			expect(tools.get(name)?.description).toContain("do not ask the child to format its work as JSON");
+			expect(tools.get(name)?.description).toContain(
+				"the runtime ingests the child's natural final assistant turn directly",
+			);
 		}
 	});
 
@@ -7886,6 +8005,61 @@ describe("ICE subagent contracts", () => {
 		}
 	});
 
+	it("ingests a natural-prose async completion as a plain final answer without a second finalization turn", async () => {
+		const harness = await createAsyncToolHarness();
+		try {
+			harness.faux.setResponses([
+				fauxAssistantMessage("The runtime loads the generated provider catalog and selects the requested model."),
+			]);
+			const tool = harness.tools.get("delegate_async");
+			const accepted = await tool.execute(
+				"async-plain",
+				{
+					role: "self",
+					self: {
+						instructions: "Inspect the approved scope and report evidence.",
+						capabilities: ["read", "grep", "find", "ls"],
+					},
+					task: "Trace the model runtime.",
+					scope: { roots: ["src"] },
+				},
+				undefined,
+				undefined,
+				harness.context,
+			);
+			expect(accepted).toMatchObject({ isError: false, details: { accepted: { status: "created" } } });
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			const inspected = await harness.tools
+				.get("inspect_subagent_job")
+				.execute(
+					"inspect-plain",
+					{ jobId: accepted.details.accepted.jobId },
+					undefined,
+					undefined,
+					harness.context,
+				);
+			expect(inspected).toMatchObject({
+				details: {
+					inspection: {
+						job: { status: "completed" },
+						result: {
+							reportMode: "plain_final_turn",
+							summary: "The runtime loads the generated provider catalog and selects the requested model.",
+							verification: {
+								verified: true,
+								kind: "plain_bounds",
+								structuredVerified: false,
+							},
+						},
+					},
+				},
+			});
+		} finally {
+			await harness.handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, harness.context);
+			harness.faux.unregister();
+		}
+	});
+
 	it("accepts a third delegate_async child into the durable FIFO queue", async () => {
 		const harness = await createAsyncToolHarness();
 		try {
@@ -8528,7 +8702,10 @@ describe("ICE subagent contracts", () => {
 
 	it("requires structured in-scope evidence before verification passes", async () => {
 		const cwd = await createWorkspace();
-		const normalized = normalizeSubagentRequest(request(cwd), cwd);
+		const normalized = normalizeSubagentRequest(
+			{ ...request(cwd), outputSchema: { type: "object", additionalProperties: false } },
+			cwd,
+		);
 		const base: SubagentResult = {
 			runId: normalized.runId,
 			parentSessionId: "parent-1",
@@ -8540,6 +8717,7 @@ describe("ICE subagent contracts", () => {
 			observedOutputBytes: Buffer.byteLength("Found the requested implementation fact."),
 			partial: false,
 			diagnostics: [],
+			payload: {},
 		};
 		expect(verifySubagentResult(base, normalized)).toMatchObject({
 			verified: false,

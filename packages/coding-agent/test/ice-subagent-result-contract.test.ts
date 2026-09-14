@@ -31,7 +31,12 @@ function normalizeSubagentRequest(
 	cwd: string,
 	options: SubagentNormalizationOptions = {},
 ): ReturnType<typeof normalizeSubagentRequestWithAgentDir> {
-	return normalizeSubagentRequestWithAgentDir(request, cwd, { agentDir: join(cwd, ".ice-agent"), ...options });
+	// This suite pins the structured report contract, which typed flows still run.
+	const normalized = normalizeSubagentRequestWithAgentDir(request, cwd, {
+		agentDir: join(cwd, ".ice-agent"),
+		...options,
+	});
+	return { ...normalized, reportMode: "structured_report" };
 }
 
 afterEach(async () => {

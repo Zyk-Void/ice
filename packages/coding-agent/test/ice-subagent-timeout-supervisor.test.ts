@@ -76,6 +76,7 @@ class ManagedTimeoutChild {
 	});
 	isStreaming = false;
 	completeOnPrompt = 2;
+	finalMessageText = '{"summary":"completed after extension","evidence":{"paths":["src/a.ts"]}}';
 
 	private readonly listeners = new Set<(event: AgentSessionEvent) => void>();
 	private resolveActivePrompt: (() => void) | undefined;
@@ -115,9 +116,7 @@ class ManagedTimeoutChild {
 			this.emitActivity(4, "bash", { command: "printf token=secret-value && npm test", path: "." });
 		}
 		if (call >= this.completeOnPrompt) {
-			this.messages.push(
-				assistantMessage('{"summary":"completed after extension","evidence":{"paths":["src/a.ts"]}}'),
-			);
+			this.messages.push(assistantMessage(this.finalMessageText));
 			return;
 		}
 		this.isStreaming = true;
@@ -172,7 +171,11 @@ describe("ICE resumable timeout supervision", () => {
 	it("returns needs_time with the last three runtime-observed activities and resumes the same child", async () => {
 		const { cwd, agentDir } = await workspace();
 		const child = new ManagedTimeoutChild(cwd);
-		const normalized = normalizeSubagentRequest(request(cwd, 25), cwd, { agentDir });
+		// Pins the structured extension-report contract used by typed flows.
+		const normalized = {
+			...normalizeSubagentRequest(request(cwd, 25), cwd, { agentDir }),
+			reportMode: "structured_report",
+		} as const;
 		const supervisors = new SubagentRunSupervisorRegistry<SubagentResult>();
 		const runner = new NativeSubagentRunner({
 			agentDir,
@@ -202,6 +205,41 @@ describe("ICE resumable timeout supervision", () => {
 		expect(child.promptCalls[1]?.text).toContain("[ICE VOID SUBAGENT CONTINUE]");
 		expect(child.promptCalls[1]?.text).not.toContain("Inspect the scoped repository.");
 		expect(runner.getRuntimeAttention(normalized.runId, normalized.parentSessionId)).toBeUndefined();
+	});
+
+	it("keeps plain final-turn ingestion across a needs-time extension and uses the plain continuation prompt", async () => {
+		const { cwd, agentDir } = await workspace();
+		const child = new ManagedTimeoutChild(cwd);
+		child.finalMessageText = "Completed after extension in plain prose.";
+		// No reportMode pin: an ordinary delegate resolves to plain final-turn ingestion.
+		const normalized = normalizeSubagentRequest(request(cwd, 25), cwd, { agentDir });
+		expect(normalized.reportMode).toBe("plain_final_turn");
+		const supervisors = new SubagentRunSupervisorRegistry<SubagentResult>();
+		const runner = new NativeSubagentRunner({
+			agentDir,
+			supervisorRegistry: supervisors,
+			createSession: async () =>
+				({ session: child as unknown as AgentSession }) as unknown as CreateAgentSessionResult,
+		});
+		const model = { provider: "faux", id: "faux" } as Model<Api>;
+
+		const first = await runner.runResolved(normalized, ["delegate", "read", "grep", "find", "ls"], { model });
+		expect(first.status).toBe("needs_time");
+		expect(first.reportMode).toBe("plain_final_turn");
+
+		const extended = await runner.extendRuntime(normalized.runId, normalized.parentSessionId, 60_000);
+		expect(extended).toMatchObject({
+			status: "completed",
+			runId: normalized.runId,
+			childSessionId: child.sessionId,
+			reportMode: "plain_final_turn",
+			summary: "Completed after extension in plain prose.",
+		});
+		expect(child.promptCalls).toHaveLength(2);
+		expect(child.promptCalls[1]?.text).toContain("[ICE VOID SUBAGENT CONTINUE]");
+		expect(child.promptCalls[1]?.text).toContain("plain final answer message in ordinary prose");
+		expect(child.promptCalls[1]?.text).toContain("do not wrap it in a JSON envelope");
+		expect(child.promptCalls[1]?.text).not.toContain("Return the required final bounded JSON report");
 	});
 
 	it("can interrupt a second resumed turn instead of reusing a stale abort promise", async () => {

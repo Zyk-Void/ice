@@ -171,7 +171,7 @@ describe("ICE M10/M11 delegate integration", () => {
 		harness.faux.setResponses([
 			(context) => {
 				childContext = JSON.stringify(context);
-				return fauxAssistantMessage('{"summary":"source inspected","evidence":{"paths":["src"]}}');
+				return fauxAssistantMessage('{"summary":"source inspected","evidence":{"paths":["src"]},"payload":{}}');
 			},
 		]);
 		const result = resultOf(
@@ -180,6 +180,7 @@ describe("ICE M10/M11 delegate integration", () => {
 				delegateParams({
 					context: "selected parent note",
 					contextPacket: { items: [{ id: "fact", kind: "verified_fact", content: "selected fact" }] },
+					outputSchema: { type: "object", additionalProperties: false },
 				}),
 				undefined,
 				undefined,
@@ -224,7 +225,7 @@ describe("ICE M10/M11 delegate integration", () => {
 		const harness = await createHarness();
 		harness.faux.setResponses([
 			fauxAssistantMessage(
-				'{"summary":"reviewed","evidence":{"paths":["src"]},"findings":[{"severity":"high","category":"security","claim":"The boundary needs review.","evidence":[{"path":"src"}]}]}',
+				'{"summary":"reviewed","evidence":{"paths":["src"]},"payload":{},"findings":[{"severity":"high","category":"security","claim":"The boundary needs review.","evidence":[{"path":"src"}]}]}',
 			),
 		]);
 		const result = resultOf(
@@ -233,6 +234,7 @@ describe("ICE M10/M11 delegate integration", () => {
 				delegateParams({
 					role: "self",
 					self: { instructions: "Review the scoped evidence without modifying files." },
+					outputSchema: { type: "object", additionalProperties: false },
 				}),
 				undefined,
 				undefined,
