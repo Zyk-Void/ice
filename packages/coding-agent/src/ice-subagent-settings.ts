@@ -15,6 +15,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { type IceCommandHookPolicy, parseIceCommandHookPolicy } from "./ice-subagent-command-hooks.ts";
+import { SUBAGENT_CONCURRENCY_LIMITS, type SubagentConcurrencySettings } from "./ice-subagent-concurrency.ts";
 import type { SubagentRequestedToolName, SubagentThinkingLevel } from "./ice-subagents.ts";
 import { redactCredentialText } from "./utils/redact.ts";
 
@@ -50,6 +51,8 @@ export interface IceSubagentSettingsInput {
 		denyTools?: string[];
 	};
 	modelSelection?: { mode?: string };
+	/** Bounded active-child concurrency for batches and background jobs. */
+	concurrency?: SubagentConcurrencySettings;
 }
 
 export interface IceHookDefinitionInput {
@@ -117,7 +120,9 @@ const KNOWN_SUBAGENT_SETTINGS_KEYS = new Set([
 	"roleDefaults",
 	"restrictions",
 	"modelSelection",
+	"concurrency",
 ]);
+const KNOWN_CONCURRENCY_KEYS = new Set(["default", "max"]);
 const KNOWN_PREFERENCE_KEYS = new Set([
 	"thinking",
 	"timeoutMs",
@@ -265,6 +270,7 @@ export interface ParsedIceSubagentSettings {
 		denyTools: readonly string[];
 	};
 	modelSelection: { mode: "inherit-parent" | "configured" };
+	concurrency: SubagentConcurrencySettings;
 	diagnostics: readonly string[];
 }
 
@@ -277,6 +283,7 @@ export function parseIceSubagentSettings(input: unknown, path = "ice.subagents")
 			roleDefaults: Object.freeze({}),
 			restrictions: { denyRoles: Object.freeze([]), denyTools: Object.freeze([]) },
 			modelSelection: { mode: "inherit-parent" },
+			concurrency: Object.freeze({}),
 			diagnostics: Object.freeze([]),
 		};
 	}
@@ -407,6 +414,31 @@ export function parseIceSubagentSettings(input: unknown, path = "ice.subagents")
 		modelSelection = { mode: mode === "configured" ? "configured" : "inherit-parent" };
 		if (mode === "configured") diagnostics.push("explicit child routing requires host-owned global approval");
 	}
+	let concurrency: SubagentConcurrencySettings = {};
+	if (input.concurrency !== undefined) {
+		if (!isRecord(input.concurrency)) throw fail(`${path}.concurrency`, "expected object");
+		for (const key of Object.keys(input.concurrency)) {
+			if (!KNOWN_CONCURRENCY_KEYS.has(key)) throw fail(`${path}.concurrency.${key}`, `unknown key "${key}"`);
+		}
+		const raw = input.concurrency as Record<string, unknown>;
+		if (raw.default !== undefined) {
+			concurrency.default = checkPositiveInteger(
+				raw.default,
+				`${path}.concurrency.default`,
+				SUBAGENT_CONCURRENCY_LIMITS.min,
+				SUBAGENT_CONCURRENCY_LIMITS.hardCap,
+			);
+		}
+		if (raw.max !== undefined) {
+			concurrency.max = checkPositiveInteger(
+				raw.max,
+				`${path}.concurrency.max`,
+				SUBAGENT_CONCURRENCY_LIMITS.min,
+				SUBAGENT_CONCURRENCY_LIMITS.hardCap,
+			);
+		}
+		concurrency = Object.freeze(concurrency);
+	}
 	return {
 		enabled,
 		defaults,
@@ -418,6 +450,7 @@ export function parseIceSubagentSettings(input: unknown, path = "ice.subagents")
 			denyTools: Object.freeze(restrictions.denyTools),
 		}),
 		modelSelection,
+		concurrency,
 		diagnostics: Object.freeze(diagnostics),
 	};
 }

@@ -204,6 +204,10 @@ export interface DurableSubagentJobViewSnapshot {
 	readonly reservedOutputBytes: number;
 	readonly ownerReservedOutputBytes: number;
 	readonly ownerBudgetBytes: number;
+	/** Durable-job admission snapshot; batch queue counts remain in batchCounts. */
+	readonly ownerActiveJobs?: number;
+	readonly ownerQueuedJobs?: number;
+	readonly ownerActiveJobsCap?: number;
 	readonly maxTotalTokens?: number;
 	readonly chargedTokens?: number;
 	readonly remainingTokens?: number;
@@ -338,6 +342,9 @@ export function projectDurableSubagentJob(inspection: SubagentJobInspection): Du
 		reservedOutputBytes: boundedByteCount(budget?.reservedOutputBytes ?? job.reservedOutputBytes),
 		ownerReservedOutputBytes: boundedByteCount(budget?.ownerReservedOutputBytes),
 		ownerBudgetBytes: boundedByteCount(budget?.ownerBudgetBytes),
+		...(budget?.ownerActiveJobs !== undefined ? { ownerActiveJobs: budget.ownerActiveJobs } : {}),
+		...(budget?.ownerQueuedJobs !== undefined ? { ownerQueuedJobs: budget.ownerQueuedJobs } : {}),
+		...(budget?.ownerActiveJobsCap !== undefined ? { ownerActiveJobsCap: budget.ownerActiveJobsCap } : {}),
 		...(budget?.resolvedMaxTotalTokens !== undefined ? { maxTotalTokens: budget.resolvedMaxTotalTokens } : {}),
 		...(budget?.chargedTokens !== undefined ? { chargedTokens: budget.chargedTokens } : {}),
 		...(budget?.remainingTokens !== undefined ? { remainingTokens: budget.remainingTokens } : {}),
@@ -682,6 +689,13 @@ function formatDurableJobSnapshot(snapshot: DurableSubagentJobViewSnapshot): str
 	return [
 		`${snapshot.status}${snapshot.model ? ` · model ${snapshot.model}` : ""}`,
 		...(snapshot.queuePosition !== undefined ? [`queue position ${snapshot.queuePosition}`] : []),
+		...(snapshot.ownerActiveJobs !== undefined &&
+		snapshot.ownerQueuedJobs !== undefined &&
+		snapshot.ownerActiveJobsCap !== undefined
+			? [
+					`admission active ${snapshot.ownerActiveJobs}, queued ${snapshot.ownerQueuedJobs}, cap ${snapshot.ownerActiveJobsCap}`,
+				]
+			: []),
 		`reservation ${snapshot.reservedOutputBytes}/${snapshot.ownerBudgetBytes} bytes`,
 		...(snapshot.maxTotalTokens !== undefined
 			? [

@@ -3,6 +3,7 @@ import { rmdirSync, unlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { getAgentDir } from "./config.ts";
 import { matchesEntryType } from "./core/legacy-compat/identity.ts";
+import { SUBAGENT_CONCURRENCY_LIMITS, type SubagentConcurrencyAdmission } from "./ice-subagent-concurrency.ts";
 import type { IceModelCandidateSkip, IceSubagentRouteSnapshot } from "./ice-subagent-routing.ts";
 import type { IceHookDispatchRecord } from "./ice-subagent-settings.ts";
 import type {
@@ -20,8 +21,10 @@ import { redactCredentialText } from "./utils/redact.ts";
 export const JOB_ENTRY_TYPE = "ice-subagent-job-v1";
 export const JOB_COMPLETION_MESSAGE_TYPE = "ice-subagent-job-completion";
 export const SUBAGENT_JOB_RETENTION_LIMIT = 32;
-export const SUBAGENT_JOB_DEFAULT_CONCURRENCY = 2;
-export const SUBAGENT_JOB_MAX_CONCURRENCY = 4;
+/** Default active background jobs; derived from the canonical concurrency policy. */
+export const SUBAGENT_JOB_DEFAULT_CONCURRENCY = SUBAGENT_CONCURRENCY_LIMITS.bundledDefault;
+/** Hard ceiling for active background jobs; shared admission may cap lower. */
+export const SUBAGENT_JOB_MAX_CONCURRENCY = SUBAGENT_CONCURRENCY_LIMITS.hardCap;
 export const SUBAGENT_JOB_QUEUE_LIMIT = 8;
 export const SUBAGENT_JOB_OWNER_OUTPUT_BUDGET = 256 * 1024;
 export const SUBAGENT_JOB_DEFAULT_OUTPUT_BYTES = 24 * 1024;
@@ -171,6 +174,11 @@ export interface SubagentJobInspection {
 		reservedOutputBytes: number;
 		ownerReservedOutputBytes: number;
 		ownerBudgetBytes: number;
+		/** Present when a shared admission coordinator bounds active jobs. */
+		ownerActiveJobs?: number;
+		/** Number of queued jobs owned by this registry at the inspection boundary. */
+		ownerQueuedJobs?: number;
+		ownerActiveJobsCap?: number;
 		resolvedMaxTotalTokens?: number;
 		chargedTokens?: number;
 		remainingTokens?: number;
@@ -214,6 +222,8 @@ interface SubagentJobRegistryOptions {
 	maxAggregateOutputBytes?: number;
 	/** Parent-owned root under which runtime report artifacts are generated. */
 	reportArtifactRoot?: string;
+	/** Shared permit accounting across batch and job admission; optional for legacy consumers. */
+	admission?: SubagentConcurrencyAdmission;
 }
 
 interface JobState {
@@ -227,6 +237,8 @@ interface LiveJob extends JobState {
 	promise?: Promise<void>;
 	requestedStop?: "cancelled" | "interrupted";
 	settled?: boolean;
+	/** Set while this job holds a shared admission permit; released exactly once. */
+	holdsPermit?: boolean;
 }
 
 interface JobEntryLike {
@@ -979,6 +991,7 @@ function projectResult(
 	runResult: SubagentJobRunResult | undefined,
 	runtimeError?: unknown,
 	maxAllowedTokens?: number,
+	retainedRunId?: string,
 ): SubagentJobResultEnvelope {
 	const result = runResult?.result;
 	let status: TerminalSubagentJobStatus;
@@ -1027,7 +1040,7 @@ function projectResult(
 	return {
 		schemaVersion: 1,
 		jobId,
-		...(result?.runId ? { runId: result.runId } : {}),
+		...(result?.runId || retainedRunId ? { runId: result?.runId ?? retainedRunId } : {}),
 		status,
 		...(result?.reportMode !== undefined ? { reportMode: result.reportMode } : {}),
 		...(summary ? { summary } : {}),
@@ -1099,6 +1112,7 @@ export class SubagentJobRegistry {
 	private readonly maxQueuedJobs: number;
 	private readonly maxAggregateOutputBytes: number;
 	private readonly reportArtifactRoot: string;
+	private readonly admission?: SubagentConcurrencyAdmission;
 	private readonly listeners = new Set<() => void>();
 	private schedulerBlocked = false;
 	private readonly records = new Map<string, JobState>();
@@ -1158,6 +1172,10 @@ export class SubagentJobRegistry {
 		this.maxQueuedJobs = maxQueuedJobs;
 		this.maxAggregateOutputBytes = maxAggregateOutputBytes;
 		this.reportArtifactRoot = resolve(reportArtifactRoot);
+		this.admission = options.admission;
+		// Shared-admission wakeup: when a batch or another job releases a permit,
+		// queued jobs may be promoted. Listeners are non-authoritative scheduling hints.
+		this.admission?.onRelease(() => this.pump());
 	}
 
 	subscribe(listener: () => void): () => void {
@@ -1198,7 +1216,9 @@ export class SubagentJobRegistry {
 		}
 		const active = this.activeCount();
 		const queued = this.queuedCount();
-		const status: SubagentJobStatus = active < this.maxActiveJobs ? "created" : "queued";
+		let admitted = active < this.maxActiveJobs;
+		if (admitted && this.admission) admitted = this.admission.tryAcquire();
+		const status: SubagentJobStatus = admitted ? "created" : "queued";
 		if (status === "queued" && queued >= this.maxQueuedJobs) {
 			throw new SubagentJobError("queue_full", "Owner background job queue is full.");
 		}
@@ -1229,6 +1249,7 @@ export class SubagentJobRegistry {
 		} catch (error) {
 			this.reservedOutputBytes -= plannedOutputBytes;
 			this.orderCounter--;
+			if (admitted && this.admission) this.admission.release();
 			throw error;
 		}
 		this.records.set(jobId, createdState);
@@ -1238,6 +1259,7 @@ export class SubagentJobRegistry {
 			...createdState,
 			controller: new AbortController(),
 			run: input.run,
+			...(admitted ? { holdsPermit: true } : {}),
 		};
 		this.live.set(jobId, live);
 		this.publishChange();
@@ -1521,6 +1543,9 @@ export class SubagentJobRegistry {
 		const live = [...this.live.values()].find((candidate) => candidate.job.runId === runId);
 		if (!live || live.settled) return false;
 		if (state === "running" && live.job.status !== "needs_time") return false;
+		// Retained managed runs keep their admission permit while awaiting an
+		// extension. This makes needs_time an active state and prevents resumed
+		// work from racing with a newly admitted sibling.
 		live.job = { ...live.job, status: state, runId };
 		this.records.set(live.job.jobId, live);
 		this.persistState(live);
@@ -1543,6 +1568,8 @@ export class SubagentJobRegistry {
 	): Promise<void> {
 		if (live.settled) return;
 		if (!live.requestedStop && runResult?.result.status === "needs_time") {
+			// The retained child remains active and owns its permit until a terminal
+			// result or explicit cancellation settles it.
 			live.job = {
 				...live.job,
 				status: "needs_time",
@@ -1560,12 +1587,17 @@ export class SubagentJobRegistry {
 	private async settle(live: LiveJob, runResult?: SubagentJobRunResult, runtimeError?: unknown): Promise<void> {
 		if (live.settled) return;
 		live.settled = true;
+		if (live.holdsPermit) {
+			live.holdsPermit = false;
+			this.admission?.release();
+		}
 		const result = projectResult(
 			live.job.jobId,
 			live.requestedStop,
 			runResult,
 			runtimeError,
 			live.job.contract?.maxTotalTokens,
+			live.job.runId,
 		);
 		const reservedOutputBytes = live.job.reservedOutputBytes ?? 0;
 		if (runResult?.result.runId) live.job = { ...live.job, runId: runResult.result.runId };
@@ -1609,6 +1641,10 @@ export class SubagentJobRegistry {
 	private failPersistence(live: LiveJob): void {
 		this.schedulerBlocked = true;
 		live.settled = true;
+		if (live.holdsPermit) {
+			live.holdsPermit = false;
+			this.admission?.release();
+		}
 		const reservedOutputBytes = live.job.reservedOutputBytes ?? 0;
 		live.job = {
 			...live.job,
@@ -1651,6 +1687,10 @@ export class SubagentJobRegistry {
 			while (!this.schedulerBlocked && this.activeCount() < this.maxActiveJobs) {
 				const next = this.oldestQueued();
 				if (!next) break;
+				if (this.admission && !next.holdsPermit) {
+					if (!this.admission.tryAcquire()) break;
+					next.holdsPermit = true;
+				}
 				next.promise = this.start(next);
 				void next.promise.catch(() => {});
 			}
@@ -1666,8 +1706,9 @@ export class SubagentJobRegistry {
 	}
 
 	private activeCount(): number {
-		return [...this.live.values()].filter((live) => live.job.status === "created" || live.job.status === "running")
-			.length;
+		return [...this.live.values()].filter(
+			(live) => live.job.status === "created" || live.job.status === "running" || live.job.status === "needs_time",
+		).length;
 	}
 
 	private queuedCount(): number {
@@ -1689,6 +1730,13 @@ export class SubagentJobRegistry {
 				reservedOutputBytes: state.job.reservedOutputBytes ?? 0,
 				ownerReservedOutputBytes: this.reservedOutputBytes,
 				ownerBudgetBytes: this.maxAggregateOutputBytes,
+				...(this.admission
+					? {
+							ownerActiveJobs: this.admission.active,
+							ownerQueuedJobs: this.queuedCount(),
+							ownerActiveJobsCap: Math.min(this.maxActiveJobs, this.admission.capacity),
+						}
+					: {}),
 				...(state.job.contract?.maxTotalTokens !== undefined
 					? { resolvedMaxTotalTokens: state.job.contract.maxTotalTokens }
 					: {}),

@@ -97,6 +97,32 @@ describe("RPC settings bridge", () => {
 		expect(field(snapshot, "terminal.showImages").hostOnly).toBe(true);
 	});
 
+	it("projects effective shared subagent concurrency policy through RPC settings", async () => {
+		const manager = SettingsManager.inMemory({
+			ice: { subagents: { concurrency: { default: 6, max: 7 } } },
+		});
+		manager.setIceSettingsValue("project", {
+			subagents: { concurrency: { default: 2, max: 3 } },
+		} as never);
+		await manager.flush();
+
+		const snapshot = createRpcSettingsSnapshot(createContext(manager));
+		expect(field(snapshot, "ice.subagents.concurrency.default")).toMatchObject({
+			value: 6,
+			effectiveValue: 2,
+			projectOverride: true,
+			effectiveSource: "project",
+			kind: "number",
+			constraints: { min: 1, max: 8, integer: true },
+		});
+		expect(field(snapshot, "ice.subagents.concurrency.max")).toMatchObject({
+			value: 7,
+			effectiveValue: 3,
+			projectOverride: true,
+			effectiveSource: "project",
+		});
+	});
+
 	it("reports project precedence and persists global and project values across fresh managers", async () => {
 		const root = createTempDirectory();
 		const cwd = join(root, "project");
