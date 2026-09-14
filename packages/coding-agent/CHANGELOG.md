@@ -121,6 +121,8 @@
 - Extended `ice-cognee` with a Claude Code-style hook clone on Ice extension events: continuous session capture (`/remember/entry` for prompts, answers, and tool traces), pre-compact anchors, session-end `/improve`, and `/cognee capture|tools|improve` toggles.
 - Brought `ice-cognee` closer to claude-code parity: `/cognee doctor`, statusline, skills (`cognee-remember`/`search`/`sync`), idle improve on `agent_settled`, warmup buffer, session map, multi-scope pre-compact recall, tool allowlist, and `~/.cognee/.env` loading for Layer A keys.
 - Improved Blackhole + Cognee compaction cooperation via `compactionSummaryMode` (`auto`/`defer`/`own`): default `auto` defers the Ice summary to Blackhole when configured, still stores pre-compact anchors and permanent remember of the final summary.
+- Added Blackhole compaction summary sections for recent model activity (`[Last Actions]`, failures marked, capped at ten) and for in-flight background subagent jobs (`[Running Agents]`, reconstructed from durable `ice-subagent-job-v1` session entries and completion notices).
+- Added an opt-in Cognee checkpoint-recall handoff (`checkpointRecall`, env `ICE_COGNEE_CHECKPOINT_RECALL`): when Blackhole owns compaction, Cognee writes a bounded consume-once recall file that Blackhole embeds as a capped `[Relevant Memory]` checkpoint section.
 - Added `/cognee watch`, a loopback-only realtime observer with SSE updates for agent/session identity, Cognee request lifecycle, queue state, latency, and capped redacted ingest previews; prompt recall now shows immediate animated activity in the Ice statusline.
 - Added capability-gated fast mode for local Codex/Luna Responses models, with persisted, CLI, interactive, and RPC controls for the priority service tier ([#5](https://github.com/Zykairotis/ice/pull/5)).
 - Added `/fast` interactive command with toggle, explicit on/off, and status controls ([#5](https://github.com/Zykairotis/ice/pull/5)).
@@ -151,6 +153,7 @@
 - Changed Cognee `compactionSummaryMode: "auto"` so it never replaces the Ice compact summary. Explicit `own` now summarizes `messagesToSummarize` locally and skips network on overflow recovery.
 - Changed Cognee recall to a turn-scoped system-prompt append instead of a durable `custom_message`, and prepend the latest compact checkpoint once on the next turn.
 - Changed Blackhole `tailBehavior: "minimal"` from unused config into a real cut: the kept Ice tail is summarized and dropped so compact no longer leaves ~20k recent tokens in context. Minimal is now the Blackhole default.
+- Changed the Blackhole trigger threshold to percent-only against the active model context window (default `85`): `compactAfterTokens`, the `/blackhole tokens` command, and `ICE_BLACKHOLE_COMPACT_AFTER_TOKENS` were removed, and legacy numeric configs are ignored.
 
 ### Fixed
 
