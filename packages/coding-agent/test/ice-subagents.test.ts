@@ -4555,7 +4555,20 @@ describe("ICE subagent contracts", () => {
 				fauxAssistantMessage("The child task context was compacted and is ready to resume."),
 				fauxAssistantMessage('{"summary":"compacted child report","evidence":{"paths":["src/large.txt"]}}'),
 			]);
-			const normalized = normalizeSubagentRequest(request(cwd), cwd, { agentDir });
+			// Structured report mode: the child-compaction contract asserts a parsed
+			// JSON-envelope summary, which only the typed ingestion path produces.
+			// (Ordinary delegations ingest the natural final turn verbatim.)
+			const normalized = normalizeSubagentRequest(
+				{
+					...request(cwd),
+					acceptanceCriteria: [
+						{ id: "compaction-report", requirement: "Return the bounded report envelope.", required: true },
+					],
+				},
+				cwd,
+				{ agentDir },
+			);
+			expect(normalized.reportMode).toBe("structured_report");
 			const events: iceSubagentsModule.SubagentEvent[] = [];
 			const bridge = new IceAgentViewBridge();
 			const result = await new NativeSubagentRunner({ agentDir, agentViewBridge: bridge }).runResolved(
@@ -4824,7 +4837,19 @@ describe("ICE subagent contracts", () => {
 					);
 				},
 			]);
-			const normalized = normalizeSubagentRequest(request(cwd), cwd, { agentDir });
+			// Structured report mode: this test asserts a parsed JSON-envelope summary
+			// plus evidence paths, which only the typed ingestion path produces.
+			const normalized = normalizeSubagentRequest(
+				{
+					...request(cwd),
+					acceptanceCriteria: [
+						{ id: "tool-report", requirement: "Return the bounded report envelope.", required: true },
+					],
+				},
+				cwd,
+				{ agentDir },
+			);
+			expect(normalized.reportMode).toBe("structured_report");
 			const events: iceSubagentsModule.SubagentEvent[] = [];
 			const result = await new NativeSubagentRunner({ agentDir }).runResolved(normalized, ["delegate", "read"], {
 				model,
