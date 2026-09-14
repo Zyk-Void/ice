@@ -869,7 +869,12 @@ describe("ICE agent-view integration", () => {
 		expect(bridge.getDisplayedView()?.session).toBeUndefined();
 		expect(bridge.getView("parent")?.session).toBe(parent);
 		expect(parent.messages).toEqual([]);
-		expect(child.dispose).toHaveBeenCalledOnce();
+		// Completed children are retained for reuse, so the session stays alive after
+		// the terminal historical snapshot replaces the live view.
+		expect(child.dispose).not.toHaveBeenCalled();
+		expect(runner.listRetainedChildren(normalized.parentSessionId).map((entry) => entry.runId)).toEqual([
+			normalized.runId,
+		]);
 	});
 
 	it("records verification failure in historical presentation before showing a terminal result", async () => {
