@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import type { Api, Model } from "@zykairotis/ice-ai/compat";
+import { Text } from "@zykairotis/ice-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession, AgentSessionEvent } from "../src/core/agent-session.ts";
 import type { CreateAgentSessionResult } from "../src/core/sdk.ts";
@@ -392,6 +393,7 @@ describe("ICE agent-view integration", () => {
 				userMessage("Visible child note"),
 				toolCall,
 				toolResult,
+				userMessage("[ICE VOID SUBAGENT WRAP UP] Finish from the current child state."),
 				userMessage("Your interactive work is complete. Return the report."),
 				assistantMessage('{"summary":"verified final","evidence":{"paths":["src"]}}'),
 			],
@@ -400,8 +402,10 @@ describe("ICE agent-view integration", () => {
 				scopeLabels: ["src"],
 				authority: "safe",
 				handoffMessageIndex: 0,
-				finalizationMessageIndex: 5,
-				finalReportMessageIndex: 6,
+				wrapUpMessageMarker: "[ICE VOID SUBAGENT WRAP UP]",
+				wrapUpMessageIndex: 5,
+				finalizationMessageIndex: 6,
+				finalReportMessageIndex: 7,
 				protocolReportPending: false,
 				finalResult: { status: "completed", verified: true, summary: "Verified final", evidencePaths: ["src"] },
 			},
@@ -448,6 +452,10 @@ describe("ICE agent-view integration", () => {
 		expect(rendered).not.toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({ role: "user", content: expect.stringContaining("[ICE VOID SUBAGENT HANDOFF]") }),
+				expect.objectContaining({
+					role: "user",
+					content: expect.stringContaining("[ICE VOID SUBAGENT WRAP UP]"),
+				}),
 				expect.objectContaining({
 					role: "user",
 					content: expect.stringContaining("Your interactive work is complete."),
@@ -929,6 +937,40 @@ describe("ICE agent-view integration", () => {
 		expect(bridge.getView(normalized.runId)?.presentation?.finalResult?.diagnostic).toContain(
 			"Evidence path does not exist",
 		);
+	});
+
+	it("does not repeat a plain final answer in the terminal result card", () => {
+		initTheme("dark");
+		const chatContainer = { addChild: vi.fn() };
+		const mode = Object.create(InteractiveMode.prototype) as InteractiveMode & Record<string, unknown>;
+		Object.assign(mode, { chatContainer });
+		const internal = mode as unknown as {
+			addSubagentFinalResult: (view: NonNullable<ReturnType<IceAgentViewBridge["getView"]>>) => void;
+		};
+
+		internal.addSubagentFinalResult({
+			kind: "historical-subagent",
+			id: "run-plain",
+			label: "plain",
+			live: false,
+			readOnly: true,
+			presentation: {
+				reportMode: "plain_final_turn",
+				finalResult: {
+					status: "completed",
+					verified: true,
+					summary: "This plain answer should only be rendered by the transcript.",
+				},
+			},
+		});
+
+		expect(chatContainer.addChild).toHaveBeenCalledTimes(2);
+		const finalCard = chatContainer.addChild.mock.calls[1]?.[0] as Text | undefined;
+		expect(finalCard).toBeInstanceOf(Text);
+		if (!finalCard) throw new Error("Expected the terminal result card");
+		const rendered = finalCard.render(200).join("\n");
+		expect(rendered).toContain("Completed · plain final answer");
+		expect(rendered).not.toContain("This plain answer should only be rendered by the transcript.");
 	});
 
 	it("keeps a taken-over child alive after its initial turn for idle follow-ups, then finalizes on release", async () => {

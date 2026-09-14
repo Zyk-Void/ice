@@ -2478,8 +2478,9 @@ describe("ICE subagent contracts", () => {
 			prompt.indexOf("Explicit parent context packet"),
 		);
 		expect(prompt.indexOf("Explicit parent context packet")).toBeLessThan(prompt.indexOf("Task:"));
-		expect(prompt.indexOf("Keep the complete JSON report within")).toBeLessThan(prompt.indexOf("Task:"));
-		expect(prompt.indexOf("Return exactly one JSON object")).toBeLessThan(prompt.indexOf("Task:"));
+		expect(prompt).not.toContain("Keep the complete JSON report within");
+		expect(prompt).not.toContain("Return exactly one JSON object");
+		expect(prompt).toContain("end with one plain final answer message in ordinary prose or markdown");
 	});
 
 	it("keeps fork children fresh and isolates sibling snapshots", async () => {
@@ -4856,6 +4857,39 @@ describe("ICE subagent contracts", () => {
 			faux.unregister();
 		}
 	});
+	it("converts an accidental plain JSON envelope into readable parent text", async () => {
+		const harness = await createAsyncToolHarness();
+		try {
+			harness.faux.setResponses([
+				fauxAssistantMessage(
+					'{"summary":"The concurrency headroom document was created and explains configuration and precedence.","evidence":{"paths":["src/ice-subagent-concurrency.ts"]}}',
+				),
+			]);
+			const result = await harness.tools.get("delegate")!.execute(
+				"plain-json-fallback",
+				{
+					role: "self",
+					self: { instructions: "Inspect the approved scope.", capabilities: ["read"] },
+					task: "Inspect the concurrency implementation.",
+					scope: { roots: ["src"] },
+				},
+				undefined,
+				undefined,
+				harness.context,
+			);
+			const text = result.content[0]?.text ?? "";
+			expect(result).toMatchObject({ isError: false });
+			expect(text).toContain("The concurrency headroom document was created");
+			expect(text).toContain("Reported paths (not independently verified):");
+			expect(text).toContain("- src/ice-subagent-concurrency.ts");
+			expect(text).not.toContain('{"summary"');
+			expect((result.details as { result: SubagentResult }).result.summary).not.toContain('{"summary"');
+		} finally {
+			await harness.handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, harness.context);
+			harness.faux.unregister();
+		}
+	});
+
 	it("compacts a long-running native child and resumes with the same authority", async () => {
 		const cwd = await createWorkspace();
 		const agentDir = join(cwd, ".ice-agent");
@@ -5335,53 +5369,6 @@ describe("ICE subagent contracts", () => {
 		expect(truncated.summary.endsWith("�")).toBe(false);
 	});
 
-	it("enforces maxTurns at native Ice turn boundaries", async () => {
-		const cwd = await createWorkspace();
-		await writeFile(join(cwd, "src", "app.ts"), "export const app = true;\n");
-		const faux = registerFauxProvider();
-		try {
-			const authStorage = AuthStorage.inMemory();
-			await authStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
-			const modelRuntime = await ModelRuntime.create({
-				credentials: authStorage,
-				modelsPath: join(cwd, "models.json"),
-			});
-			const model = faux.getModel();
-			modelRuntime.registerProvider(model.provider, {
-				baseUrl: model.baseUrl,
-				api: model.api,
-				models: [model],
-			});
-			faux.setResponses([
-				fauxAssistantMessage(fauxToolCall("read", { path: "src/app.ts" }, { id: "turn-tool" })),
-				fauxAssistantMessage('{"summary":"bounded report","evidence":{"paths":["src/app.ts"]}}'),
-			]);
-			const normalized = normalizeSubagentRequest({ ...request(cwd), execution: { maxTurns: 2 } }, cwd);
-			const result = await new NativeSubagentRunner({ agentDir: cwd }).runResolved(
-				normalized,
-				["delegate", "read"],
-				{ model, modelRuntime },
-			);
-			expect(result.status).toBe("completed");
-			expect(result.observedTurns).toBe(2);
-
-			faux.setResponses([
-				fauxAssistantMessage(fauxToolCall("read", { path: "src/app.ts" }, { id: "limited-tool" })),
-				fauxAssistantMessage('{"summary":"must not be consumed","evidence":{"paths":["src/app.ts"]}}'),
-			]);
-			const limited = normalizeSubagentRequest({ ...request(cwd), execution: { maxTurns: 1 } }, cwd);
-			const limitedResult = await new NativeSubagentRunner({ agentDir: cwd }).runResolved(
-				limited,
-				["delegate", "read"],
-				{ model, modelRuntime },
-			);
-			expect(limitedResult.observedTurns).toBe(1);
-			expect(limitedResult.status).not.toBe("completed");
-		} finally {
-			faux.unregister();
-		}
-	});
-
 	it("uses the core provider retry path without replaying a completed child tool", async () => {
 		const cwd = await createWorkspace();
 		await writeFile(join(cwd, "src", "app.ts"), "export const app = true;\n");
@@ -5515,9 +5502,9 @@ describe("ICE subagent contracts", () => {
 		}
 	});
 
-	it("enters one-shot wrap-up before the hard turn boundary", async () => {
+	it("enters one-shot wrap-up before the wall-clock timeout", async () => {
 		const cwd = await createWorkspace();
-		const normalized = normalizeSubagentRequest({ ...request(cwd), execution: { maxTurns: 2 } }, cwd);
+		const normalized = normalizeSubagentRequest({ ...request(cwd), timeoutMs: 1 }, cwd);
 		const messages: AgentMessage[] = [];
 		const promptCalls: string[] = [];
 		let notify: ((event: AgentSessionEvent) => void) | undefined;
@@ -5572,65 +5559,6 @@ describe("ICE subagent contracts", () => {
 		expect(promptCalls[1]).not.toContain("JSON");
 		expect(events.filter((event) => event.type === "subagent_wrap_up")).toHaveLength(1);
 		expect(shouldStopAfterTurn).toHaveBeenCalledTimes(2);
-	});
-
-	it("keeps the hard turn limit authoritative when wrap-up does not produce a report", async () => {
-		const cwd = await createWorkspace();
-		const normalized = normalizeSubagentRequest(
-			{
-				...request(cwd),
-				execution: { maxTurns: 2 },
-				outputSchema: { type: "object" as const, additionalProperties: false },
-			},
-			cwd,
-		);
-		const messages: AgentMessage[] = [];
-		const promptCalls: string[] = [];
-		let notify: ((event: AgentSessionEvent) => void) | undefined;
-		const agent = {
-			shouldStopAfterTurn: vi.fn(async () => false),
-		};
-		const fakeSession = {
-			sessionId: "child-wrap-up-limit",
-			model: testModel("faux", "faux"),
-			messages,
-			agent,
-			extensionRunner: createNoopExtensionRunner(),
-			subscribe: vi.fn((listener: (event: AgentSessionEvent) => void) => {
-				notify = listener;
-				return vi.fn();
-			}),
-			prompt: vi.fn(async (prompt: string) => {
-				promptCalls.push(prompt);
-				notify?.({ type: "turn_start" } as AgentSessionEvent);
-				messages.push({
-					role: "assistant",
-					content: promptCalls.length === 1 ? "work without a report" : "still not valid JSON",
-					stopReason: "stop",
-				} as unknown as AgentMessage);
-				notify?.({ type: "message_update" } as AgentSessionEvent);
-				notify?.({ type: "turn_end" } as AgentSessionEvent);
-				await agent.shouldStopAfterTurn();
-			}),
-			setActiveToolsByName: vi.fn(),
-			getActiveToolNames: vi.fn(() => ["read"]),
-			abort: vi.fn(async () => {}),
-			dispose: vi.fn(),
-			getSessionStats: vi.fn(() => ({
-				tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-				cost: 0,
-			})),
-		} as unknown as CreateAgentSessionResult["session"];
-		const events: iceSubagentsModule.SubagentEvent[] = [];
-		const result = await new NativeSubagentRunner({
-			createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
-		}).runResolved(normalized, ["delegate", "read"], { onEvent: (event) => events.push(event) });
-
-		expect(result.status).toBe("failed");
-		expect(result.observedTurns).toBe(2);
-		expect(promptCalls).toHaveLength(2);
-		expect(events.filter((event) => event.type === "subagent_wrap_up")).toHaveLength(1);
-		expect(result.diagnostics.some((diagnostic) => diagnostic.code === "batch_budget_exhausted")).toBe(true);
 	});
 
 	it("bounds and redacts report artifacts before returning their pointer", async () => {
@@ -5737,49 +5665,6 @@ describe("ICE subagent contracts", () => {
 		).rejects.toThrow(/takeover/i);
 		await runner.stopRuntime(normalized.runId, normalized.parentSessionId);
 		await run;
-	});
-
-	it("enforces the tool-call budget at final scoped dispatch", async () => {
-		const cwd = await createWorkspace();
-		await writeFile(join(cwd, "src", "app.ts"), "export const app = true;\n");
-		const faux = registerFauxProvider();
-		try {
-			const authStorage = AuthStorage.inMemory();
-			await authStorage.modify(faux.getModel().provider, async () => ({ type: "api_key", key: "faux-key" }));
-			const modelRuntime = await ModelRuntime.create({
-				credentials: authStorage,
-				modelsPath: join(cwd, "models.json"),
-			});
-			const model = faux.getModel();
-			modelRuntime.registerProvider(model.provider, {
-				baseUrl: model.baseUrl,
-				api: model.api,
-				models: [model],
-			});
-			faux.setResponses([
-				fauxAssistantMessage(
-					[
-						fauxToolCall("read", { path: "src/app.ts" }, { id: "budget-one" }),
-						fauxToolCall("read", { path: "src/app.ts" }, { id: "budget-two" }),
-					],
-					{ stopReason: "toolUse" },
-				),
-				fauxAssistantMessage('{"summary":"must not complete","evidence":{"paths":["src/app.ts"]}}'),
-			]);
-			const normalized = normalizeSubagentRequest(
-				{ ...request(cwd), execution: { maxToolCalls: 1, maxTurns: 4 } },
-				cwd,
-			);
-			const result = await new NativeSubagentRunner({ agentDir: cwd }).runResolved(
-				normalized,
-				["delegate", "read"],
-				{ model, modelRuntime },
-			);
-			expect(result.status).toBe("failed");
-			expect(result.diagnostics.some((diagnostic) => diagnostic.code === "batch_budget_exhausted")).toBe(true);
-		} finally {
-			faux.unregister();
-		}
 	});
 
 	it("installs unsafe prompt and mutation tools on the real child session", async () => {
@@ -7780,7 +7665,7 @@ describe("ICE subagent contracts", () => {
 		const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown>();
 		const settingsManager = SettingsManager.inMemory({
 			ice: {
-				subagents: { defaults: { maxTurns: 9 }, roleDefaults: { security: { thinking: "high" } } },
+				subagents: { defaults: { timeoutMs: 9_000 }, roleDefaults: { security: { thinking: "high" } } },
 				hooks: {
 					enabled: true,
 					definitions: [{ id: "policy", event: "subagent.beforeLaunch", kind: "in-process" }],

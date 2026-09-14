@@ -52,8 +52,6 @@ export interface SubagentJobContract {
 	route?: IceSubagentRouteSnapshot;
 	thinking: string;
 	timeoutMs: number;
-	maxTurns: number;
-	maxToolCalls: number;
 	maxOutputBytes: number;
 	temperature?: number;
 	topP?: number;
@@ -759,7 +757,7 @@ function validJobRecord(value: unknown): value is SubagentJobRecord {
 					!Number.isFinite(contract.topP) ||
 					contract.topP < 0 ||
 					contract.topP > 1)) ||
-			!["timeoutMs", "maxTurns", "maxToolCalls", "maxOutputBytes"].every(
+			!["timeoutMs", "maxOutputBytes"].every(
 				(key) => typeof contract[key] === "number" && Number.isSafeInteger(contract[key]) && contract[key] >= 0,
 			) ||
 			!Array.isArray(contract.tools) ||
@@ -865,9 +863,13 @@ function normalizePersistedSnapshot(value: unknown): unknown {
 	let changed = false;
 	if (isRecord(normalized.job)) {
 		const job = { ...normalized.job };
-		if (isRecord(job.contract) && Object.hasOwn(job.contract, "maxTotalTokens")) {
-			job.contract = Object.fromEntries(Object.entries(job.contract).filter(([key]) => key !== "maxTotalTokens"));
-			changed = true;
+		if (isRecord(job.contract)) {
+			const obsoleteKeys = new Set(["maxTotalTokens", "maxTurns", "maxToolCalls"]);
+			const contract = Object.fromEntries(Object.entries(job.contract).filter(([key]) => !obsoleteKeys.has(key)));
+			if (Object.keys(contract).length !== Object.keys(job.contract).length) {
+				job.contract = contract;
+				changed = true;
+			}
 		}
 		if (changed) normalized.job = job;
 	}

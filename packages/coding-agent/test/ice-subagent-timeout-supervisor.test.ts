@@ -133,30 +133,6 @@ afterEach(async () => {
 });
 
 describe("ICE resumable timeout supervision", () => {
-	it("fails the run when the bounded tool-call budget is exhausted", async () => {
-		const { cwd, agentDir } = await workspace();
-		const child = new ManagedTimeoutChild(cwd);
-		const normalized = normalizeSubagentRequest({ ...request(cwd), execution: { maxToolCalls: 2 } }, cwd, {
-			agentDir,
-		});
-		expect(normalized.execution.maxToolCalls).toBe(2);
-		const runner = new NativeSubagentRunner({
-			agentDir,
-			createSession: async () =>
-				({ session: child as unknown as AgentSession }) as unknown as CreateAgentSessionResult,
-		});
-		const model = { provider: "faux", id: "faux" } as Model<Api>;
-		// First prompt emits four tool starts; the third exceeds the budget of 2
-		// and fails the run without consuming a second model turn.
-		const result = await runner.runResolved(normalized, ["delegate", "read", "grep", "find", "ls"], {
-			model,
-		});
-		expect(result.status).toBe("failed");
-		expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain("batch_budget_exhausted");
-		expect(result.diagnostics.map((diagnostic) => diagnostic.message).join(" ")).toMatch(/tool-call budget/);
-		expect(child.promptCalls).toHaveLength(1);
-	});
-
 	it("treats the profile timeout as a default rather than a hard ceiling", async () => {
 		const { cwd, agentDir } = await workspace();
 		const defaultRequest = normalizeSubagentRequest(request(cwd), cwd, { agentDir });

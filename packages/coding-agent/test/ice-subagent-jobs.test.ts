@@ -217,8 +217,6 @@ describe("durable subagent jobs", () => {
 			{
 				thinking: "high",
 				timeoutMs: 120_000,
-				maxTurns: 8,
-				maxToolCalls: 16,
 				maxOutputBytes: 24 * 1024,
 				temperature: 0.2,
 				topP: 0.8,
@@ -230,7 +228,7 @@ describe("durable subagent jobs", () => {
 		const inspection = registry.inspect(accepted.jobId);
 		expect(inspection.job.contract).toMatchObject({
 			thinking: "high",
-			maxTurns: 8,
+			maxOutputBytes: 24 * 1024,
 			temperature: 0.2,
 			topP: 0.8,
 			tools: ["read"],
@@ -260,8 +258,6 @@ describe("durable subagent jobs", () => {
 		const contract: SubagentJobContract = {
 			thinking: "medium",
 			timeoutMs: 120_000,
-			maxTurns: 12,
-			maxToolCalls: 40,
 			maxOutputBytes: 24 * 1024,
 			tools: [],
 		};
@@ -304,9 +300,13 @@ describe("durable subagent jobs", () => {
 		registry.restore([{ type: "custom", customType: JOB_ENTRY_TYPE, data: legacy }]);
 		const inspection = registry.inspect("legacy-token-budget");
 		expect(inspection.job.contract).not.toHaveProperty("maxTotalTokens");
+		expect(inspection.job.contract).not.toHaveProperty("maxTurns");
+		expect(inspection.job.contract).not.toHaveProperty("maxToolCalls");
 		expect(inspection.result).not.toHaveProperty("budget");
 		expect(snapshots.at(-1)?.sequence).toBe(2);
 		expect(snapshots.at(-1)?.job.contract).not.toHaveProperty("maxTotalTokens");
+		expect(snapshots.at(-1)?.job.contract).not.toHaveProperty("maxTurns");
+		expect(snapshots.at(-1)?.job.contract).not.toHaveProperty("maxToolCalls");
 		expect(snapshots.at(-1)?.result).not.toHaveProperty("budget");
 	});
 

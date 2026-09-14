@@ -2147,6 +2147,7 @@ export class InteractiveMode {
 			[
 				presentation.handoffMessageIndex,
 				presentation.finalizationMessageIndex,
+				presentation.wrapUpMessageIndex,
 				presentation.finalReportMessageIndex,
 			].includes(index)
 		) {
@@ -2158,7 +2159,8 @@ export class InteractiveMode {
 				(presentation.handoffMessageMarker && text.includes(presentation.handoffMessageMarker)) ||
 				(presentation.finalizationMessageMarker && text.includes(presentation.finalizationMessageMarker)) ||
 				(presentation.timeoutContinuationMessageMarker &&
-					text.includes(presentation.timeoutContinuationMessageMarker))
+					text.includes(presentation.timeoutContinuationMessageMarker)) ||
+				(presentation.wrapUpMessageMarker && text.includes(presentation.wrapUpMessageMarker))
 			) {
 				return true;
 			}
@@ -2213,7 +2215,9 @@ export class InteractiveMode {
 					? "error"
 					: "warning";
 		const lines = [statusLabel];
-		if (result.summary?.trim()) lines.push(result.summary.trim());
+		// Plain final answers are already rendered from the child transcript. Keep
+		// only the terminal status here so the answer is not printed a second time.
+		if (!plainFinalTurn && result.summary?.trim()) lines.push(result.summary.trim());
 		if (result.evidencePaths?.length) {
 			lines.push(`Evidence: ${result.evidencePaths.length} path${result.evidencePaths.length === 1 ? "" : "s"}`);
 		}

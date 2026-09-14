@@ -53,8 +53,7 @@ describe("profile control validation and parent registration", () => {
 			options,
 		);
 		expect(request.execution).toMatchObject({
-			maxTurns: 12,
-			maxToolCalls: 40,
+			maxOutputBytes: 24 * 1024,
 			temperature: 0.35,
 			topP: 0.8,
 		});

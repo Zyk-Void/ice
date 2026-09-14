@@ -529,8 +529,6 @@ export interface SubagentProfileSummary {
 	tags?: readonly string[];
 	effectiveThinkingLevel?: SubagentThinkingLevel;
 	effectiveTimeoutMs?: number;
-	effectiveMaxTurns?: number;
-	effectiveMaxToolCalls?: number;
 	effectiveMaxOutputBytes?: number;
 	requestedTemperature?: number;
 	effectiveTemperature?: number;
@@ -540,8 +538,6 @@ export interface SubagentProfileSummary {
 	effectiveSettingSources?: Readonly<{
 		thinking: string;
 		timeoutMs: string;
-		maxTurns: string;
-		maxToolCalls: string;
 		maxOutputBytes: string;
 		temperature: string;
 		topP: string;
@@ -672,8 +668,6 @@ export const SUBAGENT_REPORT_LIMITS = {
 export type SubagentReportMode = "plain_final_turn" | "structured_report";
 
 export const SUBAGENT_WRAP_UP_LIMITS = {
-	turnReserve: 1,
-	toolReserve: 1,
 	wallReserveRatio: 0.2,
 	minimumWallReserveMs: 1_000,
 	maximumWallReserveMs: 10_000,
@@ -828,8 +822,8 @@ export interface SubagentForkContextSource {
 /**
  * W12: shared optional per-call execution overrides. Every field is a request
  * that must be validated and enforced by the runtime; prompt text alone never
- * satisfies a budget or tool restriction. `model` stays deferred pending the
- * W19 routing decision; exact parent-model inheritance remains the default.
+ * satisfies an output bound or tool restriction. `model` stays deferred pending
+ * the W19 routing decision; exact parent-model inheritance remains the default.
  */
 export interface SubagentExecutionOverrideInput {
 	model?: string;
@@ -837,8 +831,6 @@ export interface SubagentExecutionOverrideInput {
 	hooks?: string[];
 	thinking?: SubagentThinkingLevel;
 	tools?: string[];
-	maxTurns?: number;
-	maxToolCalls?: number;
 	maxOutputBytes?: number;
 	temperature?: number;
 	topP?: number;
@@ -847,18 +839,12 @@ export interface SubagentExecutionOverrideInput {
 export interface SubagentExecutionContract {
 	thinking: SubagentThinkingLevel;
 	tools: readonly string[] | undefined;
-	maxTurns: number;
-	maxToolCalls: number;
 	maxOutputBytes: number;
 	temperature?: number;
 	topP?: number;
 }
 
 export const SUBAGENT_EXECUTION_LIMITS = {
-	minTurns: 1,
-	maxTurns: 64,
-	minToolCalls: 0,
-	maxToolCalls: 512,
 	minOutputBytes: 1_024,
 	maxOutputBytes: 64 * 1_024,
 	minTemperature: 0,
@@ -1230,8 +1216,6 @@ export interface SubagentLaunchProvenance {
 	execution: {
 		thinking: SubagentThinkingLevel;
 		timeoutMs: number;
-		maxTurns: number;
-		maxToolCalls: number;
 		maxOutputBytes: number;
 		temperature?: number;
 		topP?: number;
@@ -1239,8 +1223,6 @@ export interface SubagentLaunchProvenance {
 		sources: {
 			thinking: string;
 			timeoutMs: string;
-			maxTurns: string;
-			maxToolCalls: string;
 			maxOutputBytes: string;
 			temperature: string;
 			topP: string;
@@ -1274,8 +1256,6 @@ export interface SubagentLaunchPreflightTask {
 	execution: {
 		thinking: SubagentThinkingLevel;
 		timeoutMs: number;
-		maxTurns: number;
-		maxToolCalls: number;
 		maxOutputBytes: number;
 		temperature?: number;
 		topP?: number;
@@ -1705,6 +1685,22 @@ function formatSubagentToolError(error: unknown): SubagentToolErrorDetails {
 			...(failure.details ? { details: failure.details } : {}),
 		},
 	};
+}
+
+function formatManagedIdentifierError(error: unknown, runId: string): string {
+	const message = redactCredentialText(error instanceof Error ? error.message : String(error));
+	const resultRefHint = runId.startsWith("job:")
+		? " The supplied value looks like a resultRef; remove the `job:` prefix and use the resulting bare jobId with inspect_subagent_job or cancel_subagent_job instead."
+		: "";
+	return `${message} manage_subagent requires a foreground runId returned by delegate (use details.managed.runId for a live background launch or details.result.runId for a retained terminal result); it does not accept a durable jobId, resultRef, batchId, or taskId.${resultRefHint}`;
+}
+
+function formatDurableJobIdentifierError(error: unknown, jobId: string): string {
+	const message = redactCredentialText(error instanceof Error ? error.message : String(error));
+	const resultRefHint = jobId.startsWith("job:")
+		? " The supplied value is a resultRef, not a jobId; pass the bare value returned as details.accepted.jobId."
+		: "";
+	return `${message} This tool requires the bare durable jobId returned as details.accepted.jobId by delegate_async; do not pass a resultRef (job:<id>), foreground runId, batchId, or taskId.${resultRefHint}`;
 }
 
 type StartupControlReason = "cancelled" | "timed_out";
@@ -3540,8 +3536,6 @@ function createSelectedMcpToolDefinitions(
  */
 interface SubagentExecutionPolicy {
 	beforeTool?: NativeSubagentSessionOptions["beforeTool"];
-	reserveToolCall?: (toolCallId?: string) => boolean;
-	settleToolCall?: (executed: boolean, toolCallId?: string) => void;
 	/** Tools the current parent policy still authorizes for this child. */
 	eligibleTools: ReadonlySet<string>;
 	/**
@@ -3579,17 +3573,7 @@ function wrapSubagentToolDefinitions(
 					signal,
 				);
 				if (signal?.aborted) throw new SubagentError("cancellation", "Child tool cancelled after policy hooks.");
-				if (current.reserveToolCall && !current.reserveToolCall(toolCallId)) {
-					throw new SubagentError(
-						"batch_budget_exhausted",
-						`Child exceeded its bounded tool-call budget before dispatching ${definition.name}.`,
-					);
-				}
-				try {
-					return await execute(toolCallId, params, signal, onUpdate, ctx);
-				} finally {
-					current.settleToolCall?.(true, toolCallId);
-				}
+				return execute(toolCallId, params, signal, onUpdate, ctx);
 			},
 		} as ToolDefinition;
 	});
@@ -3914,8 +3898,6 @@ function profileSummary(
 		...(profile.color ? { color: profile.color } : {}),
 		effectiveThinkingLevel: profile.thinkingLevel,
 		effectiveTimeoutMs: profile.timeoutMs,
-		effectiveMaxTurns: 12,
-		effectiveMaxToolCalls: 40,
 		effectiveMaxOutputBytes: profile.maxOutputBytes,
 		...(profile.temperature !== undefined
 			? { requestedTemperature: profile.temperature, effectiveTemperature: profile.temperature }
@@ -3924,8 +3906,6 @@ function profileSummary(
 		effectiveSettingSources: Object.freeze({
 			thinking: "bundled",
 			timeoutMs: "bundled",
-			maxTurns: "bundled",
-			maxToolCalls: "bundled",
 			maxOutputBytes: "bundled",
 			temperature: "bundled",
 			topP: "bundled",
@@ -4666,8 +4646,6 @@ export function normalizeSubagentExecutionOverride(
 		return Object.freeze({
 			thinking: profile.thinkingLevel,
 			tools: undefined,
-			maxTurns: SUBAGENT_EXECUTION_LIMITS.maxTurns,
-			maxToolCalls: SUBAGENT_EXECUTION_LIMITS.maxToolCalls,
 			maxOutputBytes: profile.maxOutputBytes,
 			...(profile.temperature !== undefined ? { temperature: profile.temperature } : {}),
 			...(profile.topP !== undefined ? { topP: profile.topP } : {}),
@@ -4677,22 +4655,14 @@ export function normalizeSubagentExecutionOverride(
 		throw new SubagentError("malformed_result", "Subagent execution overrides must be an object.");
 	}
 	if (Object.hasOwn(execution, "maxTotalTokens")) {
-		throw new SubagentError(
-			"malformed_result",
-			'"maxTotalTokens" was removed; use maxTurns/maxToolCalls/timeoutMs/maxOutputBytes',
-		);
+		throw new SubagentError("malformed_result", '"maxTotalTokens" was removed; use timeoutMs/maxOutputBytes');
 	}
-	const allowed = new Set([
-		"thinking",
-		"tools",
-		"maxTurns",
-		"maxToolCalls",
-		"maxOutputBytes",
-		"temperature",
-		"topP",
-		"hooks",
-		"model",
-	]);
+	for (const key of ["maxTurns", "maxToolCalls"] as const) {
+		if (Object.hasOwn(execution, key)) {
+			throw new SubagentError("malformed_result", `"${key}" was removed; use timeoutMs/maxOutputBytes`);
+		}
+	}
+	const allowed = new Set(["thinking", "tools", "maxOutputBytes", "temperature", "topP", "hooks", "model"]);
 	if (
 		execution.model !== undefined &&
 		(typeof execution.model !== "string" ||
@@ -4742,24 +4712,6 @@ export function normalizeSubagentExecutionOverride(
 		}
 		return value;
 	};
-	const maxTurns =
-		execution.maxTurns === undefined
-			? SUBAGENT_EXECUTION_LIMITS.maxTurns
-			: checkBudget(
-					execution.maxTurns,
-					"maxTurns",
-					SUBAGENT_EXECUTION_LIMITS.minTurns,
-					SUBAGENT_EXECUTION_LIMITS.maxTurns,
-				);
-	const maxToolCalls =
-		execution.maxToolCalls === undefined
-			? SUBAGENT_EXECUTION_LIMITS.maxToolCalls
-			: checkBudget(
-					execution.maxToolCalls,
-					"maxToolCalls",
-					SUBAGENT_EXECUTION_LIMITS.minToolCalls,
-					SUBAGENT_EXECUTION_LIMITS.maxToolCalls,
-				);
 	const maxOutputBytes =
 		execution.maxOutputBytes === undefined
 			? Math.min(profile.maxOutputBytes, SUBAGENT_EXECUTION_LIMITS.maxOutputBytes)
@@ -4797,8 +4749,6 @@ export function normalizeSubagentExecutionOverride(
 	return Object.freeze({
 		thinking: execution.thinking ?? profile.thinkingLevel,
 		tools,
-		maxTurns,
-		maxToolCalls,
 		maxOutputBytes,
 		...(temperature !== undefined ? { temperature } : {}),
 		...(topP !== undefined ? { topP } : {}),
@@ -4834,8 +4784,6 @@ function resolveIceContractForRequest(
 	const call: IceContractCallInput = {};
 	if (request.timeoutMs !== undefined) call.timeoutMs = request.timeoutMs;
 	if (request.execution?.thinking !== undefined) call.thinking = validatedExecution.thinking;
-	if (request.execution?.maxTurns !== undefined) call.maxTurns = validatedExecution.maxTurns;
-	if (request.execution?.maxToolCalls !== undefined) call.maxToolCalls = validatedExecution.maxToolCalls;
 	if (request.execution?.maxOutputBytes !== undefined) call.maxOutputBytes = validatedExecution.maxOutputBytes;
 	if (request.execution?.temperature !== undefined) call.temperature = validatedExecution.temperature;
 	if (request.execution?.topP !== undefined) call.topP = validatedExecution.topP;
@@ -5109,8 +5057,6 @@ export function normalizeSubagentRequest(
 	const resolvedExecution: SubagentExecutionContract = Object.freeze({
 		thinking: iceContract.values.thinking,
 		tools: requestedTools,
-		maxTurns: iceContract.values.maxTurns,
-		maxToolCalls: iceContract.values.maxToolCalls,
 		maxOutputBytes: iceContract.values.maxOutputBytes,
 		...(iceContract.values.temperature !== undefined ? { temperature: iceContract.values.temperature } : {}),
 		...(iceContract.values.topP !== undefined ? { topP: iceContract.values.topP } : {}),
@@ -5432,13 +5378,26 @@ export function buildSubagentPrompt(
 	const authorizedTaskHandoff = unsafeHostExec
 		? ["AUTHORIZED TASK (execute immediately with the provided tools):", redactCredentialText(request.task)]
 		: contextHandoff;
-	// W12/W15: the execution contract is advisory prompt context; runtime budgets
+	// W12: the execution contract is advisory prompt context; runtime output
 	// and tool eligibility are enforced by NativeSubagentRunner, never by prose.
 	const executionTools = request.execution.tools ? sortSubagentCacheCollection(request.execution.tools) : undefined;
 	const executionContractNote =
 		executionTools !== undefined
-			? `Execution contract: at most ${request.execution.maxTurns} model turns, ${request.execution.maxToolCalls} tool calls, tools [${executionTools.join(", ") || "none"}]. Budgets are enforced by the runtime; do not attempt extra turns or tools.`
-			: `Execution contract: at most ${request.execution.maxTurns} model turns and ${request.execution.maxToolCalls} tool calls. Budgets are enforced by the runtime; do not attempt extra turns or tools.`;
+			? `Execution contract: wall-clock timeout ${request.timeoutMs} ms and complete parent-facing output cap ${request.execution.maxOutputBytes} bytes; approved tools [${executionTools.join(", ") || "none"}]. Use them as needed and stop when the task is complete.`
+			: `Execution contract: wall-clock timeout ${request.timeoutMs} ms and complete parent-facing output cap ${request.execution.maxOutputBytes} bytes. Stop when the task is complete.`;
+	const structuredReportInstructions =
+		request.reportMode === "structured_report"
+			? [
+					`Keep the complete JSON report within ${request.maxOutputBytes} UTF-8 bytes.`,
+					reportContract + (request.outputSchema ? ' Include the required "payload" object.' : ""),
+				]
+			: [];
+	const plainFinalInstructions =
+		request.reportMode === "plain_final_turn"
+			? [
+					`When the work is done, end with one plain final answer message in ordinary prose or markdown; do not wrap it in a JSON envelope. Keep the complete final answer within ${request.maxOutputBytes} UTF-8 bytes. The runtime ingests that final assistant message directly as the delegated result.`,
+				]
+			: [];
 	return [
 		SUBAGENT_HANDOFF_MARKER,
 		handoffWarning,
@@ -5456,19 +5415,11 @@ export function buildSubagentPrompt(
 				].join("\n")
 			: undefined,
 		selectedPrompts ? `Explicitly selected prompt content:\n${selectedPrompts}` : undefined,
-		`Keep the complete JSON report within ${request.maxOutputBytes} UTF-8 bytes.`,
-		reportContract,
+		...structuredReportInstructions,
 		...authorizedTaskHandoff,
 		acceptanceContract ? ["Acceptance criteria:", acceptanceContract].join("\n") : undefined,
 		outputSchemaContract,
-		...(request.reportMode === "structured_report"
-			? [
-					`Keep the complete JSON report within ${request.maxOutputBytes} UTF-8 bytes.`,
-					reportContract + (request.outputSchema ? ' Include the required "payload" object.' : ""),
-				]
-			: [
-					`When the work is done, end with one plain final answer message in ordinary prose or markdown; do not wrap it in a JSON envelope. Keep the complete final answer within ${request.maxOutputBytes} UTF-8 bytes. The runtime ingests that final assistant message directly as the delegated result.`,
-				]),
+		...plainFinalInstructions,
 	]
 		.filter((part): part is string => part !== undefined)
 		.join("\n\n");
@@ -5986,6 +5937,25 @@ export function parseSubagentReportOutcome(
 	};
 }
 
+function normalizePlainFinalAnswer(text: string): string {
+	const parsed = parseSubagentReportOutcome(text, Number.MAX_SAFE_INTEGER);
+	if (parsed.kind !== "valid") return text;
+	const reportedPaths = parsed.report.paths.map((path) => `- ${redactCredentialText(path)}`).join("\n");
+	const reportedFindings = parsed.report.findings
+		.map(
+			(finding) =>
+				`- [${finding.severity}] ${redactCredentialText(finding.category)}: ${redactCredentialText(finding.claim)}`,
+		)
+		.join("\n");
+	return [
+		redactCredentialText(parsed.report.summary),
+		reportedPaths ? `Reported paths (not independently verified):\n${reportedPaths}` : undefined,
+		reportedFindings ? `Reported findings (not independently verified):\n${reportedFindings}` : undefined,
+	]
+		.filter((part): part is string => part !== undefined)
+		.join("\n\n");
+}
+
 export function normalizeReviewFindings(
 	findings: readonly ReviewFinding[] | undefined,
 	request: NormalizedSubagentRequest,
@@ -6335,9 +6305,7 @@ export interface NativeSubagentSessionOptions {
 		params: Record<string, unknown>,
 		signal: AbortSignal | undefined,
 	) => Promise<void>;
-	reserveToolCall?: (toolCallId?: string) => boolean;
-	settleToolCall?: (executed: boolean, toolCallId?: string) => void;
-	/** Called after each completed Ice turn to enforce the parent-owned turn budget. */
+	/** Called after each completed Ice turn for authority and timeout-finalization checks. */
 	shouldStopAfterTurn?: () => boolean | Promise<boolean>;
 	/** Dynamic report-only state while the parent requests a bounded final report. */
 	reportOnly?: () => boolean;
@@ -6795,8 +6763,6 @@ export async function createNativeSubagentSession(
 	const policyBox: SubagentExecutionPolicyBox = options.policyBox ?? {
 		current: {
 			beforeTool: options.beforeTool,
-			reserveToolCall: options.reserveToolCall,
-			settleToolCall: options.settleToolCall,
 			eligibleTools: new Set<string>(),
 			strictEligibility: false,
 			reportOnly: options.reportOnly,
@@ -8332,10 +8298,8 @@ export class NativeSubagentRunner {
 		};
 		let childSession: NativeSubagentSession["session"] | undefined;
 		let observedOutputBytes = 0;
-		let control: "cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted" | undefined;
-		let resolveControl:
-			| ((reason: "cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted") => void)
-			| undefined;
+		let control: "cancelled" | "timed_out" | "output_truncated" | undefined;
+		let resolveControl: ((reason: "cancelled" | "timed_out" | "output_truncated") => void) | undefined;
 		let outputLimitReached = false;
 		let removeAbortListener: (() => void) | undefined;
 		let supervisor: SubagentRunSupervisor<SubagentResult> | undefined;
@@ -8357,35 +8321,10 @@ export class NativeSubagentRunner {
 		// Terminal result of this attempt, captured before teardown so the retained
 		// ledger is populated ahead of supervisor cleanup.
 		let settledTerminalResult: SubagentResult | undefined;
-		// W15/W16: enforced turn and tool-call budgets. Reservation happens before
-		// dispatch so parallel scheduling cannot oversubscribe the shared counter;
-		// cancellation never refunds an executed side-effecting call.
-		const maxTurns = normalized.execution.maxTurns;
-		const maxToolCalls = normalized.execution.maxToolCalls;
+		// Per-child turn and tool-call ceilings were intentionally removed. Keep
+		// observed turn telemetry and reserve only the final wall-clock window so
+		// the child can finish a useful answer before its real timeout.
 		let observedTurns = 0;
-		let dispatchedToolCalls = 0;
-		let reservedToolCalls = 0;
-		const reservedToolCallIds = new Set<string>();
-		let budgetExhausted: "turns" | "tool-calls" | undefined;
-		const reserveToolCall = (toolCallId?: string): boolean => {
-			if (toolCallId && reservedToolCallIds.has(toolCallId)) return true;
-			if (dispatchedToolCalls + reservedToolCalls >= maxToolCalls) {
-				budgetExhausted = "tool-calls";
-				return false;
-			}
-			reservedToolCalls += 1;
-			if (toolCallId) reservedToolCallIds.add(toolCallId);
-			return true;
-		};
-		const settleToolReservation = (executed: boolean, toolCallId?: string): void => {
-			if (toolCallId) {
-				if (!reservedToolCallIds.delete(toolCallId)) return;
-			} else if (reservedToolCalls === 0) {
-				return;
-			}
-			if (reservedToolCalls > 0) reservedToolCalls -= 1;
-			if (executed) dispatchedToolCalls += 1;
-		};
 		const wrapUpWallReserveMs = Math.min(
 			SUBAGENT_WRAP_UP_LIMITS.maximumWallReserveMs,
 			Math.max(
@@ -8395,12 +8334,8 @@ export class NativeSubagentRunner {
 		);
 		const requestWrapUpIfNeeded = (): boolean => {
 			if (wrapUpRequested || wrapUpPromptStarted || reportOnly || liveControl?.isControlled()) return false;
-			const turnThreshold = maxTurns > SUBAGENT_WRAP_UP_LIMITS.turnReserve && observedTurns >= maxTurns - 1;
-			const toolThreshold =
-				maxToolCalls > SUBAGENT_WRAP_UP_LIMITS.toolReserve &&
-				dispatchedToolCalls + reservedToolCalls >= maxToolCalls - 1;
 			const wallThreshold = Date.now() >= attemptDeadline - wrapUpWallReserveMs;
-			if (!turnThreshold && !toolThreshold && !wallThreshold) return false;
+			if (!wallThreshold) return false;
 			wrapUpRequested = true;
 			supervisor?.setPhase("wrapping_up");
 			emit("subagent_wrap_up", "running");
@@ -8675,15 +8610,12 @@ export class NativeSubagentRunner {
 						throw new SubagentError("capability_denied", "Authority changed while awaiting a tool policy hook.");
 					}
 				},
-				reserveToolCall,
-				settleToolCall: (executed, toolCallId) => settleToolReservation(executed, toolCallId),
 				reportOnly: () => reportOnly,
 				shouldStopAfterTurn: async () => {
 					if (options.isAuthorityStillValid && !(await options.isAuthorityStillValid())) {
 						authorityRevoked = true;
 						return true;
 					}
-					if (observedTurns >= maxTurns) return true;
 					return requestWrapUpIfNeeded();
 				},
 				// A resumed child re-checks every wrapped tool against current parent authority; a fresh
@@ -8758,6 +8690,7 @@ export class NativeSubagentRunner {
 				handoffMessageMarker: SUBAGENT_HANDOFF_MARKER,
 				finalizationMessageMarker: INTERACTIVE_FINAL_REPORT_MARKER,
 				timeoutContinuationMessageMarker: SUBAGENT_EXTENSION_MARKER,
+				wrapUpMessageMarker: SUBAGENT_WRAP_UP_MARKER,
 				handoffMessageIndex: childSession.messages.length,
 			});
 			liveControl = createSubagentLiveSessionControl(
@@ -8797,12 +8730,6 @@ export class NativeSubagentRunner {
 				if (event.type === "turn_start") {
 					observedTurns += 1;
 				} else if (event.type === "tool_execution_start") {
-					// Reserve at the lifecycle boundary as a fallback for native/session
-					// implementations that emit tool events without using our wrapper.
-					// Wrapped calls deduplicate by toolCallId and settle exactly once.
-					if (budgetExhausted === undefined && !reserveToolCall(event.toolCallId)) {
-						resolveControl?.("tool_budget_exhausted");
-					}
 					const activity = buildSubagentToolActivityDigest(
 						event.toolCallId,
 						event.toolName,
@@ -8822,7 +8749,6 @@ export class NativeSubagentRunner {
 						event.toolCallId,
 					);
 				} else if (event.type === "tool_execution_end") {
-					settleToolReservation(true, event.toolCallId);
 					childToolFailed ||= event.isError;
 					const started = activeToolActivities.get(event.toolCallId);
 					if (started) {
@@ -9000,13 +8926,11 @@ export class NativeSubagentRunner {
 			type PromptOutcome =
 				| { kind: "completed" }
 				| { kind: "error"; error: unknown }
-				| { kind: "cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted" }
+				| { kind: "cancelled" | "timed_out" | "output_truncated" }
 				| { kind: "needs_time" };
-			const controlPromise = new Promise<"cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted">(
-				(resolveControlPromise) => {
-					resolveControl = resolveControlPromise;
-				},
-			);
+			const controlPromise = new Promise<"cancelled" | "timed_out" | "output_truncated">((resolveControlPromise) => {
+				resolveControl = resolveControlPromise;
+			});
 			const abortListener = (): void => {
 				resolveControl?.("cancelled");
 				if (supervisor?.stateValue === "awaiting_extension") {
@@ -9042,12 +8966,11 @@ export class NativeSubagentRunner {
 				? "a valid final envelope"
 				: "a nonempty final assistant answer";
 			const controlledFailure = (
-				reason: "cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted",
+				reason: "cancelled" | "timed_out" | "output_truncated",
 			): Promise<SubagentResult> => {
 				if (controlledFailurePromise) return controlledFailurePromise;
 				controlledFailurePromise = (async () => {
 					control = reason;
-					budgetExhausted = reason === "tool_budget_exhausted" ? "tool-calls" : budgetExhausted;
 					await abortChild();
 					const status = reason === "cancelled" ? "cancelled" : reason === "timed_out" ? "timed_out" : "failed";
 					emit(
@@ -9061,17 +8984,15 @@ export class NativeSubagentRunner {
 					const diagnosticMessage =
 						reason === "timed_out"
 							? structuredReportMode
-								? `Child exceeded its ${normalized.timeoutMs} ms execution/finalization timeout before a verified bounded report completed.`
-								: `Child exceeded its ${normalized.timeoutMs} ms execution/finalization timeout before a final assistant answer completed.`
+								? `Child reached its ${normalized.timeoutMs} ms wall-clock timeout before a verified bounded report completed.`
+								: `Child reached its ${normalized.timeoutMs} ms wall-clock timeout before a final assistant answer completed.`
 							: reason === "cancelled"
 								? structuredReportMode
 									? "Child was cancelled before a verified bounded report completed."
 									: "Child was cancelled before a final assistant answer completed."
-								: reason === "tool_budget_exhausted"
-									? `Child exceeded its bounded tool-call budget (${maxToolCalls} calls).`
-									: structuredReportMode
-										? "Child exceeded the bounded output budget before a valid report completed."
-										: "Child exceeded the bounded output budget before a final assistant answer completed.";
+								: structuredReportMode
+									? "Child exceeded the bounded output budget before a valid report completed."
+									: "Child exceeded the bounded output budget before a final assistant answer completed.";
 					updatePresentation({
 						finalizationStarted: false,
 						protocolReportPending: false,
@@ -9094,10 +9015,8 @@ export class NativeSubagentRunner {
 									reason === "cancelled"
 										? `No final ${finalDeliverableNoun}: the child was cancelled before ${missingDeliverableTarget}.`
 										: reason === "timed_out"
-											? `No final ${finalDeliverableNoun}: the child timed out before ${missingDeliverableTarget}.`
-											: reason === "tool_budget_exhausted"
-												? `No final ${finalDeliverableNoun}: the child exceeded the bounded tool-call budget before ${missingDeliverableTarget}.`
-												: `No final ${finalDeliverableNoun}: the child exceeded the bounded output budget before ${missingDeliverableTarget}.`,
+											? `No final ${finalDeliverableNoun}: the child reached its wall-clock timeout before ${missingDeliverableTarget}.`
+											: `No final ${finalDeliverableNoun}: the child exceeded the bounded output budget before ${missingDeliverableTarget}.`,
 							},
 							{ terminal: true },
 						),
@@ -9109,9 +9028,7 @@ export class NativeSubagentRunner {
 										? "cancellation"
 										: reason === "timed_out"
 											? "timeout"
-											: reason === "tool_budget_exhausted"
-												? "batch_budget_exhausted"
-												: "output_truncated",
+											: "output_truncated",
 								message: diagnosticMessage,
 							},
 							...(spillDiagnostic ? [spillDiagnostic] : []),
@@ -9293,14 +9210,11 @@ export class NativeSubagentRunner {
 			};
 			const awaitInteractiveBoundary = async (
 				waitPromise: Promise<void>,
-			): Promise<
-				"cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted" | "needs_time" | undefined
-			> => {
-				const races: Array<
-					Promise<
-						"cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted" | "needs_time" | undefined
-					>
-				> = [waitPromise.then(() => undefined), controlPromise.then((reason) => reason)];
+			): Promise<"cancelled" | "timed_out" | "output_truncated" | "needs_time" | undefined> => {
+				const races: Array<Promise<"cancelled" | "timed_out" | "output_truncated" | "needs_time" | undefined>> = [
+					waitPromise.then(() => undefined),
+					controlPromise.then((reason) => reason),
+				];
 				if (supervisor) races.push(supervisor.getTimeoutPromise().then(() => "needs_time"));
 				return Promise.race(races);
 			};
@@ -9478,7 +9392,7 @@ export class NativeSubagentRunner {
 						rawAnswer,
 					);
 				}
-				const answer = truncateSubagentOutput(rawAnswer, normalized.maxOutputBytes);
+				const answer = truncateSubagentOutput(normalizePlainFinalAnswer(rawAnswer), normalized.maxOutputBytes);
 				const usage = observeUsage();
 				const candidateResult: SubagentResult = {
 					...base,
@@ -9662,8 +9576,6 @@ export class NativeSubagentRunner {
 					} catch {
 						// The independent beforeTool guard denies dispatch even if SDK disabling fails.
 					}
-					const turnLimit = chargeTurn("report repair");
-					if (turnLimit) return turnLimit;
 					const turnsBefore = observedTurns;
 					const repairStartIndex = session.messages.length;
 					updatePresentation({ finalizationStarted: true, protocolReportPending: true });
@@ -9680,8 +9592,7 @@ export class NativeSubagentRunner {
 					if (
 						outcome.kind === "cancelled" ||
 						outcome.kind === "timed_out" ||
-						outcome.kind === "output_truncated" ||
-						outcome.kind === "tool_budget_exhausted"
+						outcome.kind === "output_truncated"
 					) {
 						return controlledFailure(outcome.kind);
 					}
@@ -9749,10 +9660,9 @@ export class NativeSubagentRunner {
 				} catch {
 					// The independent beforeTool guard still denies any wrap-up tool dispatch.
 				}
-				const turnLimit = chargeTurn("wrap-up");
-				if (turnLimit) return turnLimit;
 				const turnsBefore = observedTurns;
 				const wrapUpStartIndex = childSession!.messages.length;
+				updatePresentation({ wrapUpMessageIndex: wrapUpStartIndex });
 				const outcome = await awaitPrompt(
 					childSession!.prompt(SUBAGENT_WRAP_UP_PROMPT, {
 						expandPromptTemplates: false,
@@ -9761,20 +9671,13 @@ export class NativeSubagentRunner {
 				);
 				if (observedTurns === turnsBefore) observedTurns += 1;
 				if (outcome.kind === "needs_time") return retainForExtension(runWrapUp);
-				if (
-					outcome.kind === "cancelled" ||
-					outcome.kind === "timed_out" ||
-					outcome.kind === "output_truncated" ||
-					outcome.kind === "tool_budget_exhausted"
-				) {
+				if (outcome.kind === "cancelled" || outcome.kind === "timed_out" || outcome.kind === "output_truncated") {
 					return controlledFailure(outcome.kind);
 				}
 				if (outcome.kind === "error") throw classifySubagentFailure(outcome.error, "runtime", childToolFailed);
 				return runAfterInitial(wrapUpStartIndex);
 			};
 			runFinalization = async (): Promise<SubagentResult> => {
-				const turnLimit = chargeTurn(structuredReportMode ? "final report" : "final answer");
-				if (turnLimit) return turnLimit;
 				const turnsBefore = observedTurns;
 				supervisor?.setPhase("finalization");
 				const finalReportStartIndex = childSession!.messages.length;
@@ -9797,8 +9700,7 @@ export class NativeSubagentRunner {
 				if (
 					finalOutcome.kind === "cancelled" ||
 					finalOutcome.kind === "timed_out" ||
-					finalOutcome.kind === "output_truncated" ||
-					finalOutcome.kind === "tool_budget_exhausted"
+					finalOutcome.kind === "output_truncated"
 				) {
 					return controlledFailure(finalOutcome.kind);
 				}
@@ -9825,9 +9727,6 @@ export class NativeSubagentRunner {
 							"Current parent settings or trust revoked this child before its next safe boundary.",
 						),
 					);
-				}
-				if (budgetExhausted === "tool-calls") {
-					return controlledFailure("tool_budget_exhausted");
 				}
 				if (liveControl && (liveControl.isControlled() || liveControl.hasSteered())) {
 					if (liveControl.isControlled()) supervisor?.pauseForControlledWait();
@@ -9873,8 +9772,6 @@ export class NativeSubagentRunner {
 				const continuationPrompt = structuredReportMode
 					? SUBAGENT_EXTENSION_PROMPT
 					: SUBAGENT_EXTENSION_PROMPT_PLAIN;
-				const turnLimit = chargeTurn("continuation prompt");
-				if (turnLimit) return turnLimit;
 				const turnsBefore = observedTurns;
 				const reportStartIndex = childSession!.messages.length;
 				const outcome = await awaitPrompt(
@@ -9885,40 +9782,13 @@ export class NativeSubagentRunner {
 				);
 				if (observedTurns === turnsBefore) observedTurns += 1;
 				if (outcome.kind === "needs_time") return retainForExtension(runContinuation);
-				if (
-					outcome.kind === "cancelled" ||
-					outcome.kind === "timed_out" ||
-					outcome.kind === "output_truncated" ||
-					outcome.kind === "tool_budget_exhausted"
-				) {
+				if (outcome.kind === "cancelled" || outcome.kind === "timed_out" || outcome.kind === "output_truncated") {
 					return controlledFailure(outcome.kind);
 				}
 				if (outcome.kind === "error") {
 					throw classifySubagentFailure(outcome.error, "runtime", childToolFailed);
 				}
 				return runAfterInitial(reportStartIndex);
-			};
-			const chargeTurn = (label: string): SubagentResult | undefined => {
-				if (observedTurns >= maxTurns) {
-					budgetExhausted = "turns";
-					return {
-						...base,
-						childSessionId: childSession!.sessionId,
-						status: "failed",
-						summary: structuredReportMode
-							? `Child exceeded its bounded turn budget (${maxTurns} turns including the reserved final report).`
-							: `Child exceeded its bounded turn budget (${maxTurns} turns).`,
-						observedOutputBytes,
-						partial: true,
-						diagnostics: [
-							{
-								code: "batch_budget_exhausted",
-								message: `Turn budget exhausted before ${label}; no further model turn was consumed.`,
-							},
-						],
-					};
-				}
-				return undefined;
 			};
 			const runInitial = async (): Promise<SubagentResult> => {
 				if (authorityRevoked) {
@@ -9929,8 +9799,6 @@ export class NativeSubagentRunner {
 						),
 					);
 				}
-				const turnLimit = chargeTurn("initial prompt");
-				if (turnLimit) return turnLimit;
 				const turnsBefore = observedTurns;
 				const reportStartIndex = childSession!.messages.length;
 				if (presentation?.handoffMessageIndex !== reportStartIndex) {
@@ -9944,12 +9812,7 @@ export class NativeSubagentRunner {
 				);
 				if (observedTurns === turnsBefore) observedTurns += 1;
 				if (outcome.kind === "needs_time") return retainForExtension(runContinuation);
-				if (
-					outcome.kind === "cancelled" ||
-					outcome.kind === "timed_out" ||
-					outcome.kind === "output_truncated" ||
-					outcome.kind === "tool_budget_exhausted"
-				) {
+				if (outcome.kind === "cancelled" || outcome.kind === "timed_out" || outcome.kind === "output_truncated") {
 					return controlledFailure(outcome.kind);
 				}
 				if (outcome.kind === "error") {
@@ -9962,13 +9825,7 @@ export class NativeSubagentRunner {
 			return initialResult;
 		} catch (error) {
 			const failure = classifySubagentFailure(error, childSession ? "runtime" : "startup", childToolFailed);
-			const retrySafeStartup =
-				!childSession &&
-				observedTurns === 0 &&
-				dispatchedToolCalls === 0 &&
-				reservedToolCalls === 0 &&
-				!options.unsafeHostExec &&
-				failure.retryable;
+			const retrySafeStartup = !childSession && observedTurns === 0 && !options.unsafeHostExec && failure.retryable;
 			const diagnostic = {
 				code: failure.code,
 				message: failure.message,
@@ -10138,10 +9995,10 @@ export async function runSubagentWithRecovery(
 				const remainingTime = deadline - Date.now();
 				if (remainingTime <= 0) return finalize(stoppedResult("timed_out"));
 				const remainingOutput = normalized.maxOutputBytes - totalObservedOutputBytes;
-				if (remainingOutput < 1024 || totalTurns >= normalized.execution.maxTurns)
+				if (remainingOutput < 1024)
 					throw new SubagentError(
 						"batch_budget_exhausted",
-						"No bounded output or turn capacity remains for startup recovery.",
+						"No bounded output capacity remains for startup recovery.",
 					);
 				currentRequest = {
 					...normalized,
@@ -10149,7 +10006,6 @@ export async function runSubagentWithRecovery(
 					maxOutputBytes: remainingOutput,
 					execution: Object.freeze({
 						...normalized.execution,
-						maxTurns: normalized.execution.maxTurns - totalTurns,
 						maxOutputBytes: remainingOutput,
 					}),
 				};
@@ -10250,8 +10106,6 @@ export function createSubagentLaunchProvenance(
 			sources: {
 				thinking: request.iceContract.sources.thinking,
 				timeoutMs: request.iceContract.sources.timeoutMs,
-				maxTurns: request.iceContract.sources.maxTurns,
-				maxToolCalls: request.iceContract.sources.maxToolCalls,
 				maxOutputBytes: request.iceContract.sources.maxOutputBytes,
 				temperature: request.iceContract.sources.temperature,
 				topP: request.iceContract.sources.topP,
@@ -10280,7 +10134,7 @@ function resolveBatchConfiguration(options: SubagentBatchRunOptions): ResolvedBa
 	if (Object.hasOwn(options, "totalTokenBudget")) {
 		throw new SubagentError(
 			"malformed_result",
-			'"totalTokenBudget" was removed; use per-task maxTurns/maxToolCalls/timeoutMs/maxOutputBytes',
+			'"totalTokenBudget" was removed; use per-task timeoutMs/maxOutputBytes and batch concurrency.',
 		);
 	}
 	const maxAllowed = options.concurrencyPolicy?.maxConcurrency ?? SUBAGENT_BATCH_LIMITS.maxConcurrency;
@@ -10383,8 +10237,6 @@ export function buildSubagentLaunchPreflight(
 			execution: {
 				thinking: task.request.execution.thinking,
 				timeoutMs: task.request.timeoutMs,
-				maxTurns: task.request.execution.maxTurns,
-				maxToolCalls: task.request.execution.maxToolCalls,
 				maxOutputBytes: task.request.execution.maxOutputBytes,
 				...(task.request.execution.temperature !== undefined
 					? { temperature: task.request.execution.temperature }
@@ -10496,7 +10348,7 @@ export function formatSubagentLaunchDigest(preflight: SubagentLaunchPreflight, m
 					? `  targets: ${task.scopeTargets.map((target) => relative(task.cwd, target) || ".").join(", ")}`
 					: undefined,
 				`  tools: ${task.tools.join(", ")}`,
-				`  execution: thinking=${task.execution.thinking} timeout=${task.execution.timeoutMs}ms turns=${task.execution.maxTurns} tools=${task.execution.maxToolCalls} output=${task.execution.maxOutputBytes} bytes${task.execution.temperature !== undefined ? ` temperature=${task.execution.temperature}` : ""}${
+				`  execution: thinking=${task.execution.thinking} timeout=${task.execution.timeoutMs}ms output=${task.execution.maxOutputBytes} bytes${task.execution.temperature !== undefined ? ` temperature=${task.execution.temperature}` : ""}${
 					task.execution.topP !== undefined ? ` topP=${task.execution.topP}` : ""
 				}`,
 				task.outputSchema
@@ -11211,8 +11063,6 @@ const subagentExecutionParameters = Type.Object(
 			]),
 		),
 		tools: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 32 }), { maxItems: 7 })),
-		maxTurns: Type.Optional(Type.Integer({ minimum: 1, maximum: 64 })),
-		maxToolCalls: Type.Optional(Type.Integer({ minimum: 0, maximum: 512 })),
 		maxOutputBytes: Type.Optional(Type.Integer({ minimum: 1024, maximum: 65536 })),
 		temperature: Type.Optional(
 			Type.Number({
@@ -11227,7 +11077,7 @@ const subagentExecutionParameters = Type.Object(
 	{
 		additionalProperties: false,
 		description:
-			"Bounded per-call execution request. Thinking never changes the model route; tools narrow profile capabilities; budgets are enforced by the runtime, never by prompt text.",
+			"Per-call execution request. Thinking never changes the model route; tools narrow profile capabilities; output and timeout limits are enforced by the runtime, never by prompt text.",
 	},
 );
 
@@ -11285,7 +11135,13 @@ const listSubagentProfilesParameters = Type.Object({
 	query: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
 });
 const subagentJobParameters = Type.Object({
-	jobId: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$" }),
+	jobId: Type.String({
+		minLength: 1,
+		maxLength: 128,
+		pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+		description:
+			"Bare durable job identifier from delegate_async details.accepted.jobId. Do not pass resultRef values such as job:<id>, a foreground runId, batchId, or taskId.",
+	}),
 });
 
 const manageSubagentParameters = Type.Object(
@@ -11700,7 +11556,7 @@ function formatSubagentJobInspection(inspection: SubagentJobInspection): string 
 				? `Output reservation: ${inspection.budget.reservedOutputBytes}/${inspection.budget.ownerBudgetBytes} bytes.`
 				: undefined,
 			inspection.job.contract
-				? `Accepted contract: thinking=${inspection.job.contract.thinking}, timeout=${inspection.job.contract.timeoutMs}ms, turns=${inspection.job.contract.maxTurns}, tool calls=${inspection.job.contract.maxToolCalls}, output=${inspection.job.contract.maxOutputBytes} bytes, tools=${inspection.job.contract.tools.join(",") || "none"}.`
+				? `Accepted contract: thinking=${inspection.job.contract.thinking}, timeout=${inspection.job.contract.timeoutMs}ms, output=${inspection.job.contract.maxOutputBytes} bytes, tools=${inspection.job.contract.tools.join(",") || "none"}.`
 				: undefined,
 			`Result ref: ${inspection.job.resultRef}.`,
 			result?.summary,
@@ -12863,8 +12719,6 @@ export function formatIceSubagentSettingsSummary(settingsManager: SettingsManage
 			const values = [
 				`thinking=${contract.values.thinking} [${contract.sources.thinking}]`,
 				`timeout=${contract.values.timeoutMs}ms [${contract.sources.timeoutMs}]`,
-				`turns=${contract.values.maxTurns} [${contract.sources.maxTurns}]`,
-				`toolCalls=${contract.values.maxToolCalls} [${contract.sources.maxToolCalls}]`,
 				`output=${contract.values.maxOutputBytes} [${contract.sources.maxOutputBytes}]`,
 				...(contract.values.temperature !== undefined
 					? [`temperature=${contract.values.temperature} [${contract.sources.temperature}]`]
@@ -12938,8 +12792,6 @@ function applyIceProfileSettingsSummary(
 			...profile,
 			effectiveThinkingLevel: contract.values.thinking,
 			effectiveTimeoutMs: contract.values.timeoutMs,
-			effectiveMaxTurns: contract.values.maxTurns,
-			effectiveMaxToolCalls: contract.values.maxToolCalls,
 			effectiveMaxOutputBytes: contract.values.maxOutputBytes,
 			...(contract.values.temperature !== undefined ? { effectiveTemperature: contract.values.temperature } : {}),
 			...(contract.values.topP !== undefined ? { effectiveTopP: contract.values.topP } : {}),
@@ -12982,8 +12834,6 @@ function isCurrentSubagentAuthorityValid(
 				role: normalized.role,
 				thinking: normalized.execution.thinking,
 				timeoutMs: normalized.timeoutMs,
-				maxTurns: normalized.execution.maxTurns,
-				maxToolCalls: normalized.execution.maxToolCalls,
 				maxOutputBytes: normalized.execution.maxOutputBytes,
 			},
 		});
@@ -12991,8 +12841,6 @@ function isCurrentSubagentAuthorityValid(
 			contract.denied ||
 			!contract.enabled ||
 			contract.values.timeoutMs < normalized.timeoutMs ||
-			contract.values.maxTurns < normalized.execution.maxTurns ||
-			contract.values.maxToolCalls < normalized.execution.maxToolCalls ||
 			contract.values.maxOutputBytes < normalized.execution.maxOutputBytes
 		)
 			return false;
@@ -14703,8 +14551,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 						resourcesHash: hashSource(JSON.stringify(normalized.resources)),
 						thinking: normalized.execution.thinking,
 						timeoutMs: normalized.timeoutMs,
-						maxTurns: normalized.execution.maxTurns,
-						maxToolCalls: normalized.execution.maxToolCalls,
 						maxOutputBytes: normalized.execution.maxOutputBytes,
 						...(normalized.execution.temperature !== undefined
 							? { temperature: normalized.execution.temperature }
@@ -14767,8 +14613,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 									role: normalized.role,
 									thinking: normalized.execution.thinking,
 									timeoutMs: normalized.timeoutMs,
-									maxTurns: normalized.execution.maxTurns,
-									maxToolCalls: normalized.execution.maxToolCalls,
 									maxOutputBytes: normalized.execution.maxOutputBytes,
 								},
 							});
@@ -14795,8 +14639,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 								currentContract.denied ||
 								!currentContract.enabled ||
 								currentContract.values.timeoutMs < normalized.timeoutMs ||
-								currentContract.values.maxTurns < normalized.execution.maxTurns ||
-								currentContract.values.maxToolCalls < normalized.execution.maxToolCalls ||
 								currentContract.values.maxOutputBytes < normalized.execution.maxOutputBytes ||
 								acceptedTools.some((tool) => currentContract.deniedTools.includes(tool)) ||
 								acceptedHookIds.join("|") !== currentHookIds.join("|")
@@ -15428,20 +15270,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 			values: ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
 		},
 		{
-			id: "max-turns",
-			label: "Default child turn budget",
-			description: "Maximum observed Ice turns, including finalization",
-			currentValue: "12",
-			values: ["4", "8", "12", "16", "24", "32", "64"],
-		},
-		{
-			id: "max-tool-calls",
-			label: "Default child tool-call budget",
-			description: "Maximum child tool dispatches",
-			currentValue: "40",
-			values: ["0", "8", "16", "32", "40", "64", "128", "512"],
-		},
-		{
 			id: "policy-summary",
 			label: "Effective policy",
 			description: "Inspect source-aware role budgets, trust, hooks, and bounded settings errors",
@@ -15479,15 +15307,13 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					) as Record<string, unknown>;
 					if (id === "enabled") subagents.enabled = value === "true";
 					else if (id === "hooks-enabled") hooks.enabled = value === "true";
-					else if (id === "thinking-default" || id === "max-turns" || id === "max-tool-calls") {
+					else if (id === "thinking-default") {
 						const defaults = (
 							subagents.defaults && typeof subagents.defaults === "object" && !Array.isArray(subagents.defaults)
 								? subagents.defaults
 								: {}
 						) as Record<string, unknown>;
-						if (id === "thinking-default") defaults.thinking = value;
-						else if (id === "max-turns") defaults.maxTurns = Number(value);
-						else if (id === "max-tool-calls") defaults.maxToolCalls = Number(value);
+						defaults.thinking = value;
 						subagents.defaults = defaults;
 					} else return;
 					next.subagents = subagents;
@@ -15520,8 +15346,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 		settingsItems.find((item) => item.id === "thinking-default")!.currentValue = String(
 			defaults.thinking ?? "medium",
 		);
-		settingsItems.find((item) => item.id === "max-turns")!.currentValue = String(defaults.maxTurns ?? 12);
-		settingsItems.find((item) => item.id === "max-tool-calls")!.currentValue = String(defaults.maxToolCalls ?? 40);
 		shuttingDown = false;
 		parentBusy = false;
 		if (parentRunState) detachParentRun(parentRunState);

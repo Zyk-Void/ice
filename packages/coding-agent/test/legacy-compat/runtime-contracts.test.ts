@@ -49,13 +49,13 @@ describe("legacy runtime contracts", () => {
 		);
 		const manager = SettingsManager.create(root, join(root, ".ice/agent"));
 		expect(manager.getIceSettingsValue("global")?.subagents?.enabled).toBe(false);
-		manager.setIceSettingsValue("global", { subagents: { enabled: false, defaults: { maxToolCalls: 0 } } });
+		manager.setIceSettingsValue("global", { subagents: { enabled: false, defaults: { maxOutputBytes: 1_024 } } });
 		await manager.flush();
 		expect(manager.drainErrors()).toEqual([]);
 		const stored = JSON.parse(readFileSync(file, "utf8"));
 		expect(stored).toMatchObject({
 			theme: "dark",
-			ice: { subagents: { enabled: false, defaults: { maxToolCalls: 0 } } },
+			ice: { subagents: { enabled: false, defaults: { maxOutputBytes: 1_024 } } },
 		});
 	});
 

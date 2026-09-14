@@ -154,8 +154,6 @@ function effectiveIceValue(settings: SettingsManager, key: string, fallback: Rpc
 			bundledDefaults: {
 				thinking: "medium",
 				timeoutMs: 120_000,
-				maxTurns: 12,
-				maxToolCalls: 40,
 				maxOutputBytes: 24_576,
 			},
 		});
@@ -164,10 +162,6 @@ function effectiveIceValue(settings: SettingsManager, key: string, fallback: Rpc
 				return contract.values.thinking;
 			case "ice.subagents.defaults.timeoutMs":
 				return contract.values.timeoutMs;
-			case "ice.subagents.defaults.maxTurns":
-				return contract.values.maxTurns;
-			case "ice.subagents.defaults.maxToolCalls":
-				return contract.values.maxToolCalls;
 			case "ice.subagents.defaults.maxOutputBytes":
 				return contract.values.maxOutputBytes;
 			case "ice.subagents.allowedRoles":
@@ -267,30 +261,6 @@ const ICE_SETTINGS: RpcSettingsDefinition[] = [
 		constraints: { min: 1, max: 600_000, integer: true },
 		restartRequired: false,
 		read: (settings) => effectiveIceValue(settings, "ice.subagents.defaults.timeoutMs", 120_000) as number,
-	}),
-	iceSetting({
-		key: "ice.subagents.defaults.maxTurns",
-		label: "Subagent turn budget",
-		description: "Default model-turn budget, including the bounded final report turn",
-		group: "ICE · Subagents",
-		kind: "number",
-		scope: "both",
-		defaultValue: 12,
-		constraints: { min: 1, max: 64, integer: true },
-		restartRequired: false,
-		read: (settings) => effectiveIceValue(settings, "ice.subagents.defaults.maxTurns", 12) as number,
-	}),
-	iceSetting({
-		key: "ice.subagents.defaults.maxToolCalls",
-		label: "Subagent tool-call budget",
-		description: "Default enforced child tool-call budget",
-		group: "ICE · Subagents",
-		kind: "number",
-		scope: "both",
-		defaultValue: 40,
-		constraints: { min: 0, max: 512, integer: true },
-		restartRequired: false,
-		read: (settings) => effectiveIceValue(settings, "ice.subagents.defaults.maxToolCalls", 40) as number,
 	}),
 	iceSetting({
 		key: "ice.subagents.defaults.maxOutputBytes",

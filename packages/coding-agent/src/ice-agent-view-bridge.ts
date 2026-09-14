@@ -42,8 +42,11 @@ export interface IceAgentViewPresentation {
 	readonly handoffMessageMarker?: string;
 	readonly finalizationMessageMarker?: string;
 	readonly timeoutContinuationMessageMarker?: string;
+	/** Marker for the internal timeout wrap-up prompt; hidden from child views. */
+	readonly wrapUpMessageMarker?: string;
 	readonly handoffMessageIndex?: number;
 	readonly finalizationMessageIndex?: number;
+	readonly wrapUpMessageIndex?: number;
 	readonly finalReportMessageIndex?: number;
 	/** True while the child is expected to emit an internal machine report. */
 	readonly protocolReportPending?: boolean;
@@ -430,6 +433,10 @@ export function normalizeIceAgentViewPresentation(
 		typeof input.timeoutContinuationMessageMarker === "string"
 			? truncatePresentationText(input.timeoutContinuationMessageMarker, MAX_PRESENTATION_LABEL_BYTES)
 			: undefined;
+	const wrapUpMessageMarker =
+		typeof input.wrapUpMessageMarker === "string"
+			? truncatePresentationText(input.wrapUpMessageMarker, MAX_PRESENTATION_LABEL_BYTES)
+			: undefined;
 	const runtimeAttention = normalizeRuntimeAttention(input.runtimeAttention);
 	const retryInput = isRecord(input.retry) ? input.retry : undefined;
 	const retryState = retryInput?.state;
@@ -483,6 +490,7 @@ export function normalizeIceAgentViewPresentation(
 		: undefined;
 	const handoffMessageIndex = presentationIndex(input.handoffMessageIndex, sourceIndices);
 	const finalizationMessageIndex = presentationIndex(input.finalizationMessageIndex, sourceIndices);
+	const wrapUpMessageIndex = presentationIndex(input.wrapUpMessageIndex, sourceIndices);
 	const finalReportMessageIndex = presentationIndex(input.finalReportMessageIndex, sourceIndices);
 	const normalized: IceAgentViewPresentation = {
 		...(delegatedTask ? { delegatedTask } : {}),
@@ -491,8 +499,10 @@ export function normalizeIceAgentViewPresentation(
 		...(handoffMessageMarker ? { handoffMessageMarker } : {}),
 		...(finalizationMessageMarker ? { finalizationMessageMarker } : {}),
 		...(timeoutContinuationMessageMarker ? { timeoutContinuationMessageMarker } : {}),
+		...(wrapUpMessageMarker ? { wrapUpMessageMarker } : {}),
 		...(handoffMessageIndex !== undefined ? { handoffMessageIndex } : {}),
 		...(finalizationMessageIndex !== undefined ? { finalizationMessageIndex } : {}),
+		...(wrapUpMessageIndex !== undefined ? { wrapUpMessageIndex } : {}),
 		...(finalReportMessageIndex !== undefined ? { finalReportMessageIndex } : {}),
 		...(typeof input.protocolReportPending === "boolean"
 			? { protocolReportPending: input.protocolReportPending }

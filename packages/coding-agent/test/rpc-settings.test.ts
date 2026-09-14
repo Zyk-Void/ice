@@ -162,7 +162,7 @@ describe("RPC settings bridge", () => {
 	});
 
 	it("attributes malformed global and project ICE policies to their actual source", async () => {
-		const invalidIce = { subagents: { defaults: { maxTurns: "not-a-number" } } } as never;
+		const invalidIce = { subagents: { defaults: { maxOutputBytes: "not-a-number" } } } as never;
 		const globalInvalid = SettingsManager.inMemory({ ice: invalidIce });
 		const globalSnapshot = createRpcSettingsSnapshot(createContext(globalInvalid));
 		expect(globalSnapshot.diagnostics).toContainEqual({
