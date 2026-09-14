@@ -5731,7 +5731,6 @@ describe("ICE subagent contracts", () => {
 		expect(saved).not.toContain("partial-secret");
 		expect(Buffer.byteLength(saved)).toBeLessThanOrEqual(SUBAGENT_REPORT_ARTIFACT_LIMITS.maxBytes);
 	});
-	});
 
 	it("uses a self-delegation structured report contract with findings", async () => {
 		const cwd = await createWorkspace();
