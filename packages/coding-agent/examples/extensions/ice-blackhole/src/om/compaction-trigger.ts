@@ -16,7 +16,13 @@ interface TriggerState {
 }
 
 function notify(ctx: ExtensionContext, message: string, level: "info" | "warning" | "error"): void {
-	if (ctx.hasUI) ctx.ui.notify(message, level);
+	try {
+		if (ctx.hasUI) ctx.ui.notify(message, level);
+	} catch (error) {
+		// Compaction callbacks can land after the session was replaced or reloaded.
+		// A stale ctx must not turn a cosmetic notification into an unhandled error.
+		if (!(error instanceof Error) || !error.message.includes("extension ctx is stale")) throw error;
+	}
 }
 
 function nativeMidRunCompactionEnabled(cwd: string): boolean {
