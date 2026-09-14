@@ -101,8 +101,15 @@ import {
 } from "./ice-subagent-capabilities.ts";
 import { createIceCommandHookHandler } from "./ice-subagent-command-hooks.ts";
 import {
+	type ResolvedSubagentConcurrencyPolicy,
+	resolveSubagentConcurrencyPolicy,
+	SUBAGENT_CONCURRENCY_LIMITS,
+	SubagentConcurrencyAdmission,
+} from "./ice-subagent-concurrency.ts";
+import {
 	JOB_COMPLETION_MESSAGE_TYPE,
 	JOB_ENTRY_TYPE,
+	SUBAGENT_JOB_QUEUE_LIMIT,
 	type SubagentJobAccepted,
 	SubagentJobError,
 	type SubagentJobInspection,
@@ -541,8 +548,8 @@ export interface ResolvedSubagentResources {
 
 export const SUBAGENT_BATCH_LIMITS = {
 	maxTasks: 8,
-	defaultConcurrency: 2,
-	maxConcurrency: 4,
+	defaultConcurrency: SUBAGENT_CONCURRENCY_LIMITS.bundledDefault,
+	maxConcurrency: SUBAGENT_CONCURRENCY_LIMITS.hardCap,
 	defaultBudgetBytes: 256 * 1024,
 	minTokenBudget: 1_024,
 	maxTokenBudget: 8_000_000,
@@ -1311,6 +1318,10 @@ export interface ReviewBatchResult {
 
 export interface SubagentBatchRunOptions {
 	concurrency?: number;
+	/** Canonical resolved concurrency policy; defaults to bundled batch limits. */
+	concurrencyPolicy?: ResolvedSubagentConcurrencyPolicy;
+	/** Shared admission coordinator across batch and background-job execution. */
+	admission?: SubagentConcurrencyAdmission;
 	modelRuntime?: ModelRuntime;
 	unsafeHostExec?: boolean;
 	totalBudgetBytes?: number;
@@ -9242,12 +9253,11 @@ interface ResolvedBatchConfiguration {
 }
 
 function resolveBatchConfiguration(options: SubagentBatchRunOptions): ResolvedBatchConfiguration {
-	const concurrency = options.concurrency ?? SUBAGENT_BATCH_LIMITS.defaultConcurrency;
-	if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > SUBAGENT_BATCH_LIMITS.maxConcurrency) {
-		throw new SubagentError(
-			"malformed_result",
-			`Batch concurrency must be between 1 and ${SUBAGENT_BATCH_LIMITS.maxConcurrency}.`,
-		);
+	const maxAllowed = options.concurrencyPolicy?.maxConcurrency ?? SUBAGENT_BATCH_LIMITS.maxConcurrency;
+	const defaultConcurrency = options.concurrencyPolicy?.defaultConcurrency ?? SUBAGENT_BATCH_LIMITS.defaultConcurrency;
+	const concurrency = options.concurrency ?? defaultConcurrency;
+	if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > maxAllowed) {
+		throw new SubagentError("malformed_result", `Batch concurrency must be between 1 and ${maxAllowed}.`);
 	}
 	const totalBudgetBytes = options.totalBudgetBytes ?? SUBAGENT_BATCH_LIMITS.defaultBudgetBytes;
 	if (
@@ -9693,6 +9703,7 @@ export async function runResolvedSubagentBatch(
 	});
 	const concurrency = preflight.concurrency;
 	const totalBudgetBytes = preflight.budget.totalOutputBytes;
+	const admission = options.admission;
 	const budget = new SubagentBatchBudgetLedger(totalBudgetBytes);
 	const tokenBudget = preflight.budget.tokens
 		? new SubagentBatchTokenBudgetLedger(preflight.budget.tokens.total)
@@ -9727,6 +9738,7 @@ export async function runResolvedSubagentBatch(
 			finished = true;
 			if (timeout) clearTimeout(timeout);
 			removeAbortListener?.();
+			removeAdmissionListener?.();
 			const completedItems = items as SubagentBatchItemResult[];
 			resolveBatch({
 				batchId,
@@ -9762,6 +9774,10 @@ export async function runResolvedSubagentBatch(
 			settled++;
 		};
 
+		// Wake this batch's pump when shared admission capacity is released elsewhere
+		// (for example by a background job settling or a batch slot freeing up).
+		const removeAdmissionListener = admission ? admission.onRelease(() => pump()) : undefined;
+
 		const pump = (): void => {
 			if (finished) return;
 			if (stopReason || failFastTriggered) {
@@ -9784,15 +9800,18 @@ export async function runResolvedSubagentBatch(
 			}
 
 			while (active < concurrency && nextIndex < tasks.length) {
+				if (admission && !admission.tryAcquire()) break;
 				const task = tasks[nextIndex]!;
 				const reservation = task.request.maxOutputBytes;
 				const tokenReservation = task.request.execution.maxTotalTokens;
 				if (!budget.reserve(reservation)) {
+					admission?.release();
 					if (active > 0) break;
 					markQueued(nextIndex++, "failed", "batch_budget_exhausted", "Batch budget cannot reserve this task.");
 					continue;
 				}
 				if (tokenBudget && tokenReservation !== undefined && !tokenBudget.reserve(tokenReservation)) {
+					admission?.release();
 					budget.reconcile(reservation, 0);
 					if (active > 0) break;
 					markQueued(
@@ -9933,6 +9952,7 @@ export async function runResolvedSubagentBatch(
 					)
 					.finally(() => {
 						active--;
+						admission?.release();
 						settled++;
 						pump();
 					});
@@ -10696,6 +10716,11 @@ function formatSubagentJobInspection(inspection: SubagentJobInspection): string 
 				? `The same child run is retained as ${inspection.job.runId}; inspect/extend/stop it instead of launching a duplicate.`
 				: undefined,
 			inspection.queuePosition !== undefined ? `Queue position: ${inspection.queuePosition}.` : undefined,
+			inspection.budget?.ownerActiveJobs !== undefined &&
+			inspection.budget.ownerQueuedJobs !== undefined &&
+			inspection.budget.ownerActiveJobsCap !== undefined
+				? `Admission: active=${inspection.budget.ownerActiveJobs}, queued=${inspection.budget.ownerQueuedJobs}, cap=${inspection.budget.ownerActiveJobsCap}.`
+				: undefined,
 			inspection.budget
 				? `Output reservation: ${inspection.budget.reservedOutputBytes}/${inspection.budget.ownerBudgetBytes} bytes.`
 				: undefined,
@@ -11797,6 +11822,22 @@ function getParentSettingsManager(ctx: ExtensionContext): SettingsManager {
 	);
 }
 
+export function resolveSubagentConcurrencyPolicyFromSettings(
+	settingsManager: SettingsManager,
+): ResolvedSubagentConcurrencyPolicy {
+	try {
+		const global = parseIceSettings(settingsManager.getGlobalSettings().ice);
+		const project = parseIceSettings(settingsManager.getProjectSettings().ice);
+		return resolveSubagentConcurrencyPolicy({
+			global: global.subagents,
+			project: project.subagents,
+			projectTrusted: settingsManager.isProjectTrusted(),
+		});
+	} catch {
+		return resolveSubagentConcurrencyPolicy({});
+	}
+}
+
 export function formatIceSubagentSettingsSummary(settingsManager: SettingsManager, projectTrusted: boolean): string {
 	const lines = ["ICE subagent policy", ""];
 	try {
@@ -11817,6 +11858,14 @@ export function formatIceSubagentSettingsSummary(settingsManager: SettingsManage
 		);
 		lines.push(
 			`routing: ${global.subagents.modelSelection.mode === "configured" ? "configured candidates enabled" : "inherit-parent only"} · global-first ice policy`,
+		);
+		const concurrencyPolicy = resolveSubagentConcurrencyPolicy({
+			global: global.subagents,
+			project: project.subagents,
+			projectTrusted: effectiveProjectTrusted,
+		});
+		lines.push(
+			`concurrency: default=${concurrencyPolicy.defaultConcurrency} [${concurrencyPolicy.sources.default}] · cap=${concurrencyPolicy.maxConcurrency} [${concurrencyPolicy.sources.max}] · shared batch/job admission (limits ${SUBAGENT_CONCURRENCY_LIMITS.min}-${SUBAGENT_CONCURRENCY_LIMITS.hardCap})${concurrencyPolicy.diagnostics.length > 0 ? ` · ${concurrencyPolicy.diagnostics.join("; ")}` : ""}`,
 		);
 		lines.push("");
 		for (const role of contractRoles.slice(0, 12)) {
@@ -12325,6 +12374,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 		attentionLedger.delete(runId);
 	};
 	let jobs: SubagentJobRegistry | undefined;
+	let subagentAdmission: SubagentConcurrencyAdmission | undefined;
 	let parentBusy = false;
 	let shuttingDown = false;
 	type ParentRunState = {
@@ -12406,6 +12456,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	const delegateWrite: DelegateWriteTool = {
 		name: "delegate_write",
 		label: "delegate_write",
+		executionMode: "sequential",
 		description:
 			"Run one foreground ICE writer. Normal mode uses a clean detached Git worktree and returns an immutable bounded patch proposal. Explicit --sub-yolo uses the trusted parent workspace directly, including dirty files, and may use Bash; it provides no isolation, rollback, or patch proposal. The child always uses the current parent model.",
 		promptSnippet: "Delegate one bounded writer (isolated normally, direct in YOLO)",
@@ -13893,6 +13944,8 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					: [...ice.getActiveTools()];
 				const result = await runResolvedSubagentBatch(tasks, effectiveParentActiveTools, runner, {
 					concurrency: params.concurrency,
+					concurrencyPolicy: resolveSubagentConcurrencyPolicyFromSettings(settingsManager),
+					admission: subagentAdmission,
 					failFast: params.failFast,
 					totalBudgetBytes: params.totalBudgetBytes,
 					totalTokenBudget: params.totalTokenBudget,
@@ -14393,10 +14446,16 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 			const jobId = details && "jobId" in details && typeof details.jobId === "string" ? details.jobId : undefined;
 			if (jobId && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(jobId)) deliveredJobIds.add(jobId);
 		}
+		const concurrencySettingsManager = getParentSettingsManager(ctx);
+		const concurrencyPolicy = resolveSubagentConcurrencyPolicyFromSettings(concurrencySettingsManager);
+		subagentAdmission = new SubagentConcurrencyAdmission(concurrencyPolicy.maxConcurrency);
 		jobs = new SubagentJobRegistry({
 			ownerSessionId: ctx.sessionManager.getSessionId(),
 			persist: (snapshot) => ice.appendEntry(JOB_ENTRY_TYPE, snapshot),
 			notify: queueCompletion,
+			maxActiveJobs: concurrencyPolicy.defaultConcurrency,
+			maxQueuedJobs: SUBAGENT_JOB_QUEUE_LIMIT,
+			admission: subagentAdmission,
 		});
 		for (const jobId of jobs.restore(entries, deliveredJobIds)) queueCompletion(jobId);
 	});

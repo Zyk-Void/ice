@@ -105,6 +105,7 @@ export interface IceSubagentSettingsValue {
 	roleDefaults?: Record<string, Record<string, unknown>>;
 	restrictions?: Record<string, unknown>;
 	modelSelection?: { mode?: string };
+	concurrency?: { default?: number; max?: number };
 }
 
 export interface IceHooksSettingsValue {
