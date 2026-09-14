@@ -12,7 +12,13 @@ import { redactCredentialText } from "./utils/redact.ts";
  */
 
 export type SubagentTelemetryMode = "foreground" | "async" | "batch" | "review";
-export type SubagentTelemetryReportProtocol = "valid" | "malformed" | "missing" | "truncated" | "not_applicable";
+export type SubagentTelemetryReportProtocol =
+	| "valid"
+	| "malformed"
+	| "missing"
+	| "truncated"
+	| "plain"
+	| "not_applicable";
 
 export interface SubagentOutcomeTelemetry {
 	readonly schemaVersion: 1;
@@ -195,9 +201,7 @@ export class SubagentTelemetryStore {
 		const malformedReports = records.filter(
 			(record) => record.reportProtocolStatus === "malformed" || record.reportProtocolStatus === "truncated",
 		).length;
-		const verificationFailures = records.filter(
-			(record) => !record.verificationPassed && record.finalStatus !== "needs_time",
-		).length;
+		const verificationFailures = records.filter((record) => record.finalStatus === "verification_failed").length;
 		const byProfileMap = new Map<string, { profile: string; runs: number; verifiedCompleted: number }>();
 		for (const record of records) {
 			const entry = byProfileMap.get(record.profile) ?? { profile: record.profile, runs: 0, verifiedCompleted: 0 };

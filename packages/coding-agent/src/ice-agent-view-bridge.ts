@@ -32,6 +32,8 @@ export interface IceAgentViewPresentation {
 	/** True while the child is expected to emit an internal machine report. */
 	readonly protocolReportPending?: boolean;
 	readonly finalizationStarted?: boolean;
+	/** How the child's final answer is ingested; plain mode performs no structured verification. */
+	readonly reportMode?: "plain_final_turn" | "structured_report";
 	/** Bounded, redacted runtime state for a live child awaiting a time decision. */
 	readonly runtimeAttention?: SubagentRuntimeAttention;
 	readonly finalResult?: IceAgentViewFinalResult;
@@ -381,6 +383,10 @@ export function normalizeIceAgentViewPresentation(
 				.map((label) => truncatePresentationText(label, MAX_PRESENTATION_LABEL_BYTES))
 		: undefined;
 	const authority = input.authority === "safe" || input.authority === "yolo" ? input.authority : undefined;
+	const reportMode =
+		input.reportMode === "plain_final_turn" || input.reportMode === "structured_report"
+			? input.reportMode
+			: undefined;
 	const handoffMessageMarker =
 		typeof input.handoffMessageMarker === "string"
 			? truncatePresentationText(input.handoffMessageMarker, MAX_PRESENTATION_LABEL_BYTES)
@@ -438,6 +444,7 @@ export function normalizeIceAgentViewPresentation(
 			? { protocolReportPending: input.protocolReportPending }
 			: {}),
 		...(typeof input.finalizationStarted === "boolean" ? { finalizationStarted: input.finalizationStarted } : {}),
+		...(reportMode ? { reportMode } : {}),
 		...(runtimeAttention ? { runtimeAttention } : {}),
 		...(finalResult ? { finalResult } : {}),
 	};

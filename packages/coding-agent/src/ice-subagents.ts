@@ -571,7 +571,7 @@ const SUBAGENT_SCOPE_TARGET_HINT =
 const SUBAGENT_SCOPE_TOOL_GUIDANCE =
 	'scope.roots accepts existing directories only. For the current workspace, prefer scope.roots:["."] and use relative subdirectories when narrower scope is sufficient. To focus a file, use its parent directory in scope.roots and the file in scope.targets or task text. Do not reconstruct the absolute cwd when "." is sufficient.';
 const SUBAGENT_INTERNAL_REPORT_GUIDANCE =
-	"The runtime owns the internal bounded structured final-report protocol; describe the task normally and do not ask the child to format its work as JSON.";
+	"Typed child runs (output schema, acceptance criteria, review batches) use the runtime's internal bounded structured final-report protocol; describe the task normally and do not ask the child to format its work as JSON. Ordinary delegations answer in plain prose; the runtime ingests the child's natural final assistant turn directly.";
 
 export const SUBAGENT_CONTEXT_PACKET_LIMITS = {
 	maxItems: 16,
@@ -617,8 +617,15 @@ export const SUBAGENT_REPORT_LIMITS = {
 	maxEvidencePathBytes: 4096,
 } as const;
 
+/**
+ * How a child run's final answer is ingested. Plain runs ingest the natural
+ * final assistant turn directly; typed flows (output schema, acceptance
+ * criteria, review batches) keep the strict bounded JSON report protocol.
+ */
+export type SubagentReportMode = "plain_final_turn" | "structured_report";
+
 /** Bounded final-report protocol states. A malformed report is never a verified completion. */
-export type SubagentReportProtocolStatus = "valid" | "malformed" | "missing" | "truncated";
+export type SubagentReportProtocolStatus = "valid" | "malformed" | "missing" | "truncated" | "plain";
 
 /** Child claim for one parent acceptance criterion inside the hidden final-report protocol. */
 export type SubagentRequirementClaimStatus = "satisfied" | "partial" | "blocked" | "failed" | "not_attempted";
@@ -952,6 +959,8 @@ export interface NormalizedSubagentRequest
 	acceptanceCriteria: readonly SubagentAcceptanceCriterion[];
 	preflight: readonly SubagentPreflightRequirement[];
 	outputSchema?: SubagentOutputSchemaNode;
+	/** Resolved at normalization; typed flows force the structured report protocol. */
+	reportMode: SubagentReportMode;
 }
 
 export interface SubagentBatchTask {
@@ -1111,6 +1120,8 @@ export interface SubagentResult {
 	observedTurns?: number;
 	/** Redacted bounded hook dispatch projection for parent inspection. */
 	hookRecords?: readonly IceHookDispatchRecord[];
+	/** How the final answer was ingested; plain mode performs no structured verification. */
+	reportMode?: SubagentReportMode;
 }
 
 export interface SubagentVerification {
@@ -1118,6 +1129,14 @@ export interface SubagentVerification {
 	reason: string;
 	paths: string[];
 	unresolvedClaims: string[];
+	/**
+	 * Explicit verification contract: "structured" means the strict JSON report
+	 * pipeline (schema/evidence/payload) ran; "plain_bounds" means only lineage,
+	 * status, and the output bound were checked. Absent in legacy producers.
+	 */
+	kind?: "structured" | "plain_bounds";
+	/** True only when structured-report verification succeeded; never implied by plain text. */
+	structuredVerified?: boolean;
 	/** Bounded per-criterion verification detail; present when acceptance criteria were declared. */
 	requirementSummary?: SubagentRequirementSummary;
 }
@@ -4894,6 +4913,7 @@ export function normalizeSubagentRequest(
 		maxOutputBytes: iceContract.values.maxOutputBytes,
 		...(iceContract.values.maxTotalTokens !== undefined ? { maxTotalTokens: iceContract.values.maxTotalTokens } : {}),
 	});
+	const acceptanceCriteria = normalizeSubagentAcceptanceCriteria(request.acceptanceCriteria);
 
 	return {
 		runId: randomUUID(),
@@ -4926,9 +4946,13 @@ export function normalizeSubagentRequest(
 		resources,
 		projectTrusted,
 		allowExternal: options.allowExternal === true,
-		acceptanceCriteria: normalizeSubagentAcceptanceCriteria(request.acceptanceCriteria),
+		acceptanceCriteria,
 		preflight: normalizeSubagentPreflightRequirements(request.preflight),
 		...(outputSchema ? { outputSchema } : {}),
+		// Typed flows (output schema, acceptance criteria) keep the strict JSON
+		// report protocol; ordinary delegations ingest the natural final turn.
+		reportMode:
+			outputSchema !== undefined || acceptanceCriteria.length > 0 ? "structured_report" : "plain_final_turn",
 	};
 }
 
@@ -5114,8 +5138,14 @@ export function buildSubagentPrompt(
 		...authorizedTaskHandoff,
 		acceptanceContract ? ["Acceptance criteria:", acceptanceContract].join("\n") : undefined,
 		outputSchemaContract,
-		`Keep the complete JSON report within ${request.maxOutputBytes} UTF-8 bytes.`,
-		reportContract + (request.outputSchema ? ' Include the required "payload" object.' : ""),
+		...(request.reportMode === "structured_report"
+			? [
+					`Keep the complete JSON report within ${request.maxOutputBytes} UTF-8 bytes.`,
+					reportContract + (request.outputSchema ? ' Include the required "payload" object.' : ""),
+				]
+			: [
+					`When the work is done, end with one plain final answer message in ordinary prose or markdown; do not wrap it in a JSON envelope. Keep the complete final answer within ${request.maxOutputBytes} UTF-8 bytes. The runtime ingests that final assistant message directly as the delegated result.`,
+				]),
 	]
 		.filter((part): part is string => part !== undefined)
 		.join("\n\n");
@@ -5174,11 +5204,20 @@ const INTERACTIVE_FINAL_REPORT_PROMPT =
 	`${INTERACTIVE_FINAL_REPORT_MARKER} Return only the required final bounded JSON report for the parent now. ` +
 	"Do not continue discussion. Use the required schema and include only verified evidence within the approved scope. " +
 	"This is an internal finalization request, not a new task or permission grant.";
+const INTERACTIVE_PLAIN_FINAL_PROMPT =
+	`${INTERACTIVE_FINAL_REPORT_MARKER} Return your final answer for the parent now, in ordinary prose or markdown; do not wrap it in a JSON envelope. ` +
+	"Do not continue discussion or start new work. Keep the answer bounded and include only verified results within the approved scope. " +
+	"This is an internal finalization request, not a new task or permission grant.";
 const SUBAGENT_EXTENSION_MARKER = "[ICE VOID SUBAGENT CONTINUE]";
 const SUBAGENT_EXTENSION_PROMPT =
 	`${SUBAGENT_EXTENSION_MARKER} Your execution window was extended. Continue the already-authorized task from the current child session state. ` +
 	"Do not repeat completed exploration unnecessarily. Scope, authority, model, output budget, and evidence requirements remain unchanged. " +
-	"Return the required final bounded JSON report when the task is complete. This is an internal continuation request, not a new task or permission grant.";
+	"Return the required final bounded JSON report when the task is complete. This is an internal continuation request, not a new task or permission grant";
+const SUBAGENT_EXTENSION_PROMPT_PLAIN =
+	`${SUBAGENT_EXTENSION_MARKER} Your execution window was extended. Continue the already-authorized task from the current child session state. ` +
+	"Do not repeat completed exploration unnecessarily. Scope, authority, model, and output budget remain unchanged. " +
+	"When the task is complete, end with one plain final answer message in ordinary prose or markdown; do not wrap it in a JSON envelope. " +
+	"This is an internal continuation request, not a new task or permission grant.";
 const SUBAGENT_REPORT_REPAIR_MARKER = "[ICE VOID SUBAGENT REPORT REPAIR]";
 const SUBAGENT_REPORT_REPAIR_PROMPT =
 	`${SUBAGENT_REPORT_REPAIR_MARKER} Your previous final report did not satisfy the required bounded JSON envelope. ` +
@@ -5642,6 +5681,19 @@ export function verifySubagentResult(result: SubagentResult, request: Normalized
 	if (Buffer.byteLength(result.summary) > request.maxOutputBytes) {
 		return reject("Result summary exceeds the approved output cap.");
 	}
+	// Plain final-turn ingestion verifies lineage, status, and the output bound only.
+	// It must never claim structured-report, evidence, or payload verification.
+	if (request.reportMode === "plain_final_turn") {
+		return {
+			verified: true,
+			reason:
+				"Plain final-turn answer passed lineage and output-bound verification; no structured report, evidence paths, or payload claims were verified.",
+			paths: [],
+			unresolvedClaims: [],
+			kind: "plain_bounds",
+			structuredVerified: false,
+		};
+	}
 	if (request.outputSchema) {
 		const payloadFailure = validateSubagentOutputPayload(result.payload, request.outputSchema);
 		if (payloadFailure) return reject(payloadFailure);
@@ -5708,6 +5760,8 @@ export function verifySubagentResult(result: SubagentResult, request: Normalized
 			reason: "Observed child result passed parent verification; semantic claims remain unresolved.",
 			paths: canonicalPaths,
 			unresolvedClaims,
+			kind: "structured",
+			structuredVerified: true,
 			...(requirementOutcome.summary ? { requirementSummary: requirementOutcome.summary } : {}),
 		};
 	}
@@ -5716,6 +5770,8 @@ export function verifySubagentResult(result: SubagentResult, request: Normalized
 		reason: "Observed child result passed parent verification; semantic claims remain unresolved.",
 		paths: canonicalPaths,
 		unresolvedClaims,
+		kind: "structured",
+		structuredVerified: true,
 	};
 }
 
@@ -7267,6 +7323,7 @@ export class NativeSubagentRunner {
 			model: modelLabel(options.model),
 			attempt: options.attempt,
 			observedOutputBytes: 0,
+			reportMode: normalized.reportMode,
 			...(normalized.scope.targets?.length ? { scopeTargets: [...normalized.scope.targets] } : {}),
 		};
 		if (!parentActiveTools.includes("delegate")) {
@@ -7708,7 +7765,10 @@ export class NativeSubagentRunner {
 				delegatedTask: normalized.task,
 				scopeLabels: normalized.scope.roots.map((root) => relative(normalized.cwd, root) || "."),
 				authority: options.unsafeHostExec === true ? "yolo" : "safe",
-				protocolReportPending: true,
+				reportMode: normalized.reportMode,
+				// Plain mode streams the child's natural answer, so internal
+				// final-report text is only hidden while the structured protocol runs.
+				protocolReportPending: normalized.reportMode === "structured_report",
 				handoffMessageMarker: SUBAGENT_HANDOFF_MARKER,
 				finalizationMessageMarker: INTERACTIVE_FINAL_REPORT_MARKER,
 				timeoutContinuationMessageMarker: SUBAGENT_EXTENSION_MARKER,
@@ -8006,6 +8066,11 @@ export class NativeSubagentRunner {
 				return Promise.race(races);
 			};
 			let controlledFailurePromise: Promise<SubagentResult> | undefined;
+			const structuredReportMode = normalized.reportMode === "structured_report";
+			const finalDeliverableNoun = structuredReportMode ? "report" : "answer";
+			const missingDeliverableTarget = structuredReportMode
+				? "a valid final envelope"
+				: "a nonempty final assistant answer";
 			const controlledFailure = (
 				reason: "cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted",
 			): Promise<SubagentResult> => {
@@ -8025,12 +8090,18 @@ export class NativeSubagentRunner {
 					);
 					const diagnosticMessage =
 						reason === "timed_out"
-							? `Child exceeded its ${normalized.timeoutMs} ms execution/finalization timeout before a verified bounded report completed.`
+							? structuredReportMode
+								? `Child exceeded its ${normalized.timeoutMs} ms execution/finalization timeout before a verified bounded report completed.`
+								: `Child exceeded its ${normalized.timeoutMs} ms execution/finalization timeout before a final assistant answer completed.`
 							: reason === "cancelled"
-								? "Child was cancelled before a verified bounded report completed."
+								? structuredReportMode
+									? "Child was cancelled before a verified bounded report completed."
+									: "Child was cancelled before a final assistant answer completed."
 								: reason === "tool_budget_exhausted"
 									? `Child exceeded its bounded tool-call budget (${maxToolCalls} calls).`
-									: "Child exceeded the bounded output budget before a valid report completed.";
+									: structuredReportMode
+										? "Child exceeded the bounded output budget before a valid report completed."
+										: "Child exceeded the bounded output budget before a final assistant answer completed.";
 					updatePresentation({
 						finalizationStarted: false,
 						protocolReportPending: false,
@@ -8049,12 +8120,12 @@ export class NativeSubagentRunner {
 								status: "missing",
 								diagnostic:
 									reason === "cancelled"
-										? "No final report: the child was cancelled before a valid final envelope."
+										? `No final ${finalDeliverableNoun}: the child was cancelled before ${missingDeliverableTarget}.`
 										: reason === "timed_out"
-											? "No final report: the child timed out before a valid final envelope."
+											? `No final ${finalDeliverableNoun}: the child timed out before ${missingDeliverableTarget}.`
 											: reason === "tool_budget_exhausted"
-												? "No final report: the child exceeded the bounded tool-call budget before a valid final envelope."
-												: "No final report: the child exceeded the bounded output budget before a valid final envelope.",
+												? `No final ${finalDeliverableNoun}: the child exceeded the bounded tool-call budget before ${missingDeliverableTarget}.`
+												: `No final ${finalDeliverableNoun}: the child exceeded the bounded output budget before ${missingDeliverableTarget}.`,
 							},
 							{ terminal: true },
 						),
@@ -8114,7 +8185,7 @@ export class NativeSubagentRunner {
 								workArtifact: buildWorkArtifact(
 									{
 										status: "missing",
-										diagnostic: "No final report: the run ended before a valid final envelope.",
+										diagnostic: `No final ${finalDeliverableNoun}: the run ended before ${missingDeliverableTarget}.`,
 									},
 									{ terminal: true },
 								),
@@ -8203,7 +8274,7 @@ export class NativeSubagentRunner {
 					workArtifact: buildWorkArtifact(
 						{
 							status: "missing",
-							diagnostic: "No final report yet: the same live child is awaiting an extension or stop decision.",
+							diagnostic: `No final ${finalDeliverableNoun} yet: the same live child is awaiting an extension or stop decision.`,
 						},
 						{ terminal: false },
 					),
@@ -8406,6 +8477,115 @@ export class NativeSubagentRunner {
 				);
 				return annotatedResult;
 			};
+			/**
+			 * Plain final-turn terminal ingestion: accept the child's natural final
+			 * assistant turn directly as the result. No JSON envelope, no parse or
+			 * repair call. Runtime failure precedence (authority, missing assistant
+			 * turn, error/aborted stop reason) matches the structured terminal path.
+			 */
+			const completeFromPlainFinalTurn = async (reportStartIndex: number): Promise<SubagentResult> => {
+				if (authorityRevoked || (options.isAuthorityStillValid && !(await options.isAuthorityStillValid()))) {
+					authorityRevoked = true;
+					return buildFailureResult(
+						new SubagentError(
+							"capability_denied",
+							"Current parent settings or trust no longer authorize accepting this child result.",
+						),
+					);
+				}
+				const lastAssistant = [...childSession!.messages.slice(reportStartIndex)]
+					.reverse()
+					.find((message) => message.role === "assistant") as AssistantMessage | undefined;
+				if (!lastAssistant) {
+					throw new SubagentError("malformed_result", "Child completed without a nonempty assistant answer.");
+				}
+				if (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted") {
+					throw new SubagentError(
+						"child_protocol_failure",
+						`Child ended with stop reason ${lastAssistant.stopReason}.`,
+					);
+				}
+				const rawAnswer = extractAssistantText(childSession!.messages, reportStartIndex);
+				observedOutputBytes = Math.max(observedOutputBytes, Buffer.byteLength(rawAnswer));
+				if (rawAnswer.trim().length === 0) {
+					return protocolFailureResult(
+						"missing",
+						"Child completed without a nonempty final assistant answer.",
+						rawAnswer,
+					);
+				}
+				const answer = truncateSubagentOutput(rawAnswer, normalized.maxOutputBytes);
+				const usage = observeUsage();
+				const budgetSummary = tokenBudgetSummary();
+				const candidateResult: SubagentResult = {
+					...base,
+					childSessionId: childSession!.sessionId,
+					status: "completed",
+					summary: answer.text,
+					observedOutputBytes: Buffer.byteLength(answer.text, "utf8"),
+					partial: false,
+					truncated: answer.truncated,
+					diagnostics: answer.truncated
+						? [{ code: "output_truncated", message: "Child final answer was capped to the output budget." }]
+						: [],
+					// Runtime-owned bounded telemetry for plain answers: records the
+					// touched-path view and the plain terminal state. The "plain"
+					// status is filtered out of parent-facing artifact rows.
+					workArtifact: buildWorkArtifact({ status: "plain" }, { terminal: true }),
+					observedTurns,
+					...(usage ? { usage } : {}),
+					...(budgetSummary ? { budget: budgetSummary } : {}),
+				};
+				const completedResult: SubagentResult = candidateResult;
+				try {
+					await dispatchSubagentHookDecision(
+						options.hookRuntime,
+						"subagent.beforeAccept",
+						{
+							status: completedResult.status,
+							summary: completedResult.summary,
+							evidencePaths: [],
+							observedOutputBytes: completedResult.observedOutputBytes,
+						},
+						options.signal,
+					);
+				} catch (error) {
+					const failure =
+						error instanceof SubagentError ? error : new SubagentError("capability_denied", String(error));
+					const rejectedResult: SubagentResult = {
+						...completedResult,
+						status: "verification_failed",
+						diagnostics: [{ code: failure.code, message: failure.message }],
+					};
+					updatePresentation({
+						finalizationStarted: false,
+						protocolReportPending: false,
+						finalResult: { status: "verification_failed", verified: false, diagnostic: failure.message },
+					});
+					emit("subagent_failed", "verification_failed");
+					return rejectedResult;
+				}
+				const verification = verifySubagentResult(completedResult, normalized);
+				const annotatedResult: SubagentResult = verification.requirementSummary
+					? { ...completedResult, requirementStates: verification.requirementSummary.states }
+					: completedResult;
+				// No finalReportMessageIndex: the plain answer stays visible in the child view.
+				updatePresentation({
+					finalizationStarted: false,
+					protocolReportPending: false,
+					finalResult: {
+						status: verification.verified ? "completed" : "verification_failed",
+						verified: verification.verified,
+						summary: answer.text,
+						...(!verification.verified ? { diagnostic: verification.reason } : {}),
+					},
+				});
+				emit(
+					verification.verified ? "subagent_completed" : "subagent_failed",
+					verification.verified ? "completed" : "verification_failed",
+				);
+				return annotatedResult;
+			};
 			runTokenFinalization = async (): Promise<SubagentResult> => {
 				if (!tokenBudgetLedger) throw new Error("Token finalization requested without a token ledger.");
 				if (tokenFinalizationAttempted) {
@@ -8440,7 +8620,11 @@ export class NativeSubagentRunner {
 				}
 				const inputEstimate = estimateSubagentRequestTokens([
 					...childSession!.messages,
-					{ role: "user" as const, content: INTERACTIVE_FINAL_REPORT_PROMPT, timestamp: Date.now() },
+					{
+						role: "user" as const,
+						content: structuredReportMode ? INTERACTIVE_FINAL_REPORT_PROMPT : INTERACTIVE_PLAIN_FINAL_PROMPT,
+						timestamp: Date.now(),
+					},
 				]).inputTokens;
 				if (!tokenBudgetLedger.canStartFinalization(inputEstimate, 1_024)) {
 					tokenDiagnostics.push({
@@ -8464,15 +8648,18 @@ export class NativeSubagentRunner {
 				updatePresentation({
 					finalizationStarted: true,
 					finalizationMessageIndex: reportStartIndex,
-					protocolReportPending: true,
+					...(structuredReportMode ? { protocolReportPending: true } : {}),
 				});
 				const turnsBefore = observedTurns;
 				const outcome = await awaitPrompt(
 					Promise.resolve().then(() =>
-						childSession!.prompt(INTERACTIVE_FINAL_REPORT_PROMPT, {
-							expandPromptTemplates: false,
-							source: "extension",
-						}),
+						childSession!.prompt(
+							structuredReportMode ? INTERACTIVE_FINAL_REPORT_PROMPT : INTERACTIVE_PLAIN_FINAL_PROMPT,
+							{
+								expandPromptTemplates: false,
+								source: "extension",
+							},
+						),
 					),
 				);
 				if (observedTurns === turnsBefore) observedTurns += 1;
@@ -8492,6 +8679,13 @@ export class NativeSubagentRunner {
 					.find((message) => message.role === "assistant") as AssistantMessage | undefined;
 				if (!finalAssistant)
 					return tokenFallbackResult("Token budget finalization returned no assistant report.", true);
+				if (!structuredReportMode) {
+					if (rawReport.trim().length === 0)
+						return tokenFallbackResult("Token budget finalization returned no nonempty assistant answer.", true);
+					const finalResult = await completeFromPlainFinalTurn(reportStartIndex);
+					tokenBudgetLedger.settle();
+					return finalResult;
+				}
 				const parsed = parseSubagentReportOutcome(rawReport, normalized.maxOutputBytes, normalized.outputSchema);
 				if (parsed.kind !== "valid")
 					return tokenFallbackResult("Token budget finalization returned an invalid report.", true);
@@ -8555,8 +8749,12 @@ export class NativeSubagentRunner {
 				const usage = observeUsage();
 				const failureSummary =
 					touchedPaths.size > 0
-						? `Child work was observed (${touchedPaths.size} touched path${touchedPaths.size === 1 ? "" : "s"}) but the final report failed the bounded report protocol.`
-						: "Child completed without a valid bounded final report; observed work was preserved as a bounded artifact.";
+						? structuredReportMode
+							? `Child work was observed (${touchedPaths.size} touched path${touchedPaths.size === 1 ? "" : "s"}) but the final report failed the bounded report protocol.`
+							: `Child work was observed (${touchedPaths.size} touched path${touchedPaths.size === 1 ? "" : "s"}) but the final answer failed the plain final-turn ingestion.`
+						: structuredReportMode
+							? "Child completed without a valid bounded final report; observed work was preserved as a bounded artifact."
+							: "Child completed without a nonempty final assistant answer; observed work was preserved as a bounded artifact.";
 				updatePresentation({
 					finalizationStarted: false,
 					protocolReportPending: false,
@@ -8721,7 +8919,7 @@ export class NativeSubagentRunner {
 				return attemptReportRepair(reportStartIndex, parsed);
 			};
 			runFinalization = async (): Promise<SubagentResult> => {
-				const turnLimit = chargeTurn("final report");
+				const turnLimit = chargeTurn(structuredReportMode ? "final report" : "final answer");
 				if (turnLimit) return turnLimit;
 				const turnsBefore = observedTurns;
 				supervisor?.setPhase("finalization");
@@ -8729,13 +8927,16 @@ export class NativeSubagentRunner {
 				updatePresentation({
 					finalizationStarted: true,
 					finalizationMessageIndex: finalReportStartIndex,
-					protocolReportPending: true,
+					...(structuredReportMode ? { protocolReportPending: true } : {}),
 				});
 				const finalOutcome = await awaitPrompt(
-					childSession!.prompt(INTERACTIVE_FINAL_REPORT_PROMPT, {
-						expandPromptTemplates: false,
-						source: "extension",
-					}),
+					childSession!.prompt(
+						structuredReportMode ? INTERACTIVE_FINAL_REPORT_PROMPT : INTERACTIVE_PLAIN_FINAL_PROMPT,
+						{
+							expandPromptTemplates: false,
+							source: "extension",
+						},
+					),
 				);
 				if (observedTurns === turnsBefore) observedTurns += 1;
 				if (finalOutcome.kind === "needs_time") return retainForExtension(runFinalization);
@@ -8753,10 +8954,14 @@ export class NativeSubagentRunner {
 				if (!liveControl?.markFinalReportReceived()) {
 					throw new SubagentError(
 						"child_protocol_failure",
-						"Child final report was not accepted by its control state.",
+						structuredReportMode
+							? "Child final report was not accepted by its control state."
+							: "Child final answer was not accepted by its control state.",
 					);
 				}
-				return finalizeReport(finalReportStartIndex);
+				return structuredReportMode
+					? finalizeReport(finalReportStartIndex)
+					: completeFromPlainFinalTurn(finalReportStartIndex);
 			};
 			runAfterInitial = async (reportStartIndex: number): Promise<SubagentResult> => {
 				if (authorityRevoked) {
@@ -8786,7 +8991,9 @@ export class NativeSubagentRunner {
 					}
 					supervisor?.resumeFromControlledWait();
 				}
-				const tokenBoundary = await ensureTokenWorkCapacity(INTERACTIVE_FINAL_REPORT_PROMPT);
+				const tokenBoundary = await ensureTokenWorkCapacity(
+					structuredReportMode ? INTERACTIVE_FINAL_REPORT_PROMPT : INTERACTIVE_PLAIN_FINAL_PROMPT,
+				);
 				if (tokenBoundary) return tokenBoundary;
 				if (liveControl?.hasSteered()) {
 					if (liveControl.getState() === "working") {
@@ -8801,7 +9008,9 @@ export class NativeSubagentRunner {
 					}
 					return runFinalization();
 				}
-				return finalizeReport(reportStartIndex);
+				return structuredReportMode
+					? finalizeReport(reportStartIndex)
+					: completeFromPlainFinalTurn(reportStartIndex);
 			};
 			runContinuation = async (): Promise<SubagentResult> => {
 				if (authorityRevoked) {
@@ -8813,14 +9022,17 @@ export class NativeSubagentRunner {
 					);
 				}
 				supervisor?.setPhase("working");
-				const tokenBoundary = await ensureTokenWorkCapacity(SUBAGENT_EXTENSION_PROMPT);
+				const continuationPrompt = structuredReportMode
+					? SUBAGENT_EXTENSION_PROMPT
+					: SUBAGENT_EXTENSION_PROMPT_PLAIN;
+				const tokenBoundary = await ensureTokenWorkCapacity(continuationPrompt);
 				if (tokenBoundary) return tokenBoundary;
 				const turnLimit = chargeTurn("continuation prompt");
 				if (turnLimit) return turnLimit;
 				const turnsBefore = observedTurns;
 				const reportStartIndex = childSession!.messages.length;
 				const outcome = await awaitPrompt(
-					childSession!.prompt(SUBAGENT_EXTENSION_PROMPT, {
+					childSession!.prompt(continuationPrompt, {
 						expandPromptTemplates: false,
 						source: "extension",
 					}),
@@ -8847,7 +9059,9 @@ export class NativeSubagentRunner {
 						...base,
 						childSessionId: childSession!.sessionId,
 						status: "failed",
-						summary: `Child exceeded its bounded turn budget (${maxTurns} turns including the reserved final report).`,
+						summary: structuredReportMode
+							? `Child exceeded its bounded turn budget (${maxTurns} turns including the reserved final report).`
+							: `Child exceeded its bounded turn budget (${maxTurns} turns).`,
 						observedOutputBytes,
 						partial: true,
 						diagnostics: [
@@ -10042,7 +10256,12 @@ export function resolveReviewTask(
 	return {
 		id: task.id,
 		dimension: task.dimension,
-		request: { ...baseRequest, readOnlyReview: true, task: reviewTaskPrompt(task, evidence) },
+		request: {
+			...baseRequest,
+			readOnlyReview: true,
+			reportMode: "structured_report",
+			task: reviewTaskPrompt(task, evidence),
+		},
 	};
 }
 
@@ -10062,6 +10281,11 @@ export async function runResolvedReviewBatch(
 		}
 		if (!REVIEW_DIMENSIONS.includes(task.dimension)) {
 			throw new SubagentError("malformed_result", `Unknown review dimension: ${task.dimension}`);
+		}
+		// Reviewers always ingest through the strict JSON report protocol, even when
+		// a hand-built task arrived normalized as a plain delegation.
+		if (task.request.reportMode !== "structured_report") {
+			task.request = { ...task.request, readOnlyReview: true, reportMode: "structured_report" };
 		}
 	}
 	const batch = await runResolvedSubagentBatch(tasks, parentActiveTools, runner, options);
@@ -10647,7 +10871,10 @@ function formatToolResult(result: SubagentResult, verification: SubagentVerifica
 	const requirementRows = formatSubagentRequirementSummary(verification.requirementSummary);
 	const artifact = result.workArtifact;
 	const artifactRows =
-		artifact && artifact.reportProtocol.status !== "valid" && result.status !== "needs_time"
+		artifact &&
+		artifact.reportProtocol.status !== "valid" &&
+		artifact.reportProtocol.status !== "plain" &&
+		result.status !== "needs_time"
 			? [
 					"Preserved work artifact (runtime-owned, unverified):",
 					`report protocol: ${artifact.reportProtocol.status}${artifact.reportProtocol.diagnostic ? ` — ${artifact.reportProtocol.diagnostic}` : ""}`,
@@ -10663,13 +10890,22 @@ function formatToolResult(result: SubagentResult, verification: SubagentVerifica
 						: []),
 				]
 			: [];
+	const modeRow =
+		result.reportMode === "plain_final_turn"
+			? "Report mode: plain final assistant turn (no structured report or evidence verification)."
+			: result.reportMode === "structured_report"
+				? "Report mode: bounded structured JSON report."
+				: undefined;
 	const text = [
 		`Subagent ${result.status} (${result.profile}, ${result.runId}).`,
 		result.summary,
+		modeRow,
 		result.status === "needs_time"
 			? "Parent verification: pending; the retained child is not terminal."
 			: verification.verified
-				? "Parent verification: passed."
+				? verification.kind === "plain_bounds"
+					? "Parent verification: plain answer accepted (lineage and output bound only; no structured verification)."
+					: "Parent verification: passed."
 				: `Parent verification: failed. ${verification.reason}`,
 		...(requirementRows.length > 0 ? [requirementRows.join("\n")] : []),
 		...(artifactRows.length > 0 ? [artifactRows.join("\n")] : []),
@@ -10717,7 +10953,9 @@ function formatSubagentJobInspection(inspection: SubagentJobInspection): string 
 			result?.verification
 				? `Verification: ${result.verification.verified ? "passed" : "failed"}. ${result.verification.reason}`
 				: undefined,
-			result?.workArtifact && result.workArtifact.reportProtocol.status !== "valid"
+			result?.workArtifact &&
+			result.workArtifact.reportProtocol.status !== "valid" &&
+			result.workArtifact.reportProtocol.status !== "plain"
 				? [
 						`Preserved work artifact: report protocol ${result.workArtifact.reportProtocol.status}${result.workArtifact.reportProtocol.diagnostic ? ` — ${result.workArtifact.reportProtocol.diagnostic}` : ""}.`,
 						result.workArtifact.touchedPaths.length > 0
@@ -12315,7 +12553,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 			finalStatus: result.status,
 			reportProtocolStatus:
 				result.workArtifact?.reportProtocol.status ?? (result.status === "completed" ? "valid" : "missing"),
-			verificationPassed: verification.verified && result.status === "completed",
+			verificationPassed: verification.structuredVerified === true && result.status === "completed",
 			requiredCriteriaTotal,
 			requiredCriteriaSatisfied:
 				verification.requirementSummary?.requiredSatisfied ?? (verification.verified ? requiredCriteriaTotal : 0),
