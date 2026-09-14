@@ -61,6 +61,7 @@ import {
 	estimateContextTokens,
 	estimateTokens,
 	generateBranchSummary,
+	isPastMidRunSafetyNet,
 	modelAwareReserveTokens,
 	prepareCompaction,
 	shouldCompact,
@@ -2009,6 +2010,11 @@ export class AgentSession {
 	 * Compact at a clean tool-turn boundary before the agent loop starts another provider request.
 	 * Returns true only when a compaction entry was written, so failed/cancelled compactions do not
 	 * stop the loop without a continuation path.
+	 *
+	 * Mid-run compaction is opt-in ("pause"/"resume"), but a safety net applies even when it is
+	 * "off": past the hard 95% ceiling the next tool turn compacts anyway (and the run pauses),
+	 * because a single uninterrupted run would otherwise climb into near-certain overflow with no
+	 * boundary check until the request fails.
 	 */
 	private async _compactBeforeNextTurn(
 		messages: AgentMessage[],
@@ -2018,7 +2024,6 @@ export class AgentSession {
 		const settings = this.settingsManager.getCompactionSettings();
 		if (
 			toolResultCount === 0 ||
-			settings.midRunCompaction === "off" ||
 			!settings.enabled ||
 			!this.model ||
 			signal?.aborted ||
@@ -2029,7 +2034,13 @@ export class AgentSession {
 		}
 
 		const contextTokens = estimateContextTokens(messages).tokens;
-		if (!shouldCompact(contextTokens, this.model.contextWindow, settings)) {
+		const thresholdReached = shouldCompact(contextTokens, this.model.contextWindow, settings);
+		const safetyNetReached =
+			settings.midRunCompaction === "off" && isPastMidRunSafetyNet(contextTokens, this.model.contextWindow);
+		if (settings.midRunCompaction === "off" && !safetyNetReached) {
+			return false;
+		}
+		if (!thresholdReached && !safetyNetReached) {
 			return false;
 		}
 

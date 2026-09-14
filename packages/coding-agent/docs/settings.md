@@ -137,15 +137,16 @@ Set `ICE_SKIP_VERSION_CHECK=1` to disable the Ice version update check. Use `--o
 Load the optional extension with `--extension packages/coding-agent/examples/extensions/ice-blackhole/index.ts` or install the package through Ice's package settings. It stores configuration at `~/.ice/agent/ice-blackhole/ice-blackhole-config.json`.
 
 ```text
-/blackhole percent 20
-/blackhole tokens 54400
+/blackhole percent 85
 /blackhole resume
 /blackhole pause
 /blackhole off
 /blackhole status
 ```
 
-The loaded extension also exposes all Blackhole fields in `/settings`: compaction mode, engine, mid-run mode, threshold mode and value, tail behavior, and memory. Changes persist to the Blackhole config file immediately. Set `memory: false` to keep deterministic compaction without observational-memory workers. Keep native `compaction.enabled` set to `true` for overflow recovery and native `compaction.midRunCompaction` set to `"off"` when Blackhole owns the mid-run trigger.
+The loaded extension also exposes all Blackhole fields in `/settings`: compaction mode, engine, mid-run mode, threshold percentage, tail behavior, and memory. Changes persist to the Blackhole config file immediately. The threshold is a percentage of the active model's context window (default `85`); older numeric `compactAfterTokens` configs are ignored. Set `memory: false` to keep deterministic compaction without observational-memory workers. Keep native `compaction.enabled` set to `true` for overflow recovery and native `compaction.midRunCompaction` set to `"off"` when Blackhole owns the mid-run trigger.
+
+Blackhole summaries open with a `[Last Actions]` section (the most recent tool actions, failures marked) and list in-flight background subagent jobs under `[Running Agents]` (re-attach via `inspect_subagent_job`). When the Cognee extension runs with `checkpointRecall: true`, the checkpoint also carries a capped `[Relevant Memory]` section.
 
 ### Branch Summary
 

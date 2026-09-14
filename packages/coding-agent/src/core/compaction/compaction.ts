@@ -135,6 +135,14 @@ export interface CompactionSettings {
 
 export const DEFAULT_COMPACTION_THRESHOLD_PERCENT = 85;
 
+/**
+ * Hard ceiling for the mid-run safety net. `midRunCompaction: "off"` keeps
+ * proactive mid-run compaction opt-in, but a single uninterrupted run must
+ * never climb into near-certain overflow: past this share of the context
+ * window the next tool-turn boundary compacts regardless of that setting.
+ */
+export const MID_RUN_SAFETY_NET_PERCENT = 95;
+
 export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
 	enabled: true,
 	thresholdPercent: DEFAULT_COMPACTION_THRESHOLD_PERCENT,
@@ -243,6 +251,12 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
 export function shouldCompact(contextTokens: number, contextWindow: number, settings: CompactionSettings): boolean {
 	if (!settings.enabled || contextWindow <= 0) return false;
 	return contextTokens > resolveThresholdTokens(contextWindow, settings);
+}
+
+/** True when context passed the hard mid-run safety-net ceiling (95% of window). */
+export function isPastMidRunSafetyNet(contextTokens: number, contextWindow: number): boolean {
+	if (contextWindow <= 0) return false;
+	return contextTokens > Math.floor((contextWindow * MID_RUN_SAFETY_NET_PERCENT) / 100);
 }
 
 export function resolveThresholdTokens(contextWindow: number, settings: CompactionSettings): number {

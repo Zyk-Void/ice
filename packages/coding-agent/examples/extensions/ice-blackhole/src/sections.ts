@@ -6,6 +6,7 @@
  */
 
 export interface SectionData {
+	recentActions: string[];
 	sessionGoal: string[];
 	outstandingContext: string[];
 	filesAndChanges: string[];

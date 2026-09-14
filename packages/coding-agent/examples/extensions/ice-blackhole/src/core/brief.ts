@@ -229,7 +229,7 @@ const TOOL_SUMMARY_FIELDS: Record<string, string> = {
 	Grep: "pattern",
 };
 
-const toolOneLiner = (name: string, args: Record<string, unknown>): string => {
+export const toolOneLiner = (name: string, args: Record<string, unknown>): string => {
 	const field = TOOL_SUMMARY_FIELDS[name];
 	if (field && typeof args[field] === "string") {
 		return `* ${name} "${args[field] as string}"`;
