@@ -144,6 +144,7 @@
 
 ### Changed
 
+- Changed ordinary `delegate`/`delegate_async` runs to ingest the child's natural final assistant answer directly instead of forcing a JSON-only finalization turn. Typed flows (`outputSchema`, acceptance criteria, and `review_batch`/batch review tasks) keep the strict bounded structured final-report protocol with parse/repair and schema/evidence verification. Plain results carry `reportMode: "plain_final_turn"` through results, telemetry, observatory, durable job inspection, and live views, verify lineage and output bounds only (verification is explicitly marked `plain_bounds` with `structuredVerified: false`; no evidence-path or payload claims are verified), and steered/timeout-extension finalization asks for a plain prose answer in plain mode and the structured JSON report in typed mode.
 - Changed clipboard and Gondolin integrations to the published `@zykairotis/ice-*` fork packages, including cross-platform binary packaging, example setup, and generated install metadata.
 - Changed ICE RPC and interactive settings projections to show deny-first effective values; empty role allowlists are neutral preferences, while malformed settings block new delegation.
 - Removed former specialist aliases, including `scout`; use self delegation or an actual Markdown agent name.

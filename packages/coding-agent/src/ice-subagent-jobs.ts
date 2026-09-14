@@ -5,6 +5,7 @@ import type { IceHookDispatchRecord } from "./ice-subagent-settings.ts";
 import type {
 	ReviewFinding,
 	SubagentFailureCode,
+	SubagentReportMode,
 	SubagentResult,
 	SubagentTokenBudgetSummary,
 	SubagentUsage,
@@ -85,6 +86,8 @@ export interface SubagentJobResultEnvelope {
 	runId?: string;
 	status: TerminalSubagentJobStatus;
 	summary?: string;
+	/** How the final answer was ingested; absent in snapshots persisted before this field existed. */
+	reportMode?: SubagentReportMode;
 	evidence?: {
 		paths: readonly string[];
 	};
@@ -92,6 +95,9 @@ export interface SubagentJobResultEnvelope {
 	verification?: {
 		verified: boolean;
 		reason: string;
+		/** Present for snapshots persisted after this field existed. */
+		kind?: "structured" | "plain_bounds";
+		structuredVerified?: boolean;
 	};
 	/** Optional bounded custom payload from the validated child report. */
 	payload?: Readonly<Record<string, unknown>>;
@@ -114,7 +120,7 @@ export interface SubagentJobWorkArtifactView {
 	touchedPaths: readonly string[];
 	candidateEvidencePaths: readonly string[];
 	reportProtocol: {
-		status: "valid" | "malformed" | "missing" | "truncated";
+		status: "valid" | "malformed" | "missing" | "truncated" | "plain";
 		diagnostic?: string;
 	};
 	lastActivities?: readonly {
@@ -538,7 +544,14 @@ function validWorkArtifactView(value: unknown): value is SubagentJobWorkArtifact
 		return false;
 	if (!isRecord(value.reportProtocol)) return false;
 	const status = value.reportProtocol.status;
-	if (status !== "valid" && status !== "malformed" && status !== "missing" && status !== "truncated") return false;
+	if (
+		status !== "valid" &&
+		status !== "malformed" &&
+		status !== "missing" &&
+		status !== "truncated" &&
+		status !== "plain"
+	)
+		return false;
 	if (
 		value.reportProtocol.diagnostic !== undefined &&
 		boundedText(value.reportProtocol.diagnostic, MAX_DURABLE_DIAGNOSTIC_BYTES) !== value.reportProtocol.diagnostic
@@ -593,10 +606,22 @@ function validResultEnvelope(
 		if (
 			!isRecord(value.verification) ||
 			typeof value.verification.verified !== "boolean" ||
-			boundedText(value.verification.reason, MAX_DURABLE_VERIFICATION_REASON_BYTES) !== value.verification.reason
+			boundedText(value.verification.reason, MAX_DURABLE_VERIFICATION_REASON_BYTES) !== value.verification.reason ||
+			(value.verification.kind !== undefined &&
+				value.verification.kind !== "structured" &&
+				value.verification.kind !== "plain_bounds") ||
+			(value.verification.structuredVerified !== undefined &&
+				typeof value.verification.structuredVerified !== "boolean")
 		) {
 			return false;
 		}
+	}
+	if (
+		value.reportMode !== undefined &&
+		value.reportMode !== "plain_final_turn" &&
+		value.reportMode !== "structured_report"
+	) {
+		return false;
 	}
 	if (value.payload !== undefined) {
 		if (!isRecord(value.payload)) return false;
@@ -906,6 +931,10 @@ function projectResult(
 				reason:
 					boundedText(runResult.verification.reason, MAX_DURABLE_VERIFICATION_REASON_BYTES) ??
 					"Verification failed.",
+				...(runResult.verification.kind !== undefined ? { kind: runResult.verification.kind } : {}),
+				...(runResult.verification.structuredVerified !== undefined
+					? { structuredVerified: runResult.verification.structuredVerified }
+					: {}),
 			}
 		: undefined;
 	const runtimeMessage =
@@ -917,6 +946,7 @@ function projectResult(
 		jobId,
 		...(result?.runId ? { runId: result.runId } : {}),
 		status,
+		...(result?.reportMode !== undefined ? { reportMode: result.reportMode } : {}),
 		...(summary ? { summary } : {}),
 		...(evidence && evidence.length > 0 ? { evidence: { paths: evidence } } : {}),
 		...(findings && findings.length > 0 ? { findings } : {}),

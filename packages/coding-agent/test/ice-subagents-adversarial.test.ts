@@ -48,8 +48,10 @@ function request(cwd: string, role = "self"): SubagentRequest {
 }
 
 function resolvedTask(cwd: string, id: string, role = "self"): ResolvedSubagentBatchTask {
+	// The verification invariants under test are structured-report checks, which
+	// typed flows and review batches always run.
 	const normalized = normalizeSubagentRequest({ ...request(cwd, role), task: `Inspect ${id}.` }, cwd);
-	return { id, request: normalized };
+	return { id, request: { ...normalized, reportMode: "structured_report" } };
 }
 
 function completedResult(task: ResolvedSubagentBatchTask, overrides: Partial<SubagentResult> = {}): SubagentResult {

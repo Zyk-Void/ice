@@ -2197,9 +2197,12 @@ export class InteractiveMode {
 	private addSubagentFinalResult(view: IceAgentViewDescriptor): void {
 		const result = view.presentation?.finalResult;
 		if (!result) return;
+		const plainFinalTurn = view.presentation?.reportMode === "plain_final_turn";
 		const statusLabel =
 			result.status === "completed" && result.verified === true
-				? "Completed · verified"
+				? plainFinalTurn
+					? "Completed · plain final answer"
+					: "Completed · verified"
 				: result.status === "completed"
 					? "Completed · verification pending"
 					: `${result.status.replaceAll("_", " ").replace(/^(.)/, (character) => character.toUpperCase())}`;
