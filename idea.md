@@ -37,6 +37,7 @@ Implemented today:
 - Endpoint model metadata drives model selection and limits.
 - Last valid model catalog remains usable if endpoint is unavailable.
 - API credentials remain in user configuration and never enter Git.
+- Native child `AgentSession` instances use the existing in-memory automatic/overflow compaction engine with a child-local default of mid-run `resume`; system prompts, model/runtime, tools, scope, and report state remain structural, while parent observability receives only bounded lifecycle metadata.
 - Auto-compaction triggers at a configurable percentage of the selected model's context window, defaulting to 85%; compaction summary budgeting remains configured separately.
 - An optional deterministic Blackhole compaction extension can own mid-run triggering with resume/pause behavior and percentage or absolute token thresholds; observational memory remains opt-in and is not part of the default profile.
 - `ice` loads the hidden `ice-cognee` extension by default. It uses the configured dataset (`ice`, or `$project` for per-repo isolation), bounded transient recall, redacted session capture, compaction-linked remember, and optional idle/shutdown improve with `/cognee` runtime toggles; startup health probing is asynchronous so an unavailable local API does not delay or break the Ice loop.
