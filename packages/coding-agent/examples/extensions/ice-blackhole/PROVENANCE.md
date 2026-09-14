@@ -12,7 +12,7 @@ Adapted source files retain their upstream provenance comments. ICE changes are 
 
 - removing observational-memory workers and recall from this optional initial integration;
 - using Ice's `session_before_compact`, `turn_end`, and `agent_end` extension seams;
-- adding mutually exclusive `compactAfterPercent` and `compactAfterTokens` threshold modes;
+- adding a `compactAfterPercent` threshold resolved against the active model context window (numeric token thresholds removed);
 - resolving percentage thresholds from the active model context window;
 - preserving Ice's `ice-default` retained tail behavior by default; and
 - resuming through Ice's existing continuation message path.

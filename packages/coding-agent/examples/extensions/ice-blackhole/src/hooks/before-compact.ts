@@ -1,4 +1,6 @@
 import { convertToLlm, type ExtensionAPI } from "@zykairotis/ice-coding-agent";
+import { consumeCheckpointRecallSection } from "../core/checkpoint-recall.ts";
+import { extractRunningAgents, formatRunningAgentsSection } from "../core/running-agents.ts";
 import { compile } from "../core/summarize.ts";
 import { resolveBlackholeTail } from "../core/tail.ts";
 import { loadConfig } from "../core/unified-config.ts";
@@ -29,11 +31,21 @@ export function registerBeforeCompactHook(ice: ExtensionAPI): void {
 				createdFiles: [...event.preparation.fileOps.written],
 			},
 		});
-		if (!summary) return { cancel: true };
+
+		// Volatile pre-sections: in-flight background subagent jobs survive only in
+		// the fresh summary (never merged from the previous checkpoint).
+		const runningJobs = extractRunningAgents(event.branchEntries);
+		const runningSection = formatRunningAgentsSection(runningJobs);
+
+		// Consume-once Cognee checkpoint recall (written by ice-cognee when enabled).
+		const memorySection = consumeCheckpointRecallSection(undefined, Date.now(), ctx.sessionManager.getSessionId());
+		if (!runningSection && !summary && !memorySection) return { cancel: true };
+		const sections = [runningSection, summary, memorySection].filter((part) => part.length > 0);
+		const finalSummary = sections.join("\n\n");
 
 		return {
 			compaction: {
-				summary,
+				summary: finalSummary,
 				firstKeptEntryId: tail.firstKeptEntryId,
 				tokensBefore: event.preparation.tokensBefore,
 				details: {
@@ -41,6 +53,8 @@ export function registerBeforeCompactHook(ice: ExtensionAPI): void {
 					memory: false,
 					tailBehavior: config.tailBehavior,
 					summarizedKeptTail: tail.summarizedKeptTail,
+					runningAgents: runningJobs.length,
+					relevantMemory: memorySection.length > 0,
 				},
 			},
 		};
