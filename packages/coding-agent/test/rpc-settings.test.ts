@@ -332,7 +332,7 @@ describe("RPC settings bridge", () => {
 		).rejects.toMatchObject({ code: "persistence_failed", scope: "global" });
 	});
 
-	it("labels the subagent result byte cap and the work-token limit as separate authorities", () => {
+	it("labels the subagent result byte cap as an output authority", () => {
 		const settingsManager = SettingsManager.inMemory();
 		const snapshot = createRpcSettingsSnapshot(
 			createContext(settingsManager, { getExtensionSettings: () => [createExtensionSettings()] }),
@@ -341,10 +341,5 @@ describe("RPC settings bridge", () => {
 		const bytes = field(snapshot, "ice.subagents.defaults.maxOutputBytes");
 		expect(bytes.label).toBe("Subagent result size cap");
 		expect(bytes.description).toMatch(/not model tokens or cost/i);
-
-		const tokens = field(snapshot, "ice.subagents.defaults.maxTotalTokens");
-		expect(tokens.label).toMatch(/token budget/i);
-		expect(tokens.description).toMatch(/input \+ output \+ cache-write/i);
-		expect(tokens.description).toMatch(/may overshoot/i);
 	});
 });

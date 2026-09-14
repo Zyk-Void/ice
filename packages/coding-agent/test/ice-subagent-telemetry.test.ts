@@ -15,6 +15,7 @@ describe("subagent outcome telemetry", () => {
 			finalStatus: "completed",
 			reportProtocolStatus: "valid",
 			verificationPassed: true,
+			usage: { inputTokens: 10, outputTokens: 4, cacheReadTokens: 2, cacheWriteTokens: 1, cost: 0.25 },
 		});
 		expect(record).toMatchObject({
 			schemaVersion: 1,
@@ -104,9 +105,17 @@ describe("subagent outcome telemetry", () => {
 			mode: "foreground",
 			finalStatus: "completed",
 			verificationPassed: true,
+			usage: { inputTokens: 10, outputTokens: 4, cacheReadTokens: 2, cacheWriteTokens: 1, cost: 0.25 },
 		});
 		expect(store.list()).toHaveLength(1);
 		expect(store.list()[0]?.finalStatus).toBe("completed");
+		expect(store.list()[0]?.usage).toEqual({
+			inputTokens: 10,
+			outputTokens: 4,
+			cacheReadTokens: 2,
+			cacheWriteTokens: 1,
+			cost: 0.25,
+		});
 		for (let index = 0; index < SUBAGENT_TELEMETRY_LIMIT + 10; index++) {
 			store.record({ runId: `bulk-${index}`, profile: "worker", mode: "batch", finalStatus: "completed" });
 		}

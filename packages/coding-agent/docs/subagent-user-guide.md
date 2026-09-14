@@ -15,7 +15,7 @@ Ice remains the only reasoning/tool loop. These controls belong to `ice`; ordina
 | `inspect_subagent_job`, `cancel_subagent_job` | Inspect/cancel owned background jobs |
 | `delegate_write` | Separate build-only isolated writer workflow |
 
-Background jobs are not restart-resumable live sessions. Restart preserves inspectable terminal/interrupted state and never automatically relaunches ambiguous work. Foreground follow-up reuses the native child, requires an owner-bound run ID and stable request ID, and rejects user-takeover conflicts. An eligible completed foreground child is also retained as a live reusable session (bounded to 8 per runner, oldest terminal child evicted and released) so `resume` can continue it in place and `delete` can release it; `resume` mints a new run id with `resumedFromRunId` provenance, re-validates profile/resources/trust/tool authority fail-closed at the resume boundary, re-points the reused session's tool, stream, and turn-stop wrappers at the resumed run's hooks, authority callback, and budgets, and cannot widen the original model, profile, scope, or tools.
+Background jobs are not restart-resumable live sessions. Restart preserves inspectable terminal/interrupted state and never automatically relaunches ambiguous work. Foreground follow-up reuses the native child, requires an owner-bound run ID and stable request ID, and rejects user-takeover conflicts. An eligible completed foreground child is also retained as a live reusable session (bounded to 8 per runner, oldest terminal child evicted and released) so `resume` can continue it in place and `delete` can release it; `resume` mints a new run id with `resumedFromRunId` provenance, re-validates profile/resources/trust/tool authority fail-closed at the resume boundary, re-points the reused session's tool, stream, and turn-stop wrappers at the resumed run's hooks, authority callback, and bounded execution controls, and cannot widen the original model, profile, scope, or tools.
 
 ## Self-delegation: no file required
 
@@ -116,7 +116,7 @@ Use existing global `<agentDir>/settings.json` (normally `~/.ice/agent/settings.
   "ice": {
     "subagents": {
       "enabled": true,
-      "defaults": { "maxTurns": 12, "maxToolCalls": 40, "timeoutMs": 120000, "maxTotalTokens": 100000 },
+      "defaults": { "maxTurns": 12, "maxToolCalls": 40, "timeoutMs": 120000 },
       "restrictions": { "denyTools": ["bash", "edit", "write"], "maxTurns": 16 },
       "modelSelection": { "mode": "inherit-parent" }
     }
@@ -126,13 +126,11 @@ Use existing global `<agentDir>/settings.json` (normally `~/.ice/agent/settings.
 
 Deny wins. Empty allowed-role lists are neutral. Invalid policy blocks admission. Settings changes affect future launches and revoke active/queued authority at safe boundaries rather than silently granting more capability. Turn/tool limits remain settings-contract controls and are not duplicated in profile frontmatter. Profile `temperature` is passed through typed stream options when supported; `top-p` is mapped to `top_p` only for OpenAI-compatible adapters. Anthropic temperature and non-OpenAI top-p requests are omitted with a bounded provider-compatibility diagnostic. Sampling preferences apply to work and the bounded final report.
 
-### Optional aggregate token budget
+### Usage telemetry and execution limits
 
-`execution.maxTotalTokens` and `ice.subagents.defaults.maxTotalTokens` opt into a soft cumulative work-token ceiling. The charged formula is `inputTokens + outputTokens + cacheWriteTokens`; cache reads remain visible in usage but are excluded from the ceiling. Provider-reported usage is preferred. Missing or invalid provider usage is estimated from the actual request context and output and is marked with `~` in observability; mixed provider/estimated runs are reported as mixed.
+Subagent token counts are observational only. `SubagentResult.usage` and related telemetry retain provider-reported input, output, cache-read, cache-write, and cost values when available; they do not authorize or enforce aggregate token ceilings. Provider/runtime failures remain terminal errors, while only explicit cancellation or genuine execution deadlines produce cancellation/timeout results.
 
-The limit reserves `min(4096, max(1024, floor(maxTotalTokens * 0.10)))` tokens for one bounded tool-free final report. Ordinary work stops before that reserve when possible; reaching the full work allowance also exhausts ordinary work. A single in-flight provider response may overshoot because usage is charged when it completes; observed usage is never clipped or refunded. The bounded final-report request is issued only on routes that honor a hard per-request output authority and only when the reserve can safely cover the complete finalizer request context plus bounded output; otherwise the parent returns a deterministic bounded partial result and does not issue another explanation request. Token limits are independent from turns, tool calls, timeout, context occupancy, and the UTF-8 result-size cap. They are not a dollar-cost guarantee. Built-in provider adapters receive a runtime output authority when possible; unknown/custom APIs are aggregate-soft, never receive the finalization model request, and must not be described as hard-capped.
-
-For batch/review calls, `totalTokenBudget` atomically reserves each task's resolved `maxTotalTokens`; a task without a resolved token ceiling cannot enter a token-budgeted batch. Unused reservations are released on settlement or cancellation, while actual overshoot and charged usage remain visible. Durable jobs persist the accepted optional ceiling and safe-boundary terminal summary; they do not resume an in-flight model session after restart.
+Execution remains bounded by `timeoutMs`, `maxTurns`, `maxToolCalls`, and the complete UTF-8 parent-facing `maxOutputBytes` cap. Batch and review calls also reserve planned output bytes atomically; unused reservations are released on settlement or cancellation. Removed legacy `maxTotalTokens` and `totalTokenBudget` fields are rejected rather than silently ignored. Durable jobs normalize old persisted snapshots by stripping only those removed token-budget fields before validation and rewriting the normalized state; they do not resume an in-flight model session after restart.
 
 ## Optional child routes
 

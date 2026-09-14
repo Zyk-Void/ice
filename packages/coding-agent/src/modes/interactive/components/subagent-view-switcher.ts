@@ -276,9 +276,7 @@ export class SubagentFooterSwitcher implements Component {
 
 	private styleView(view: IceAgentViewDescriptor, text: string, viewing: boolean): string {
 		if (!this.appearance || !this.isCustomized())
-			return viewing
-				? this.theme.fg(view.color ?? "accent", text)
-				: this.theme.fg(view.color ?? "muted", text);
+			return viewing ? this.theme.fg(view.color ?? "accent", text) : this.theme.fg(view.color ?? "muted", text);
 		const footerView = this.footerSnapshot.children.find((entry) => entry.id === view.id);
 		if (footerView?.needsAttention) return applyTextPresentation(this.appearance.attention, text);
 		if (view.kind === "subagent" && view.live && view.controlState === "awaiting-extension")

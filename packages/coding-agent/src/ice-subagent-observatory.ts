@@ -9,13 +9,7 @@ import type {
 } from "./ice-subagent-jobs.ts";
 import { JOB_COMPLETION_MESSAGE_TYPE } from "./ice-subagent-jobs.ts";
 import type { SubagentRetryState } from "./ice-subagent-timeout-supervisor.ts";
-import type {
-	SubagentBatchTaskLifecycleEvent,
-	SubagentEvent,
-	SubagentStatus,
-	SubagentTokenBudgetSummary,
-	SubagentUsage,
-} from "./ice-subagents.ts";
+import type { SubagentBatchTaskLifecycleEvent, SubagentEvent, SubagentStatus, SubagentUsage } from "./ice-subagents.ts";
 import { redactCredentialText } from "./utils/redact.ts";
 
 export const OBSERVATORY_RECENT_LIMIT = 32;
@@ -117,7 +111,6 @@ export interface SubagentProgressSnapshot {
 	readonly attemptHistory: readonly ObservatoryAttemptHistory[];
 	readonly retry?: SubagentRetryState;
 	readonly usage?: SubagentUsage;
-	readonly budget?: SubagentTokenBudgetSummary;
 	readonly batchCounts?: ObservatoryBatchCounts;
 	readonly evidenceCount?: number;
 	readonly changedFileCount?: number;
@@ -146,7 +139,6 @@ export interface ObservatoryRuntimeInput {
 	readonly attempt?: 1 | 2;
 	readonly currentPath?: string;
 	readonly usage?: SubagentUsage;
-	readonly budget?: SubagentTokenBudgetSummary;
 	readonly retry?: SubagentRetryState;
 }
 
@@ -168,7 +160,6 @@ export interface ObservatoryWorkflowInput {
 	readonly currentPath?: string;
 	readonly attempt?: 1 | 2;
 	readonly usage?: SubagentUsage;
-	readonly budget?: SubagentTokenBudgetSummary;
 	readonly retry?: SubagentRetryState;
 	readonly batchCounts?: ObservatoryBatchCounts;
 	readonly evidenceCount?: number;
@@ -208,11 +199,6 @@ export interface DurableSubagentJobViewSnapshot {
 	readonly ownerActiveJobs?: number;
 	readonly ownerQueuedJobs?: number;
 	readonly ownerActiveJobsCap?: number;
-	readonly maxTotalTokens?: number;
-	readonly chargedTokens?: number;
-	readonly remainingTokens?: number;
-	readonly overshootTokens?: number;
-	readonly accounting?: "provider" | "estimated" | "mixed";
 	readonly createdAt: string;
 	readonly startedAt?: string;
 	readonly finishedAt?: string;
@@ -263,7 +249,6 @@ export interface DurableSubagentJobResultView {
 		readonly structuredVerified?: boolean;
 	};
 	readonly evidence: readonly string[];
-	readonly budget?: SubagentTokenBudgetSummary;
 	readonly findings: readonly DurableSubagentJobFindingView[];
 	readonly diagnostics: readonly string[];
 	/** Runtime-owned bounded work projection preserved across report-protocol failures. */
@@ -284,39 +269,6 @@ function boundedByteCount(value: number | undefined): number {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
-function boundedTokenBudget(budget: SubagentTokenBudgetSummary | undefined): SubagentTokenBudgetSummary | undefined {
-	if (!budget) return undefined;
-	const integerValues = [
-		budget.maxTotalTokens,
-		budget.workPhaseLimit,
-		budget.reportReserveTokens,
-		budget.chargedTokens,
-		budget.remainingTokens,
-		budget.inputTokens,
-		budget.outputTokens,
-		budget.cacheReadTokens,
-		budget.cacheWriteTokens,
-		budget.overshootTokens,
-	];
-	if (integerValues.some((value) => typeof value !== "number" || !Number.isSafeInteger(value) || value < 0))
-		return undefined;
-	const expectedReserve = Math.min(4_096, Math.max(1_024, Math.floor(budget.maxTotalTokens * 0.1)));
-	if (
-		budget.maxTotalTokens < 1_024 ||
-		budget.maxTotalTokens > 1_000_000 ||
-		budget.workPhaseLimit !== budget.maxTotalTokens - expectedReserve ||
-		budget.reportReserveTokens !== expectedReserve ||
-		budget.chargedTokens !== budget.inputTokens + budget.outputTokens + budget.cacheWriteTokens ||
-		budget.remainingTokens !== Math.max(0, budget.maxTotalTokens - budget.chargedTokens) ||
-		budget.overshootTokens !== Math.max(0, budget.chargedTokens - budget.maxTotalTokens) ||
-		(budget.accounting !== "provider" && budget.accounting !== "estimated" && budget.accounting !== "mixed") ||
-		typeof budget.exhausted !== "boolean" ||
-		(budget.hardCap !== "enforced" && budget.hardCap !== "aggregate-soft")
-	)
-		return undefined;
-	return Object.freeze({ ...budget });
-}
-
 function boundedSingleLine(value: string | undefined, maxBytes: number): string | undefined {
 	return boundedText(value, maxBytes)?.replace(/[\r\n\t]+/g, " ");
 }
@@ -324,7 +276,6 @@ function boundedSingleLine(value: string | undefined, maxBytes: number): string 
 export function projectDurableSubagentJob(inspection: SubagentJobInspection): DurableSubagentJobViewSnapshot {
 	const job = inspection.job;
 	const budget = inspection.budget;
-	const terminalBudget = boundedTokenBudget(inspection.result?.budget);
 	const jobId = boundedText(job.jobId, 128) ?? "unknown";
 	const model = job.model ? boundedSingleLine(job.model, OBSERVATORY_PATH_MAX_BYTES) : undefined;
 	const startedAt = job.startedAt ? boundedSingleLine(job.startedAt, OBSERVATORY_PATH_MAX_BYTES) : undefined;
@@ -345,11 +296,6 @@ export function projectDurableSubagentJob(inspection: SubagentJobInspection): Du
 		...(budget?.ownerActiveJobs !== undefined ? { ownerActiveJobs: budget.ownerActiveJobs } : {}),
 		...(budget?.ownerQueuedJobs !== undefined ? { ownerQueuedJobs: budget.ownerQueuedJobs } : {}),
 		...(budget?.ownerActiveJobsCap !== undefined ? { ownerActiveJobsCap: budget.ownerActiveJobsCap } : {}),
-		...(budget?.resolvedMaxTotalTokens !== undefined ? { maxTotalTokens: budget.resolvedMaxTotalTokens } : {}),
-		...(budget?.chargedTokens !== undefined ? { chargedTokens: budget.chargedTokens } : {}),
-		...(budget?.remainingTokens !== undefined ? { remainingTokens: budget.remainingTokens } : {}),
-		...(terminalBudget?.overshootTokens !== undefined ? { overshootTokens: terminalBudget.overshootTokens } : {}),
-		...(terminalBudget?.accounting ? { accounting: terminalBudget.accounting } : {}),
 		createdAt: boundedSingleLine(job.createdAt, OBSERVATORY_PATH_MAX_BYTES) ?? "",
 		...(startedAt ? { startedAt } : {}),
 		...(finishedAt ? { finishedAt } : {}),
@@ -538,7 +484,6 @@ export function projectDurableSubagentJobResult(
 				),
 			})
 		: undefined;
-	const tokenBudget = boundedTokenBudget(result?.budget);
 	const tombstone = inspection.tombstone
 		? Object.freeze({
 				terminalStatus: inspection.tombstone.terminalStatus,
@@ -559,7 +504,6 @@ export function projectDurableSubagentJobResult(
 		...(result?.reportMode !== undefined ? { reportMode: result.reportMode } : {}),
 		...(verification ? { verification } : {}),
 		evidence,
-		...(tokenBudget ? { budget: tokenBudget } : {}),
 		findings,
 		diagnostics,
 		...(workArtifact ? { workArtifact } : {}),
@@ -573,11 +517,6 @@ export function formatDurableSubagentJobDetail(detail: DurableSubagentJobResultV
 		`status: ${detail.status}${detail.tombstone ? " (expired from full retention)" : ""}`,
 		`role: ${detail.role}`,
 		...(detail.model ? [`model: ${detail.model}`] : []),
-		...(detail.budget
-			? [
-					`tokens: ${detail.budget.chargedTokens}/${detail.budget.maxTotalTokens}${detail.budget.accounting === "provider" ? "" : " ~"} charged; ${detail.budget.remainingTokens} remaining`,
-				]
-			: []),
 		`result ref: ${detail.resultRef}`,
 		...(detail.tombstone ? [`retention expired: ${detail.tombstone.expiredAt}`] : []),
 		"",
@@ -697,11 +636,6 @@ function formatDurableJobSnapshot(snapshot: DurableSubagentJobViewSnapshot): str
 				]
 			: []),
 		`reservation ${snapshot.reservedOutputBytes}/${snapshot.ownerBudgetBytes} bytes`,
-		...(snapshot.maxTotalTokens !== undefined
-			? [
-					`token reservation ${snapshot.chargedTokens ?? 0}/${snapshot.maxTotalTokens}${snapshot.accounting === "provider" ? "" : " ~"}`,
-				]
-			: []),
 		`created ${snapshot.createdAt}`,
 		...(snapshot.startedAt ? [`started ${snapshot.startedAt}`] : []),
 		...(snapshot.finishedAt ? [`finished ${snapshot.finishedAt}`] : []),
@@ -785,8 +719,6 @@ function phaseForRuntimeEvent(event: SubagentEvent, previous: SubagentProgressSn
 			return "retrying";
 		case "subagent_wrap_up":
 			return "wrapping_up";
-		case "subagent_token_budget":
-			return "running";
 		case "subagent_needs_time":
 			return "needs_time";
 		case "subagent_completed":
@@ -823,7 +755,6 @@ function createSnapshot(input: {
 	currentTool?: string;
 	currentPath?: string;
 	usage?: SubagentUsage;
-	budget?: SubagentTokenBudgetSummary;
 	batchCounts?: ObservatoryBatchCounts;
 	attemptHistory?: readonly ObservatoryAttemptHistory[];
 	activity?: readonly ObservatoryActivity[];
@@ -859,7 +790,6 @@ function createSnapshot(input: {
 		attemptHistory: Object.freeze((input.attemptHistory ?? []).slice(-OBSERVATORY_ATTEMPT_LIMIT)),
 		...(input.retry ? { retry: Object.freeze({ ...input.retry }) } : {}),
 		...(input.usage ? { usage: input.usage } : {}),
-		...(boundedTokenBudget(input.budget) ? { budget: boundedTokenBudget(input.budget) } : {}),
 		...(input.batchCounts ? { batchCounts: Object.freeze({ ...input.batchCounts }) } : {}),
 		...(input.evidenceCount !== undefined ? { evidenceCount: input.evidenceCount } : {}),
 		...(input.changedFileCount !== undefined ? { changedFileCount: input.changedFileCount } : {}),
@@ -1079,9 +1009,6 @@ export function reduceObservatoryEvent(state: ObservatoryState, input: Observato
 	const now = nowMs(input.nowMs);
 	const existing = findExisting(state, input.streamKey);
 	if (shouldIgnoreRuntimeEvent(existing, input)) return state;
-	// Token-budget lifecycle traces are bounded event-stream signals; the snapshot
-	// only changes at settlement, which arrives with the terminal event's budget.
-	if (input.event.type === "subagent_token_budget") return state;
 	const attempt = input.attempt ?? existing?.attempt ?? 1;
 	const attemptHistory =
 		existing && attempt > (existing.attempt ?? 1) && existing.runId
@@ -1112,7 +1039,6 @@ export function reduceObservatoryEvent(state: ObservatoryState, input: Observato
 		currentTool: input.event.toolName ?? existing?.currentTool,
 		currentPath: currentPath ?? existing?.currentPath,
 		usage: input.usage ?? existing?.usage,
-		budget: boundedTokenBudget(input.budget) ?? existing?.budget,
 		retry: input.event.retry ?? existing?.retry,
 		attemptHistory,
 		activity: activityFor(existing, phase, input.event.toolName, currentPath),
@@ -1164,7 +1090,6 @@ export function reduceWorkflowProgress(state: ObservatoryState, input: Observato
 		currentTool: input.currentTool ?? existing?.currentTool,
 		currentPath: currentPath ?? existing?.currentPath,
 		usage: input.usage ?? existing?.usage,
-		budget: boundedTokenBudget(input.budget) ?? existing?.budget,
 		retry: input.retry ?? existing?.retry,
 		batchCounts: input.batchCounts ?? existing?.batchCounts,
 		attemptHistory,
@@ -1283,11 +1208,6 @@ export function formatProgressSnapshot(snapshot: SubagentProgressSnapshot): stri
 		...(snapshot.usage
 			? [
 					`usage in ${snapshot.usage.inputTokens} · out ${snapshot.usage.outputTokens} · cost ${snapshot.usage.cost.toFixed(4)}`,
-				]
-			: []),
-		...(snapshot.budget
-			? [
-					`tokens ${snapshot.budget.chargedTokens}/${snapshot.budget.maxTotalTokens}${snapshot.budget.accounting === "provider" ? "" : " ~"} · cache-read ${snapshot.budget.cacheReadTokens}`,
 				]
 			: []),
 		...(snapshot.batchCounts ? [`batch ${formatBatchCounts(snapshot.batchCounts)}`] : []),

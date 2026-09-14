@@ -196,12 +196,6 @@ import {
 	type SubagentSupervisorStopReason,
 	type SubagentToolActivityDigest,
 } from "./ice-subagent-timeout-supervisor.ts";
-import {
-	estimateSubagentRequestTokens,
-	normalizeTokenUsage,
-	SessionUsageReconciler,
-	TokenBudgetLedger,
-} from "./ice-subagent-token-budget.ts";
 import { AssistantMessageComponent } from "./modes/interactive/components/assistant-message.ts";
 import { ToolExecutionComponent } from "./modes/interactive/components/tool-execution.ts";
 import { UserMessageComponent } from "./modes/interactive/components/user-message.ts";
@@ -237,18 +231,6 @@ export function createDelegatedShellEnvironment(environment: NodeJS.ProcessEnv):
 }
 
 export const SUBAGENT_TOOL_NAMES = ["read", "grep", "find", "ls"] as const;
-const SUBAGENT_HARD_CAP_APIS = new Set([
-	"anthropic-messages",
-	"azure-openai-responses",
-	"bedrock-converse-stream",
-	"google-generative-ai",
-	"google-vertex",
-	"ice-messages",
-	"mistral-conversations",
-	"openai-codex-responses",
-	"openai-completions",
-	"openai-responses",
-]);
 export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];
 
 /** Every built-in capability a profile may request. Safe launches still clamp this to SUBAGENT_TOOL_NAMES. */
@@ -440,12 +422,7 @@ export type SubagentFailureCode =
 	| "writer_patch_failure"
 	| "integration_conflict"
 	| "rollback_conflict"
-	| "unsafe_parent_workspace"
-	| "token_budget_exhausted"
-	| "token_usage_estimated"
-	| "token_usage_invalid"
-	| "token_finalization_unavailable"
-	| "batch_token_budget_exhausted";
+	| "unsafe_parent_workspace";
 
 export type SubagentProfileSource = "user" | "project" | "self";
 
@@ -555,7 +532,6 @@ export interface SubagentProfileSummary {
 	effectiveMaxTurns?: number;
 	effectiveMaxToolCalls?: number;
 	effectiveMaxOutputBytes?: number;
-	effectiveMaxTotalTokens?: number;
 	requestedTemperature?: number;
 	effectiveTemperature?: number;
 	requestedTopP?: number;
@@ -567,7 +543,6 @@ export interface SubagentProfileSummary {
 		maxTurns: string;
 		maxToolCalls: string;
 		maxOutputBytes: string;
-		maxTotalTokens: string;
 		temperature: string;
 		topP: string;
 	}>;
@@ -618,8 +593,6 @@ export const SUBAGENT_BATCH_LIMITS = {
 	defaultConcurrency: SUBAGENT_CONCURRENCY_LIMITS.bundledDefault,
 	maxConcurrency: SUBAGENT_CONCURRENCY_LIMITS.hardCap,
 	defaultBudgetBytes: 256 * 1024,
-	minTokenBudget: 1_024,
-	maxTokenBudget: 8_000_000,
 } as const;
 
 export const SUBAGENT_PROFILE_ALIASES: Readonly<Record<string, string>> = Object.freeze({});
@@ -867,7 +840,6 @@ export interface SubagentExecutionOverrideInput {
 	maxTurns?: number;
 	maxToolCalls?: number;
 	maxOutputBytes?: number;
-	maxTotalTokens?: number;
 	temperature?: number;
 	topP?: number;
 }
@@ -878,7 +850,6 @@ export interface SubagentExecutionContract {
 	maxTurns: number;
 	maxToolCalls: number;
 	maxOutputBytes: number;
-	maxTotalTokens?: number;
 	temperature?: number;
 	topP?: number;
 }
@@ -890,8 +861,6 @@ export const SUBAGENT_EXECUTION_LIMITS = {
 	maxToolCalls: 512,
 	minOutputBytes: 1_024,
 	maxOutputBytes: 64 * 1_024,
-	minTotalTokens: 1_024,
-	maxTotalTokens: 1_000_000,
 	minTemperature: 0,
 	maxTemperature: 2,
 	minTopP: 0,
@@ -1112,22 +1081,6 @@ export interface SubagentDiagnostic {
 	retryable?: boolean;
 }
 
-export interface SubagentTokenBudgetSummary {
-	maxTotalTokens: number;
-	workPhaseLimit: number;
-	reportReserveTokens: number;
-	chargedTokens: number;
-	remainingTokens: number;
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadTokens: number;
-	cacheWriteTokens: number;
-	overshootTokens: number;
-	accounting: "provider" | "estimated" | "mixed";
-	exhausted: boolean;
-	hardCap: "enforced" | "aggregate-soft";
-}
-
 export const REVIEW_DIMENSIONS = ["correctness", "security", "tests", "regressions"] as const;
 export type ReviewDimension = (typeof REVIEW_DIMENSIONS)[number];
 
@@ -1211,7 +1164,6 @@ export interface SubagentResult {
 	truncated?: boolean;
 	diagnostics: SubagentDiagnostic[];
 	usage?: SubagentUsage;
-	budget?: SubagentTokenBudgetSummary;
 	recovery?: SubagentRecoveryMetadata;
 	evidence?: SubagentEvidence;
 	findings?: ReviewFinding[];
@@ -1281,7 +1233,6 @@ export interface SubagentLaunchProvenance {
 		maxTurns: number;
 		maxToolCalls: number;
 		maxOutputBytes: number;
-		maxTotalTokens?: number;
 		temperature?: number;
 		topP?: number;
 		tools?: readonly string[];
@@ -1291,7 +1242,6 @@ export interface SubagentLaunchProvenance {
 			maxTurns: string;
 			maxToolCalls: string;
 			maxOutputBytes: string;
-			maxTotalTokens: string;
 			temperature: string;
 			topP: string;
 		};
@@ -1327,7 +1277,6 @@ export interface SubagentLaunchPreflightTask {
 		maxTurns: number;
 		maxToolCalls: number;
 		maxOutputBytes: number;
-		maxTotalTokens?: number;
 		temperature?: number;
 		topP?: number;
 		tools: readonly string[] | undefined;
@@ -1368,11 +1317,6 @@ export interface SubagentLaunchPreflight {
 		totalOutputBytes: number;
 		reservedOutputBytes: number;
 		maxPotentialOutputBytes: number;
-		tokens?: {
-			total: number;
-			reserved: number;
-			maxPotential: number;
-		};
 	};
 	recovery: {
 		maxAttempts: 1 | 2;
@@ -1390,15 +1334,6 @@ export interface SubagentBatchBudget {
 	consumed: number;
 	remaining: number;
 	released: number;
-	tokens?: {
-		total: number;
-		reserved: number;
-		charged: number;
-		remaining: number;
-		released: number;
-		overshoot: number;
-		accounting: "provider" | "estimated" | "mixed";
-	};
 }
 
 export type AggregateUsage = SubagentUsage;
@@ -1455,7 +1390,6 @@ export interface SubagentBatchRunOptions {
 	settingsManager?: SettingsManager;
 	unsafeHostExec?: boolean;
 	totalBudgetBytes?: number;
-	totalTokenBudget?: number;
 	timeoutMs?: number;
 	failFast?: boolean;
 	signal?: AbortSignal;
@@ -1490,13 +1424,6 @@ export type SubagentBatchTaskLifecycleEvent =
 			reason: string;
 	  };
 
-export type SubagentTokenBudgetTracePhase =
-	| "resolved"
-	| "work_exhausted"
-	| "tool_denied"
-	| "finalizing"
-	| "finalization_unavailable";
-
 export type SubagentCompactionReason = "manual" | "threshold" | "overflow";
 export type SubagentCompactionStatus = "started" | "completed" | "aborted" | "failed";
 
@@ -1511,7 +1438,6 @@ export interface SubagentEvent {
 		| "subagent_compaction_end"
 		| "subagent_retry"
 		| "subagent_wrap_up"
-		| "subagent_token_budget"
 		| "subagent_completed"
 		| "subagent_failed"
 		| "subagent_cancelled"
@@ -1532,8 +1458,6 @@ export interface SubagentEvent {
 	taskId?: string;
 	attempt?: 1 | 2;
 	batchId?: string;
-	/** Present only on `subagent_token_budget`; at most one event per lifecycle phase. */
-	tokenBudgetPhase?: SubagentTokenBudgetTracePhase;
 	/** Bounded child compaction lifecycle metadata; summary contents are never projected. */
 	compactionReason?: SubagentCompactionReason;
 	compactionStatus?: SubagentCompactionStatus;
@@ -3626,7 +3550,6 @@ interface SubagentExecutionPolicy {
 	 * since the original run fails closed instead of dispatching.
 	 */
 	strictEligibility: boolean;
-	tokenBudgetLedger?: TokenBudgetLedger;
 	reportOnly?: () => boolean;
 	shouldStopAfterTurn?: () => boolean | Promise<boolean>;
 }
@@ -4004,7 +3927,6 @@ function profileSummary(
 			maxTurns: "bundled",
 			maxToolCalls: "bundled",
 			maxOutputBytes: "bundled",
-			maxTotalTokens: "bundled",
 			temperature: "bundled",
 			topP: "bundled",
 		}),
@@ -4754,13 +4676,18 @@ export function normalizeSubagentExecutionOverride(
 	if (typeof execution !== "object" || execution === null || Array.isArray(execution)) {
 		throw new SubagentError("malformed_result", "Subagent execution overrides must be an object.");
 	}
+	if (Object.hasOwn(execution, "maxTotalTokens")) {
+		throw new SubagentError(
+			"malformed_result",
+			'"maxTotalTokens" was removed; use maxTurns/maxToolCalls/timeoutMs/maxOutputBytes',
+		);
+	}
 	const allowed = new Set([
 		"thinking",
 		"tools",
 		"maxTurns",
 		"maxToolCalls",
 		"maxOutputBytes",
-		"maxTotalTokens",
 		"temperature",
 		"topP",
 		"hooks",
@@ -4842,15 +4769,7 @@ export function normalizeSubagentExecutionOverride(
 					SUBAGENT_EXECUTION_LIMITS.minOutputBytes,
 					SUBAGENT_EXECUTION_LIMITS.maxOutputBytes,
 				);
-	const maxTotalTokens =
-		execution.maxTotalTokens === undefined
-			? undefined
-			: checkBudget(
-					execution.maxTotalTokens,
-					"maxTotalTokens",
-					SUBAGENT_EXECUTION_LIMITS.minTotalTokens,
-					SUBAGENT_EXECUTION_LIMITS.maxTotalTokens,
-				);
+
 	const checkSampling = (
 		value: number | undefined,
 		label: string,
@@ -4881,7 +4800,6 @@ export function normalizeSubagentExecutionOverride(
 		maxTurns,
 		maxToolCalls,
 		maxOutputBytes,
-		...(maxTotalTokens !== undefined ? { maxTotalTokens } : {}),
 		...(temperature !== undefined ? { temperature } : {}),
 		...(topP !== undefined ? { topP } : {}),
 	});
@@ -4919,9 +4837,6 @@ function resolveIceContractForRequest(
 	if (request.execution?.maxTurns !== undefined) call.maxTurns = validatedExecution.maxTurns;
 	if (request.execution?.maxToolCalls !== undefined) call.maxToolCalls = validatedExecution.maxToolCalls;
 	if (request.execution?.maxOutputBytes !== undefined) call.maxOutputBytes = validatedExecution.maxOutputBytes;
-	if (request.execution?.maxTotalTokens !== undefined) {
-		call.maxTotalTokens = validatedExecution.maxTotalTokens;
-	}
 	if (request.execution?.temperature !== undefined) call.temperature = validatedExecution.temperature;
 	if (request.execution?.topP !== undefined) call.topP = validatedExecution.topP;
 	const contract = resolveIceSubagentContract({
@@ -5197,7 +5112,6 @@ export function normalizeSubagentRequest(
 		maxTurns: iceContract.values.maxTurns,
 		maxToolCalls: iceContract.values.maxToolCalls,
 		maxOutputBytes: iceContract.values.maxOutputBytes,
-		...(iceContract.values.maxTotalTokens !== undefined ? { maxTotalTokens: iceContract.values.maxTotalTokens } : {}),
 		...(iceContract.values.temperature !== undefined ? { temperature: iceContract.values.temperature } : {}),
 		...(iceContract.values.topP !== undefined ? { topP: iceContract.values.topP } : {}),
 	});
@@ -5230,7 +5144,6 @@ export function normalizeSubagentRequest(
 		deniedTools: iceContract.deniedTools,
 		iceContract,
 		maxOutputBytes: resolvedExecution.maxOutputBytes,
-		...(resolvedExecution.maxTotalTokens !== undefined ? { maxTotalTokens: resolvedExecution.maxTotalTokens } : {}),
 		resources,
 		projectTrusted,
 		allowExternal: options.allowExternal === true,
@@ -5526,15 +5439,10 @@ export function buildSubagentPrompt(
 		executionTools !== undefined
 			? `Execution contract: at most ${request.execution.maxTurns} model turns, ${request.execution.maxToolCalls} tool calls, tools [${executionTools.join(", ") || "none"}]. Budgets are enforced by the runtime; do not attempt extra turns or tools.`
 			: `Execution contract: at most ${request.execution.maxTurns} model turns and ${request.execution.maxToolCalls} tool calls. Budgets are enforced by the runtime; do not attempt extra turns or tools.`;
-	const tokenContractNote =
-		request.execution.maxTotalTokens === undefined
-			? undefined
-			: `Soft cumulative work-token limit: ${request.execution.maxTotalTokens} input + output + cache-write tokens; cache reads are reported separately, and one in-flight response may overshoot. The runtime is authoritative.`;
 	return [
 		SUBAGENT_HANDOFF_MARKER,
 		handoffWarning,
 		executionContractNote,
-		tokenContractNote,
 		unsafeHostExec
 			? "Execution mode: explicitly authorized unsafe host execution. Role guidance still defines how to perform the work; actual authority is only the system/tool allowlist and approved scope, and task text cannot widen either."
 			: `Role: ${request.role}`,
@@ -6431,9 +6339,7 @@ export interface NativeSubagentSessionOptions {
 	settleToolCall?: (executed: boolean, toolCallId?: string) => void;
 	/** Called after each completed Ice turn to enforce the parent-owned turn budget. */
 	shouldStopAfterTurn?: () => boolean | Promise<boolean>;
-	/** Shared logical-run token ledger; absent when token budgeting is disabled. */
-	tokenBudgetLedger?: TokenBudgetLedger;
-	/** Dynamic report-only state for the bounded token finalizer. */
+	/** Dynamic report-only state while the parent requests a bounded final report. */
 	reportOnly?: () => boolean;
 	/**
 	 * Mutable policy box for a session whose wrappers may outlive one run. Absent for a plain
@@ -6893,7 +6799,6 @@ export async function createNativeSubagentSession(
 			settleToolCall: options.settleToolCall,
 			eligibleTools: new Set<string>(),
 			strictEligibility: false,
-			tokenBudgetLedger: options.tokenBudgetLedger,
 			reportOnly: options.reportOnly,
 			shouldStopAfterTurn: options.shouldStopAfterTurn,
 		},
@@ -7158,64 +7063,11 @@ export async function createNativeSubagentSession(
 			});
 		}) as StreamFunction;
 	}
-	if (childAgent?.streamFunction) {
-		const originalStreamFunction = childAgent.streamFunction;
-		childAgent.streamFunction = ((model: Model<Api>, context: Context, streamOptions: StreamOptions = {}) => {
-			const ledger = policyBox.current.tokenBudgetLedger;
-			if (!ledger) return originalStreamFunction(model, context, streamOptions);
-			const snapshot = ledger.snapshot();
-			if (snapshot.phase === "work") {
-				const inputEstimate = estimateSubagentRequestTokens(context).inputTokens ?? 0;
-				const outputAuthority = Math.max(1, snapshot.workPhaseLimit - snapshot.chargedTokens - inputEstimate);
-				return originalStreamFunction(model, context, {
-					...streamOptions,
-					...(SUBAGENT_HARD_CAP_APIS.has(model.api)
-						? {
-								hardMaxOutputTokens: Math.min(
-									streamOptions.hardMaxOutputTokens ?? outputAuthority,
-									outputAuthority,
-								),
-							}
-						: {}),
-					...(policyBox.current.reportOnly?.() ? { toolChoice: "none" as const } : {}),
-					maxTokens:
-						streamOptions?.maxTokens === undefined
-							? outputAuthority
-							: Math.min(streamOptions.maxTokens, outputAuthority),
-				});
-			}
-			// Finalization must reserve the estimated input for the complete provider
-			// request, not only the newly appended report prompt. Re-sending the
-			// conversation is fresh provider input usage and consumes the same aggregate
-			// ledger. The preflight below normally rejects an unsafe request first; this
-			// wrapper applies the same authority at the actual stream boundary.
-			const finalizerInputEstimate = estimateSubagentRequestTokens(context).inputTokens ?? 0;
-			const outputAuthority = Math.max(1, snapshot.remainingTokens - finalizerInputEstimate);
-			return originalStreamFunction(model, context, {
-				...streamOptions,
-				...(SUBAGENT_HARD_CAP_APIS.has(model.api)
-					? {
-							hardMaxOutputTokens: Math.min(
-								streamOptions.hardMaxOutputTokens ?? outputAuthority,
-								outputAuthority,
-							),
-						}
-					: {}),
-				...(policyBox.current.reportOnly?.() ? { toolChoice: "none" as const } : {}),
-				maxTokens:
-					streamOptions?.maxTokens === undefined
-						? outputAuthority
-						: Math.min(streamOptions.maxTokens, outputAuthority),
-			});
-		}) as StreamFunction;
-	}
 	if (childAgent) {
 		const previousShouldStopAfterTurn = childAgent.shouldStopAfterTurn;
 		childAgent.shouldStopAfterTurn = async (context, signal) => {
 			if (await previousShouldStopAfterTurn?.(context, signal)) return true;
 			const policy = policyBox.current;
-			if (policy.tokenBudgetLedger?.phase === "exhausted") return true;
-			if (policy.tokenBudgetLedger?.phase === "finalizing") return true;
 			return (await policy.shouldStopAfterTurn?.()) ?? false;
 		};
 	}
@@ -7768,8 +7620,6 @@ export interface NativeSubagentRunOptions {
 		/** Tools the current parent policy still authorizes for this child. */
 		eligibleTools: ReadonlySet<string>;
 	};
-	/** Internal shared ledger for startup fallback/recovery attempts. */
-	tokenBudgetLedger?: TokenBudgetLedger;
 }
 
 /** Bounded metadata for a retained terminal child; safe to surface to the parent. */
@@ -7831,7 +7681,7 @@ export class NativeSubagentRunner {
 	private readonly runtimeManagementEnabled: boolean;
 	private readonly supervisorOwners = new Map<string, string>();
 	private readonly followUpRequests = new Map<string, Set<string>>();
-	/** Stage 2: reusable terminal child sessions retained for explicit resume/delete. */
+	/** Terminal child sessions retained for explicit resume/delete or history inspection. */
 	private readonly retainedChildren = new Map<string, RetainedSubagentSession>();
 	/** Superseded retained runId -> the active run that claimed it while a resume is in flight. */
 	private readonly activeResumeClaims = new Map<string, string>();
@@ -7986,9 +7836,26 @@ export class NativeSubagentRunner {
 	 */
 	detachRuntime(runId: string, parentSessionId: string): SubagentManagedObservation | undefined {
 		const supervisor = this.getOwnedSupervisor(runId, parentSessionId);
-		if (!supervisor) return undefined;
+		if (!supervisor) {
+			const retained = this.retainedChildren.get(runId);
+			if (
+				this.getRetainedManagedResult(runId, parentSessionId) ||
+				(retained !== undefined && retained.parentSessionId === parentSessionId)
+			) {
+				throw new SubagentError(
+					"child_protocol_failure",
+					"The selected subagent is already terminal; detach is live-only.",
+				);
+			}
+			return undefined;
+		}
 		const state = supervisor.stateValue;
-		if (state === "terminal") return this.peekRuntime(runId, parentSessionId);
+		if (state === "terminal") {
+			throw new SubagentError(
+				"child_protocol_failure",
+				"The selected subagent is already terminal; detach is live-only.",
+			);
+		}
 		if (!this.detachedRuns.has(runId)) {
 			if (state === "awaiting_extension") {
 				const retentionMs = Math.min(
@@ -8145,7 +8012,7 @@ export class NativeSubagentRunner {
 		this.activeResumeClaims.clear();
 	}
 
-	/** Stage 2: bounded retention of terminal children eligible for reuse or deletion. */
+	/** Bounded retention of terminal children eligible for reuse or deletion. */
 	/** True when a retained entry already owns this exact child session. */
 	private hasRetainedSession(session: CreateAgentSessionResult["session"]): boolean {
 		for (const value of this.retainedChildren.values()) {
@@ -8346,9 +8213,8 @@ export class NativeSubagentRunner {
 				);
 			}
 			// Idempotent: an unknown or already-forgotten child session is not an error.
-			// A stray managed terminal observation (e.g. a stopped live run that was
-				// never retained as a reusable session) stays observable through peek;
-				// delete only forgets reusable sessions, so report not-found here.
+			// A terminal observation without a retained session (for example, a startup
+			// failure) remains observable through peek; there is no session to delete.
 			return { runId, deleted: false };
 		}
 		if (retained.parentSessionId !== parentSessionId) {
@@ -8385,10 +8251,7 @@ export class NativeSubagentRunner {
 	/** Owner-scoped live supervisor lookup. Public so the phase-aware `manage_subagent`
 	 * dispatcher can gate live-only actions (detach/stop) against terminal-only
 	 * actions (resume/delete) without reaching into the registry. */
-	getOwnedSupervisor(
-		runId: string,
-		parentSessionId: string,
-	): SubagentRunSupervisor<SubagentResult> | undefined {
+	getOwnedSupervisor(runId: string, parentSessionId: string): SubagentRunSupervisor<SubagentResult> | undefined {
 		if (this.supervisorOwners.get(runId) !== parentSessionId) return undefined;
 		return this.supervisorRegistry.get(runId);
 	}
@@ -8411,46 +8274,7 @@ export class NativeSubagentRunner {
 		parentActiveTools: readonly string[],
 		options: NativeSubagentRunOptions = {},
 	): Promise<SubagentResult> {
-		let result = await this.runResolvedInternal(normalized, parentActiveTools, options);
-		if (normalized.execution.maxTotalTokens !== undefined && !result.budget) {
-			const fallbackLedger =
-				options.tokenBudgetLedger ??
-				new TokenBudgetLedger(
-					normalized.execution.maxTotalTokens,
-					options.model
-						? SUBAGENT_HARD_CAP_APIS.has(options.model.api)
-							? "enforced"
-							: "aggregate-soft"
-						: undefined,
-				);
-			if (options.tokenBudgetLedger && options.model) {
-				fallbackLedger.setHardCapMode(
-					SUBAGENT_HARD_CAP_APIS.has(options.model.api) ? "enforced" : "aggregate-soft",
-				);
-			}
-			const snapshot =
-				options.tokenBudgetLedger && result.retrySafeStartup === true
-					? fallbackLedger.snapshot()
-					: fallbackLedger.settle();
-			result = {
-				...result,
-				budget: {
-					maxTotalTokens: snapshot.maxTotalTokens,
-					workPhaseLimit: snapshot.workPhaseLimit,
-					reportReserveTokens: snapshot.reportReserveTokens,
-					chargedTokens: snapshot.chargedTokens,
-					remainingTokens: snapshot.remainingTokens,
-					inputTokens: snapshot.inputTokens,
-					outputTokens: snapshot.outputTokens,
-					cacheReadTokens: snapshot.cacheReadTokens,
-					cacheWriteTokens: snapshot.cacheWriteTokens,
-					overshootTokens: snapshot.overshootTokens,
-					accounting: snapshot.accounting,
-					exhausted: snapshot.chargedTokens > snapshot.workPhaseLimit,
-					hardCap: snapshot.hardCap,
-				},
-			};
-		}
+		const result = await this.runResolvedInternal(normalized, parentActiveTools, options);
 		if (result.status !== "needs_time") await flushSubagentHookObservations(options.hookRuntime);
 		const records = options.hookRuntime?.records;
 		return records && records.length > 0 ? { ...result, hookRecords: Object.freeze([...records]) } : result;
@@ -8465,29 +8289,6 @@ export class NativeSubagentRunner {
 		const attemptDeadline = Date.now() + normalized.timeoutMs;
 		const profile = normalized.profile;
 		const startedAt = Date.now();
-		const tokenBudgetLedger =
-			options.tokenBudgetLedger ??
-			(normalized.execution.maxTotalTokens !== undefined
-				? new TokenBudgetLedger(
-						normalized.execution.maxTotalTokens,
-						options.model
-							? SUBAGENT_HARD_CAP_APIS.has(options.model.api)
-								? "enforced"
-								: "aggregate-soft"
-							: undefined,
-					)
-				: undefined);
-		if (tokenBudgetLedger && options.model) {
-			tokenBudgetLedger.setHardCapMode(
-				SUBAGENT_HARD_CAP_APIS.has(options.model.api) ? "enforced" : "aggregate-soft",
-			);
-		}
-		const tokenDiagnostics: SubagentDiagnostic[] = [];
-		let tokenWorkExhausted = false;
-		const emittedTokenBudgetPhases = new Set<SubagentTokenBudgetTracePhase>();
-		/** Tool calls denied by the token gate; their lifecycle events are suppressed. */
-		const tokenDeniedToolCallIds = new Set<string>();
-		let tokenUsageReconciler: SessionUsageReconciler | undefined;
 		const base = {
 			runId,
 			parentSessionId: normalized.parentSessionId,
@@ -8545,6 +8346,7 @@ export class NativeSubagentRunner {
 		let retainedChildTools: readonly string[] = [];
 		let liveControl: IceAgentViewLiveSessionControl | undefined;
 		let childToolFailed = false;
+		const runDiagnostics: SubagentDiagnostic[] = [];
 		let reportOnly = false;
 		let authorityRevoked = false;
 		let lastProgressAt = 0;
@@ -8655,19 +8457,11 @@ export class NativeSubagentRunner {
 				this.supervisorOwners.delete(runId);
 				this.followUpRequests.delete(runId);
 				if (childSession) {
-					try {
-						tokenUsageReconciler?.finalize(childSession.getSessionStats());
-					} catch {
-						// Terminal usage reconciliation is best effort; observed message usage remains charged.
-						tokenBudgetLedger?.settle();
-					}
-					// Completed executions retain the exact session for reuse; other terminal states are released.
-					// The resume claim ends here; the retention below republishes exactly one handle.
+					// Every terminal child with a session remains inspectable and deletable. Only verified
+					// completions are reusable; failed, cancelled, and timed-out children are history-only.
+					// The resume claim ends here; retention republishes exactly one handle.
 					if (options.resume) this.activeResumeClaims.delete(options.resume.resumedFromRunId);
-					// Strict completed-only retention: only a verified completion is retained. A failed
-					// or cancelled terminal child is released rather than kept as a non-reusable handle,
-					// so the retained registry never holds an entry that resumeRuntime must reject.
-					const keepRetained = isReusableTerminalStatus(terminalStatus);
+					const keepRetained = terminalStatus !== undefined;
 					if (keepRetained) {
 						await this.retainTerminalChild({
 							runId,
@@ -8698,7 +8492,6 @@ export class NativeSubagentRunner {
 			path?: string,
 			toolCallId?: string,
 			attention?: SubagentRuntimeAttention,
-			tokenBudgetPhase?: SubagentTokenBudgetTracePhase,
 			compaction?: {
 				reason: SubagentCompactionReason;
 				status: SubagentCompactionStatus;
@@ -8724,7 +8517,6 @@ export class NativeSubagentRunner {
 				...(toolCallId ? { toolCallId } : {}),
 				...(safePath ? { path: safePath } : {}),
 				...(attention ? { attention } : {}),
-				...(tokenBudgetPhase ? { tokenBudgetPhase } : {}),
 				...(compaction
 					? {
 							compactionReason: compaction.reason,
@@ -8771,17 +8563,6 @@ export class NativeSubagentRunner {
 			if (!childSession) return undefined;
 			try {
 				const stats = childSession.getSessionStats();
-				if (tokenUsageReconciler) {
-					tokenUsageReconciler.reconcile(stats);
-					const snapshot = tokenUsageReconciler.snapshot();
-					return {
-						inputTokens: snapshot.inputTokens,
-						outputTokens: snapshot.outputTokens,
-						cacheReadTokens: snapshot.cacheReadTokens,
-						cacheWriteTokens: snapshot.cacheWriteTokens,
-						cost: snapshot.cost,
-					};
-				}
 				return {
 					inputTokens: stats.tokens.input,
 					outputTokens: stats.tokens.output,
@@ -8793,13 +8574,7 @@ export class NativeSubagentRunner {
 				return undefined;
 			}
 		};
-		const emitTokenBudgetEvent = (phase: SubagentTokenBudgetTracePhase): void => {
-			if (emittedTokenBudgetPhases.has(phase)) return;
-			emittedTokenBudgetPhases.add(phase);
-			emit("subagent_token_budget", "running", undefined, undefined, undefined, undefined, phase);
-		};
 		emit("subagent_created", "created");
-		if (tokenBudgetLedger) emitTokenBudgetEvent("resolved");
 
 		const activeToolActivities = new Map<string, SubagentToolActivityDigest>();
 		const touchedPaths = new Set<string>();
@@ -8850,79 +8625,19 @@ export class NativeSubagentRunner {
 		};
 		let terminalHookObserved = false;
 		let observeTerminalHook: (result?: SubagentResult) => Promise<void> = async () => {};
-		const tokenBudgetSummary = (): SubagentTokenBudgetSummary | undefined => {
-			const snapshot = tokenBudgetLedger?.snapshot();
-			if (!snapshot) return undefined;
-			return {
-				maxTotalTokens: snapshot.maxTotalTokens,
-				workPhaseLimit: snapshot.workPhaseLimit,
-				reportReserveTokens: snapshot.reportReserveTokens,
-				chargedTokens: snapshot.chargedTokens,
-				remainingTokens: snapshot.remainingTokens,
-				inputTokens: snapshot.inputTokens,
-				outputTokens: snapshot.outputTokens,
-				cacheReadTokens: snapshot.cacheReadTokens,
-				cacheWriteTokens: snapshot.cacheWriteTokens,
-				overshootTokens: snapshot.overshootTokens,
-				accounting: snapshot.accounting,
-				exhausted: tokenWorkExhausted || snapshot.chargedTokens > snapshot.workPhaseLimit,
-				hardCap: snapshot.hardCap,
-			};
-		};
 		const decorateSubagentResult = (result: SubagentResult): SubagentResult => {
-			if (result.status !== "needs_time") {
-				if (tokenUsageReconciler && childSession) {
-					try {
-						tokenUsageReconciler.reconcile(childSession.getSessionStats());
-					} catch {
-						if (!tokenDiagnostics.some((entry) => entry.code === "token_usage_invalid"))
-							tokenDiagnostics.push({
-								code: "token_usage_invalid",
-								message: "Terminal session token statistics could not be reconciled.",
-							});
-					}
-				} else if (!(options.tokenBudgetLedger && result.retrySafeStartup === true)) {
-					tokenBudgetLedger?.settle();
-				}
-			}
+			const usage = observeUsage();
 			const hookRecords = options.hookRuntime ? Object.freeze(options.hookRuntime.records.slice()) : undefined;
-			const budget = tokenBudgetLedger?.snapshot();
-			const reconciledUsage =
-				budget && tokenUsageReconciler
-					? {
-							inputTokens: budget.inputTokens,
-							outputTokens: budget.outputTokens,
-							cacheReadTokens: budget.cacheReadTokens,
-							cacheWriteTokens: budget.cacheWriteTokens,
-							cost: budget.cost,
-						}
-					: undefined;
-			const budgetSummary = tokenBudgetSummary();
 			return {
 				...result,
-				...(reconciledUsage ? { usage: reconciledUsage } : {}),
+				diagnostics: [
+					...result.diagnostics,
+					...runDiagnostics.filter(
+						(diagnostic) => !result.diagnostics.some((entry) => entry.message === diagnostic.message),
+					),
+				],
+				...(usage ? { usage } : {}),
 				observedTurns,
-				...(budgetSummary ? { budget: budgetSummary } : {}),
-				...(budgetSummary?.exhausted &&
-				!result.diagnostics.some((entry) => entry.code === "token_budget_exhausted") &&
-				!tokenDiagnostics.some((entry) => entry.code === "token_budget_exhausted")
-					? {
-							diagnostics: [
-								...result.diagnostics,
-								{ code: "token_budget_exhausted", message: "Token work budget exhausted." },
-							],
-						}
-					: {}),
-				...(tokenDiagnostics.length > 0
-					? {
-							diagnostics: [
-								...result.diagnostics,
-								...tokenDiagnostics.filter(
-									(entry) => !result.diagnostics.some((item) => item.code === entry.code),
-								),
-							],
-						}
-					: {}),
 				...(hookRecords && hookRecords.length > 0 ? { hookRecords } : {}),
 			};
 		};
@@ -8940,18 +8655,6 @@ export class NativeSubagentRunner {
 			);
 			policyBox.current = {
 				beforeTool: async (toolName, toolCallId, params, signal) => {
-					if (tokenBudgetLedger && tokenBudgetLedger.phase !== "work") {
-						emitTokenBudgetEvent("tool_denied");
-						if (!tokenDiagnostics.some((entry) => entry.code === "token_budget_exhausted"))
-							tokenDiagnostics.push({
-								code: "token_budget_exhausted",
-								message: "Child tool denied after the token work budget was exhausted.",
-							});
-						throw new SubagentError(
-							"token_budget_exhausted",
-							"Child tool denied after the token work budget was exhausted.",
-						);
-					}
 					if (reportOnly)
 						throw new SubagentError("capability_denied", "Report finalization cannot execute tools.");
 					if (options.isAuthorityStillValid && !(await options.isAuthorityStillValid())) {
@@ -8974,10 +8677,8 @@ export class NativeSubagentRunner {
 				},
 				reserveToolCall,
 				settleToolCall: (executed, toolCallId) => settleToolReservation(executed, toolCallId),
-				tokenBudgetLedger,
 				reportOnly: () => reportOnly,
 				shouldStopAfterTurn: async () => {
-					if (tokenBudgetLedger?.phase === "exhausted") return true;
 					if (options.isAuthorityStillValid && !(await options.isAuthorityStillValid())) {
 						authorityRevoked = true;
 						return true;
@@ -9045,21 +8746,7 @@ export class NativeSubagentRunner {
 			const created = startup.value;
 			childSession = created.session;
 			retainedChildTools = created.tools;
-			if (created.diagnostics) tokenDiagnostics.push(...created.diagnostics);
-			if (tokenBudgetLedger && childSession.model) {
-				tokenBudgetLedger.setHardCapMode(
-					SUBAGENT_HARD_CAP_APIS.has(childSession.model.api) ? "enforced" : "aggregate-soft",
-				);
-			}
-			if (tokenBudgetLedger) {
-				let baselineStats: ReturnType<typeof childSession.getSessionStats> | undefined;
-				try {
-					baselineStats = childSession.getSessionStats();
-				} catch {
-					baselineStats = undefined;
-				}
-				tokenUsageReconciler = new SessionUsageReconciler(tokenBudgetLedger, baselineStats);
-			}
+			if (created.diagnostics) runDiagnostics.push(...created.diagnostics);
 			presentation = normalizeIceAgentViewPresentation({
 				delegatedTask: normalized.task,
 				scopeLabels: normalized.scope.roots.map((root) => relative(normalized.cwd, root) || "."),
@@ -9089,7 +8776,7 @@ export class NativeSubagentRunner {
 						...(diagnostic ? { diagnostic } : {}),
 					});
 					updatePresentation({ retry: retryState });
-					emit("subagent_retry", "running", undefined, undefined, undefined, undefined, undefined, undefined, retryState);
+					emit("subagent_retry", "running", undefined, undefined, undefined, undefined, undefined, retryState);
 					return;
 				}
 				if (event.type === "auto_retry_end") {
@@ -9104,65 +8791,15 @@ export class NativeSubagentRunner {
 						...(diagnostic ? { diagnostic } : {}),
 					});
 					updatePresentation({ retry: retryState });
-					emit("subagent_retry", "running", undefined, undefined, undefined, undefined, undefined, undefined, retryState);
+					emit("subagent_retry", "running", undefined, undefined, undefined, undefined, undefined, retryState);
 					return;
 				}
-				if (event.type === "message_end" && event.message.role === "assistant" && tokenUsageReconciler) {
-					const assistant = event.message as AssistantMessage;
-					const estimate = estimateSubagentRequestTokens(childSession!.messages, assistant);
-					const rawUsage = assistant.usage as unknown;
-					const rawRecord = isRecord(rawUsage) ? rawUsage : undefined;
-					let validUsage =
-						rawRecord !== undefined &&
-						["input", "output", "cacheRead", "cacheWrite"].every((key) => {
-							const value = rawRecord[key];
-							return typeof value === "number" && Number.isFinite(value) && value >= 0;
-						});
-					if (rawRecord && validUsage) {
-						const rawCost = rawRecord.cost;
-						validUsage =
-							(isRecord(rawCost) &&
-								typeof rawCost.total === "number" &&
-								Number.isFinite(rawCost.total) &&
-								rawCost.total >= 0) ||
-							(typeof rawCost === "number" && Number.isFinite(rawCost) && rawCost >= 0);
-					}
-					const observed = tokenUsageReconciler.messageEnd(assistant, estimate);
-					if (observed.phase === "exhausted") {
-						tokenWorkExhausted = true;
-						emitTokenBudgetEvent("work_exhausted");
-					}
-					if (observed.accounting === "estimated" || !validUsage) {
-						if (!tokenDiagnostics.some((entry) => entry.code === "token_usage_estimated"))
-							tokenDiagnostics.push({
-								code: "token_usage_estimated",
-								message: "Provider usage was unavailable or invalid; token usage was estimated.",
-							});
-					}
-					if (!validUsage && !tokenDiagnostics.some((entry) => entry.code === "token_usage_invalid"))
-						tokenDiagnostics.push({
-							code: "token_usage_invalid",
-							message: "Provider token usage was invalid and replaced with an estimate.",
-						});
-				} else if (event.type === "turn_start") {
+				if (event.type === "turn_start") {
 					observedTurns += 1;
 				} else if (event.type === "tool_execution_start") {
 					// Reserve at the lifecycle boundary as a fallback for native/session
 					// implementations that emit tool events without using our wrapper.
 					// Wrapped calls deduplicate by toolCallId and settle exactly once.
-					if (tokenBudgetLedger?.phase !== undefined && tokenBudgetLedger.phase !== "work") {
-						tokenDeniedToolCallIds.add(event.toolCallId);
-						emitTokenBudgetEvent("tool_denied");
-						if (!tokenDiagnostics.some((entry) => entry.code === "token_budget_exhausted"))
-							tokenDiagnostics.push({
-								code: "token_budget_exhausted",
-								message:
-									"Tool lifecycle observed after token exhaustion; execution was denied by the adapter gate.",
-							});
-						// The denied call never executed: suppress the normal start/end
-						// lifecycle so denied attempts cannot read as real tool activity.
-						return;
-					}
 					if (budgetExhausted === undefined && !reserveToolCall(event.toolCallId)) {
 						resolveControl?.("tool_budget_exhausted");
 					}
@@ -9185,7 +8822,6 @@ export class NativeSubagentRunner {
 						event.toolCallId,
 					);
 				} else if (event.type === "tool_execution_end") {
-					if (tokenDeniedToolCallIds.has(event.toolCallId)) return;
 					settleToolReservation(true, event.toolCallId);
 					childToolFailed ||= event.isError;
 					const started = activeToolActivities.get(event.toolCallId);
@@ -9217,40 +8853,17 @@ export class NativeSubagentRunner {
 					);
 				} else if (event.type === "compaction_start") {
 					updatePresentation({ compacting: true });
-					emit("subagent_compaction_start", "running", undefined, undefined, undefined, undefined, undefined, {
+					emit("subagent_compaction_start", "running", undefined, undefined, undefined, undefined, {
 						reason: event.reason,
 						status: "started",
 					});
 				} else if (event.type === "compaction_end") {
 					updatePresentation({ compacting: false });
-					emit("subagent_compaction_end", "running", undefined, undefined, undefined, undefined, undefined, {
+					emit("subagent_compaction_end", "running", undefined, undefined, undefined, undefined, {
 						reason: event.reason,
 						status: event.aborted ? "aborted" : event.result ? "completed" : "failed",
 						willRetry: event.willRetry,
 					});
-					if (tokenUsageReconciler) {
-						try {
-							tokenUsageReconciler.reconcile(childSession!.getSessionStats());
-						} catch {
-							if (!tokenDiagnostics.some((entry) => entry.code === "token_usage_invalid"))
-								tokenDiagnostics.push({
-									code: "token_usage_invalid",
-									message: "Session token statistics could not be reconciled.",
-								});
-						}
-					}
-				} else if (event.type === "turn_end") {
-					if (tokenUsageReconciler) {
-						try {
-							tokenUsageReconciler.reconcile(childSession!.getSessionStats());
-						} catch {
-							if (!tokenDiagnostics.some((entry) => entry.code === "token_usage_invalid"))
-								tokenDiagnostics.push({
-									code: "token_usage_invalid",
-									message: "Session token statistics could not be reconciled.",
-								});
-						}
-					}
 				} else if (event.type === "message_update") {
 					const outputBytes = Buffer.byteLength(extractAssistantText(childSession?.messages ?? []));
 					observedOutputBytes = outputBytes;
@@ -9692,46 +9305,6 @@ export class NativeSubagentRunner {
 				return Promise.race(races);
 			};
 
-			let runTokenFinalization: () => Promise<SubagentResult>;
-			let tokenFinalizationAttempted = false;
-			const tokenFallbackResult = (reason: string, finalizationUnavailable = false): SubagentResult => {
-				tokenWorkExhausted = true;
-				if (finalizationUnavailable) emitTokenBudgetEvent("finalization_unavailable");
-				if (
-					finalizationUnavailable &&
-					!tokenDiagnostics.some((entry) => entry.code === "token_finalization_unavailable")
-				)
-					tokenDiagnostics.push({
-						code: "token_finalization_unavailable",
-						message: "No bounded token finalization result was available; parent-side fallback was returned.",
-					});
-				if (!tokenDiagnostics.some((entry) => entry.code === "token_budget_exhausted"))
-					tokenDiagnostics.push({ code: "token_budget_exhausted", message: reason });
-				const usage = observeUsage();
-				tokenBudgetLedger?.settle();
-				updatePresentation({
-					finalizationStarted: false,
-					protocolReportPending: false,
-					finalResult: { status: "failed", diagnostic: reason },
-				});
-				emit("subagent_failed", "failed");
-				const partial = truncateSubagentOutput(observeAssistantText(), normalized.maxOutputBytes);
-				return {
-					...base,
-					childSessionId: childSession?.sessionId,
-					status: "failed",
-					summary: partial.text || reason,
-					observedOutputBytes,
-					partial: true,
-					workArtifact: buildWorkArtifact({ status: "missing", diagnostic: reason }, { terminal: true }),
-					diagnostics:
-						tokenDiagnostics.length > 0
-							? [...tokenDiagnostics]
-							: [{ code: "token_budget_exhausted", message: reason }],
-					...(usage ? { usage } : {}),
-				};
-			};
-
 			let runContinuation: () => Promise<SubagentResult>;
 			let runAfterInitial: (reportStartIndex: number) => Promise<SubagentResult>;
 			let runWrapUp: () => Promise<SubagentResult>;
@@ -9762,7 +9335,6 @@ export class NativeSubagentRunner {
 					}
 				}
 				const usage = observeUsage();
-				const budgetSummary = tokenBudgetSummary();
 				const candidateResult: SubagentResult = {
 					...base,
 					childSessionId: childSession!.sessionId,
@@ -9780,7 +9352,6 @@ export class NativeSubagentRunner {
 					...(report.payload ? { payload: report.payload } : {}),
 					observedTurns,
 					...(usage ? { usage } : {}),
-					...(budgetSummary ? { budget: budgetSummary } : {}),
 				};
 				let serializedResultBytes: number;
 				try {
@@ -9909,7 +9480,6 @@ export class NativeSubagentRunner {
 				}
 				const answer = truncateSubagentOutput(rawAnswer, normalized.maxOutputBytes);
 				const usage = observeUsage();
-				const budgetSummary = tokenBudgetSummary();
 				const candidateResult: SubagentResult = {
 					...base,
 					childSessionId: childSession!.sessionId,
@@ -9927,7 +9497,6 @@ export class NativeSubagentRunner {
 					workArtifact: buildWorkArtifact({ status: "plain" }, { terminal: true }),
 					observedTurns,
 					...(usage ? { usage } : {}),
-					...(budgetSummary ? { budget: budgetSummary } : {}),
 				};
 				const completedResult: SubagentResult = candidateResult;
 				try {
@@ -9978,144 +9547,6 @@ export class NativeSubagentRunner {
 					verification.verified ? "completed" : "verification_failed",
 				);
 				return annotatedResult;
-			};
-			runTokenFinalization = async (): Promise<SubagentResult> => {
-				if (!tokenBudgetLedger) throw new Error("Token finalization requested without a token ledger.");
-				if (tokenFinalizationAttempted) {
-					return tokenFallbackResult("Token budget finalization was already attempted.", true);
-				}
-				tokenFinalizationAttempted = true;
-				// The plan forbids spending another model request when the route cannot
-				// honor a hard per-request output authority: such routes always take the
-				// deterministic parent-side terminal fallback instead of the finalizer.
-				if (tokenBudgetLedger.snapshot().hardCap !== "enforced") {
-					tokenWorkExhausted = true;
-					return tokenFallbackResult(
-						"The active provider route cannot honor a hard output authority, so no bounded finalization request was issued.",
-						true,
-					);
-				}
-				if (tokenBudgetLedger.phase === "work") tokenBudgetLedger.markExhausted();
-				tokenWorkExhausted = true;
-				if (!tokenBudgetLedger.enterFinalizing())
-					return tokenFallbackResult("Token work budget was exhausted.", true);
-				emitTokenBudgetEvent("finalizing");
-				// Reconcile immediately before spending reserve authority. This captures
-				// compaction/internal usage that may have landed after the work turn.
-				try {
-					tokenUsageReconciler?.reconcile(childSession!.getSessionStats());
-				} catch {
-					if (!tokenDiagnostics.some((entry) => entry.code === "token_usage_invalid"))
-						tokenDiagnostics.push({
-							code: "token_usage_invalid",
-							message: "Session token statistics could not be reconciled before finalization.",
-						});
-				}
-				const inputEstimate = estimateSubagentRequestTokens([
-					...childSession!.messages,
-					{
-						role: "user" as const,
-						content: structuredReportMode ? INTERACTIVE_FINAL_REPORT_PROMPT : INTERACTIVE_PLAIN_FINAL_PROMPT,
-						timestamp: Date.now(),
-					},
-				]).inputTokens;
-				if (!tokenBudgetLedger.canStartFinalization(inputEstimate, 1_024)) {
-					tokenDiagnostics.push({
-						code: "token_finalization_unavailable",
-						message:
-							"The reserved token finalization capacity was unavailable; no additional model call was issued.",
-					});
-					return tokenFallbackResult(
-						"Token budget exhausted and the reserved finalization capacity was unavailable.",
-						true,
-					);
-				}
-				reportOnly = true;
-				supervisor?.setPhase("finalization");
-				try {
-					childSession!.setActiveToolsByName([]);
-				} catch {
-					// beforeTool remains an independent deny gate.
-				}
-				const reportStartIndex = childSession!.messages.length;
-				updatePresentation({
-					finalizationStarted: true,
-					finalizationMessageIndex: reportStartIndex,
-					...(structuredReportMode ? { protocolReportPending: true } : {}),
-				});
-				const turnsBefore = observedTurns;
-				const outcome = await awaitPrompt(
-					Promise.resolve().then(() =>
-						childSession!.prompt(
-							structuredReportMode ? INTERACTIVE_FINAL_REPORT_PROMPT : INTERACTIVE_PLAIN_FINAL_PROMPT,
-							{
-								expandPromptTemplates: false,
-								source: "extension",
-							},
-						),
-					),
-				);
-				if (observedTurns === turnsBefore) observedTurns += 1;
-				if (outcome.kind === "needs_time") return retainForExtension(runTokenFinalization);
-				if (
-					outcome.kind === "cancelled" ||
-					outcome.kind === "timed_out" ||
-					outcome.kind === "output_truncated" ||
-					outcome.kind === "tool_budget_exhausted"
-				) {
-					return controlledFailure(outcome.kind);
-				}
-				if (outcome.kind === "error") return tokenFallbackResult("Token budget finalization request failed.", true);
-				const rawReport = extractAssistantText(childSession!.messages, reportStartIndex);
-				const finalAssistant = [...childSession!.messages.slice(reportStartIndex)]
-					.reverse()
-					.find((message) => message.role === "assistant") as AssistantMessage | undefined;
-				if (!finalAssistant)
-					return tokenFallbackResult("Token budget finalization returned no assistant report.", true);
-				if (!structuredReportMode) {
-					if (rawReport.trim().length === 0)
-						return tokenFallbackResult("Token budget finalization returned no nonempty assistant answer.", true);
-					const finalResult = await completeFromPlainFinalTurn(reportStartIndex);
-					tokenBudgetLedger.settle();
-					return finalResult;
-				}
-				const parsed = parseSubagentReportOutcome(rawReport, normalized.maxOutputBytes, normalized.outputSchema);
-				if (parsed.kind !== "valid")
-					return tokenFallbackResult("Token budget finalization returned an invalid report.", true);
-				const finalResult = await completeFromParsedReport(parsed.report, finalAssistant, rawReport);
-				tokenBudgetLedger.settle();
-				return finalResult;
-			};
-			const ensureTokenWorkCapacity = async (pendingPrompt?: string): Promise<SubagentResult | undefined> => {
-				if (!tokenBudgetLedger || !tokenUsageReconciler || !childSession) return undefined;
-				try {
-					tokenUsageReconciler.reconcile(childSession.getSessionStats());
-				} catch {
-					if (!tokenDiagnostics.some((entry) => entry.code === "token_usage_invalid"))
-						tokenDiagnostics.push({
-							code: "token_usage_invalid",
-							message: "Session token statistics could not be reconciled.",
-						});
-				}
-				const inputEstimate =
-					estimateSubagentRequestTokens(
-						pendingPrompt
-							? [
-									...childSession.messages,
-									{ role: "user" as const, content: pendingPrompt, timestamp: Date.now() },
-								]
-							: childSession.messages,
-					).inputTokens ?? 0;
-				const snapshot = tokenBudgetLedger.snapshot();
-				if (
-					tokenBudgetLedger.canStartWork(inputEstimate) &&
-					snapshot.chargedTokens + inputEstimate + 1_024 <= snapshot.workPhaseLimit
-				)
-					return undefined;
-				tokenBudgetLedger.markExhausted();
-				tokenWorkExhausted = true;
-				emitTokenBudgetEvent("work_exhausted");
-				return runTokenFinalization();
 			};
 			/**
 			 * A malformed/truncated/missing final envelope after real work becomes a
@@ -10216,10 +9647,6 @@ export class NativeSubagentRunner {
 				reportStartIndex: number,
 				preserved: SubagentResult,
 			): Promise<SubagentResult> => {
-				if (tokenBudgetLedger && tokenBudgetLedger.phase !== "work") {
-					tokenWorkExhausted = true;
-					return runTokenFinalization();
-				}
 				const session = childSession!;
 				const previousTools = (() => {
 					try {
@@ -10310,10 +9737,6 @@ export class NativeSubagentRunner {
 					(diagnostic) => diagnostic.code === "report_protocol_failure",
 				);
 				if (!protocolFailed || reportRepairAttempted) return parsed;
-				if (tokenBudgetLedger && tokenBudgetLedger.phase !== "work") {
-					tokenWorkExhausted = true;
-					return runTokenFinalization();
-				}
 				reportRepairAttempted = true;
 				return attemptReportRepair(reportStartIndex, parsed);
 			};
@@ -10406,9 +9829,6 @@ export class NativeSubagentRunner {
 				if (budgetExhausted === "tool-calls") {
 					return controlledFailure("tool_budget_exhausted");
 				}
-				if (tokenBudgetLedger?.phase === "exhausted" || tokenBudgetLedger?.phase === "finalizing") {
-					return runTokenFinalization();
-				}
 				if (liveControl && (liveControl.isControlled() || liveControl.hasSteered())) {
 					if (liveControl.isControlled()) supervisor?.pauseForControlledWait();
 					for (const waitPromise of [
@@ -10423,10 +9843,6 @@ export class NativeSubagentRunner {
 					supervisor?.resumeFromControlledWait();
 				}
 				if (wrapUpRequested && !wrapUpPromptStarted) return runWrapUp();
-				const tokenBoundary = await ensureTokenWorkCapacity(
-					structuredReportMode ? INTERACTIVE_FINAL_REPORT_PROMPT : INTERACTIVE_PLAIN_FINAL_PROMPT,
-				);
-				if (tokenBoundary) return tokenBoundary;
 				if (liveControl?.hasSteered()) {
 					if (liveControl.getState() === "working") {
 						if (!liveControl.beginFinalization() || !liveControl.requestFinalReport()) {
@@ -10457,8 +9873,6 @@ export class NativeSubagentRunner {
 				const continuationPrompt = structuredReportMode
 					? SUBAGENT_EXTENSION_PROMPT
 					: SUBAGENT_EXTENSION_PROMPT_PLAIN;
-				const tokenBoundary = await ensureTokenWorkCapacity(continuationPrompt);
-				if (tokenBoundary) return tokenBoundary;
 				const turnLimit = chargeTurn("continuation prompt");
 				if (turnLimit) return turnLimit;
 				const turnsBefore = observedTurns;
@@ -10515,8 +9929,6 @@ export class NativeSubagentRunner {
 						),
 					);
 				}
-				const tokenBoundary = await ensureTokenWorkCapacity(created.prompt);
-				if (tokenBoundary) return tokenBoundary;
 				const turnLimit = chargeTurn("initial prompt");
 				if (turnLimit) return turnLimit;
 				const turnsBefore = observedTurns;
@@ -10634,8 +10046,6 @@ export interface SubagentRecoveryHooks {
 	getStopReason?: () => SubagentRecoveryStopReason | undefined;
 	beforeAttempt?: (attempt: SubagentAttemptNumber, request: NormalizedSubagentRequest) => boolean;
 	afterAttempt?: (attempt: SubagentAttemptNumber, result: SubagentResult) => void;
-	tokenBudgetLedger?: TokenBudgetLedger;
-	hardCap?: "enforced" | "aggregate-soft";
 }
 
 export async function runSubagentWithRecovery(
@@ -10645,52 +10055,22 @@ export async function runSubagentWithRecovery(
 		attempt: SubagentAttemptNumber,
 		request: NormalizedSubagentRequest,
 		activeTools: readonly string[],
-		tokenBudgetLedger?: TokenBudgetLedger,
 	) => Promise<SubagentResult>,
 	hooks: SubagentRecoveryHooks = {},
 ): Promise<SubagentResult> {
 	const attempts: SubagentAttemptSummary[] = [];
-	const tokenBudgetLedger =
-		hooks.tokenBudgetLedger ??
-		(normalized.execution.maxTotalTokens !== undefined
-			? new TokenBudgetLedger(normalized.execution.maxTotalTokens, hooks.hardCap)
-			: undefined);
 	const aggregate = batchUsage();
 	let hasUsage = false;
-	let tokenWorkExhausted = false;
 	let totalObservedOutputBytes = 0;
 	let totalTurns = 0;
 	const deadline = Date.now() + normalized.timeoutMs;
 	let currentRequest = normalized;
 
 	const finalize = (result: SubagentResult): SubagentResult => {
-		if (result.status !== "needs_time") tokenBudgetLedger?.settle();
 		return {
 			...result,
 			...(normalized.scope.targets?.length ? { scopeTargets: [...normalized.scope.targets] } : {}),
 			...(hasUsage ? { usage: aggregate } : {}),
-			...(tokenBudgetLedger
-				? {
-						budget: (() => {
-							const snapshot = tokenBudgetLedger.snapshot();
-							return {
-								maxTotalTokens: snapshot.maxTotalTokens,
-								workPhaseLimit: snapshot.workPhaseLimit,
-								reportReserveTokens: snapshot.reportReserveTokens,
-								chargedTokens: snapshot.chargedTokens,
-								remainingTokens: snapshot.remainingTokens,
-								inputTokens: snapshot.inputTokens,
-								outputTokens: snapshot.outputTokens,
-								cacheReadTokens: snapshot.cacheReadTokens,
-								cacheWriteTokens: snapshot.cacheWriteTokens,
-								overshootTokens: snapshot.overshootTokens,
-								accounting: snapshot.accounting,
-								exhausted: tokenWorkExhausted || snapshot.chargedTokens > snapshot.workPhaseLimit,
-								hardCap: snapshot.hardCap,
-							};
-						})(),
-					}
-				: {}),
 			observedTurns: totalTurns,
 			...(currentRequest.modelCandidateSkips ? { modelCandidateSkips: currentRequest.modelCandidateSkips } : {}),
 			recovery: Object.freeze({
@@ -10759,7 +10139,10 @@ export async function runSubagentWithRecovery(
 				if (remainingTime <= 0) return finalize(stoppedResult("timed_out"));
 				const remainingOutput = normalized.maxOutputBytes - totalObservedOutputBytes;
 				if (remainingOutput < 1024 || totalTurns >= normalized.execution.maxTurns)
-					throw new SubagentError("batch_budget_exhausted", "No aggregate budget remains for startup recovery.");
+					throw new SubagentError(
+						"batch_budget_exhausted",
+						"No bounded output or turn capacity remains for startup recovery.",
+					);
 				currentRequest = {
 					...normalized,
 					timeoutMs: remainingTime,
@@ -10773,10 +10156,7 @@ export async function runSubagentWithRecovery(
 				if (normalized.resolveStartupFallback)
 					currentRequest.retryModel = normalized.resolveStartupFallback(currentRequest);
 			}
-			if (tokenBudgetLedger && !tokenBudgetLedger.canStartWork(0)) {
-				throw new SubagentError("token_budget_exhausted", "No token capacity remains for startup recovery.");
-			}
-			result = await runAttempt(attempt, currentRequest, parentActiveTools, tokenBudgetLedger);
+			result = await runAttempt(attempt, currentRequest, parentActiveTools);
 		} catch (error) {
 			const failure = classifySubagentFailure(error, "runtime");
 			result = {
@@ -10813,21 +10193,9 @@ export async function runSubagentWithRecovery(
 		totalObservedOutputBytes += result.observedOutputBytes;
 		totalTurns += result.observedTurns ?? 0;
 		hooks.afterAttempt?.(attempt, result);
-		if (result.budget?.exhausted) tokenWorkExhausted = true;
 		if (result.usage) {
 			addBatchUsage(aggregate, result.usage);
 			hasUsage = true;
-			if (tokenBudgetLedger && !result.budget) {
-				tokenBudgetLedger.charge(
-					normalizeTokenUsage(undefined, {
-						inputTokens: result.usage.inputTokens,
-						outputTokens: result.usage.outputTokens,
-						cacheReadTokens: result.usage.cacheReadTokens,
-						cacheWriteTokens: result.usage.cacheWriteTokens,
-						cost: result.usage.cost,
-					}),
-				);
-			}
 		}
 		const stoppedAfterAttempt = hooks.getStopReason?.();
 		if (stoppedAfterAttempt)
@@ -10885,7 +10253,6 @@ export function createSubagentLaunchProvenance(
 				maxTurns: request.iceContract.sources.maxTurns,
 				maxToolCalls: request.iceContract.sources.maxToolCalls,
 				maxOutputBytes: request.iceContract.sources.maxOutputBytes,
-				maxTotalTokens: request.iceContract.sources.maxTotalTokens,
 				temperature: request.iceContract.sources.temperature,
 				topP: request.iceContract.sources.topP,
 			},
@@ -10907,10 +10274,15 @@ export function createSubagentLaunchProvenance(
 interface ResolvedBatchConfiguration {
 	concurrency: number;
 	totalBudgetBytes: number;
-	totalTokenBudget?: number;
 }
 
 function resolveBatchConfiguration(options: SubagentBatchRunOptions): ResolvedBatchConfiguration {
+	if (Object.hasOwn(options, "totalTokenBudget")) {
+		throw new SubagentError(
+			"malformed_result",
+			'"totalTokenBudget" was removed; use per-task maxTurns/maxToolCalls/timeoutMs/maxOutputBytes',
+		);
+	}
 	const maxAllowed = options.concurrencyPolicy?.maxConcurrency ?? SUBAGENT_BATCH_LIMITS.maxConcurrency;
 	const defaultConcurrency = options.concurrencyPolicy?.defaultConcurrency ?? SUBAGENT_BATCH_LIMITS.defaultConcurrency;
 	const concurrency = options.concurrency ?? defaultConcurrency;
@@ -10925,22 +10297,10 @@ function resolveBatchConfiguration(options: SubagentBatchRunOptions): ResolvedBa
 	) {
 		throw new SubagentError("malformed_result", "Batch budget is outside the bounded output budget.");
 	}
-	if (
-		options.totalTokenBudget !== undefined &&
-		(!Number.isSafeInteger(options.totalTokenBudget) ||
-			options.totalTokenBudget < SUBAGENT_BATCH_LIMITS.minTokenBudget ||
-			options.totalTokenBudget > SUBAGENT_BATCH_LIMITS.maxTokenBudget)
-	) {
-		throw new SubagentError("malformed_result", "Batch token budget is outside the bounded token budget.");
-	}
 	if (options.timeoutMs !== undefined && (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0)) {
 		throw new SubagentError("malformed_result", "Batch timeout must be a positive finite number.");
 	}
-	return {
-		concurrency,
-		totalBudgetBytes,
-		...(options.totalTokenBudget !== undefined ? { totalTokenBudget: options.totalTokenBudget } : {}),
-	};
+	return { concurrency, totalBudgetBytes };
 }
 
 function preflightModel(task: ResolvedSubagentBatchTask): SubagentLaunchPreflightTask["model"] {
@@ -10977,30 +10337,14 @@ export function buildSubagentLaunchPreflight(
 	options: SubagentBatchRunOptions & { batchId?: string } = {},
 ): SubagentLaunchPreflight {
 	validateResolvedBatchTasks(tasks);
-	const { concurrency, totalBudgetBytes, totalTokenBudget } = resolveBatchConfiguration(options);
+	const { concurrency, totalBudgetBytes } = resolveBatchConfiguration(options);
 	let reservedOutputBytes = 0;
-	let reservedTokenBudget = 0;
 	const preflightTasks = tasks.map((task) => {
 		if (!Number.isInteger(task.request.maxOutputBytes) || task.request.maxOutputBytes <= 0) {
 			throw new SubagentError("malformed_result", `Invalid output reservation for task ${task.id}.`);
 		}
 		if (task.request.maxOutputBytes > totalBudgetBytes) {
 			throw new SubagentError("batch_budget_exhausted", `Batch budget cannot reserve task ${task.id}.`);
-		}
-		if (totalTokenBudget !== undefined) {
-			if (task.request.execution.maxTotalTokens === undefined) {
-				throw new SubagentError(
-					"batch_token_budget_exhausted",
-					`Batch token budgeting requires task ${task.id} to resolve maxTotalTokens.`,
-				);
-			}
-			if (task.request.execution.maxTotalTokens > totalTokenBudget) {
-				throw new SubagentError(
-					"batch_token_budget_exhausted",
-					`Batch token budget cannot reserve task ${task.id}.`,
-				);
-			}
-			reservedTokenBudget += task.request.execution.maxTotalTokens;
 		}
 		revalidateSubagentProfile(task.request.profile);
 		revalidateSubagentResources(task.request.resources);
@@ -11042,9 +10386,6 @@ export function buildSubagentLaunchPreflight(
 				maxTurns: task.request.execution.maxTurns,
 				maxToolCalls: task.request.execution.maxToolCalls,
 				maxOutputBytes: task.request.execution.maxOutputBytes,
-				...(task.request.execution.maxTotalTokens !== undefined
-					? { maxTotalTokens: task.request.execution.maxTotalTokens }
-					: {}),
 				...(task.request.execution.temperature !== undefined
 					? { temperature: task.request.execution.temperature }
 					: {}),
@@ -11112,15 +10453,6 @@ export function buildSubagentLaunchPreflight(
 			totalOutputBytes: totalBudgetBytes,
 			reservedOutputBytes,
 			maxPotentialOutputBytes: reservedOutputBytes * 2,
-			...(totalTokenBudget !== undefined
-				? {
-						tokens: {
-							total: totalTokenBudget,
-							reserved: reservedTokenBudget,
-							maxPotential: reservedTokenBudget,
-						},
-					}
-				: {}),
 		},
 		recovery: options.unsafeHostExec
 			? { maxAttempts: 1, sameModel: true, retryableFailures: [] }
@@ -11141,9 +10473,6 @@ export function formatSubagentLaunchDigest(preflight: SubagentLaunchPreflight, m
 		`Launch preflight: ${preflight.taskCount} tasks`,
 		`concurrency: ${preflight.concurrency}`,
 		`output budget: ${preflight.budget.reservedOutputBytes}/${preflight.budget.totalOutputBytes} bytes reserved (max potential ${preflight.budget.maxPotentialOutputBytes})`,
-		preflight.budget.tokens
-			? `token budget: ${preflight.budget.tokens.reserved}/${preflight.budget.tokens.total} tokens reserved (max potential ${preflight.budget.tokens.maxPotential})`
-			: undefined,
 		`recovery: maxAttempts=${preflight.recovery.maxAttempts} sameModel=${preflight.recovery.sameModel} retryable=${preflight.recovery.retryableFailures.join(",")}`,
 		...preflight.tasks.flatMap((task) => {
 			const model = task.model.resolved ?? "unresolved";
@@ -11167,9 +10496,7 @@ export function formatSubagentLaunchDigest(preflight: SubagentLaunchPreflight, m
 					? `  targets: ${task.scopeTargets.map((target) => relative(task.cwd, target) || ".").join(", ")}`
 					: undefined,
 				`  tools: ${task.tools.join(", ")}`,
-				`  execution: thinking=${task.execution.thinking} timeout=${task.execution.timeoutMs}ms turns=${task.execution.maxTurns} tools=${task.execution.maxToolCalls} output=${task.execution.maxOutputBytes} bytes${
-					task.execution.maxTotalTokens !== undefined ? ` tokens=${task.execution.maxTotalTokens}` : ""
-				}${task.execution.temperature !== undefined ? ` temperature=${task.execution.temperature}` : ""}${
+				`  execution: thinking=${task.execution.thinking} timeout=${task.execution.timeoutMs}ms turns=${task.execution.maxTurns} tools=${task.execution.maxToolCalls} output=${task.execution.maxOutputBytes} bytes${task.execution.temperature !== undefined ? ` temperature=${task.execution.temperature}` : ""}${
 					task.execution.topP !== undefined ? ` topP=${task.execution.topP}` : ""
 				}`,
 				task.outputSchema
@@ -11183,53 +10510,6 @@ export function formatSubagentLaunchDigest(preflight: SubagentLaunchPreflight, m
 		.filter((line): line is string => line !== undefined)
 		.join("\n");
 	return truncateSubagentOutput(redactCredentialText(lines), maxBytes).text;
-}
-
-class SubagentBatchTokenBudgetLedger {
-	private readonly total: number;
-	private reserved = 0;
-	private charged = 0;
-	private released = 0;
-	private overshoot = 0;
-	private accounting: "provider" | "estimated" | "mixed" = "estimated";
-	private hasAccounting = false;
-
-	constructor(total: number) {
-		this.total = total;
-	}
-
-	get remaining(): number {
-		return Math.max(0, this.total - this.reserved - this.charged);
-	}
-
-	reserve(amount: number): boolean {
-		if (amount > this.remaining) return false;
-		this.reserved += amount;
-		return true;
-	}
-
-	reconcile(reservation: number, actual: number, accounting: "provider" | "estimated" | "mixed" = "estimated"): void {
-		this.reserved = Math.max(0, this.reserved - reservation);
-		this.charged += Math.max(0, actual);
-		this.released += Math.max(0, reservation - Math.max(0, actual));
-		this.overshoot += Math.max(0, Math.max(0, actual) - reservation);
-		if (!this.hasAccounting) {
-			this.accounting = accounting;
-			this.hasAccounting = true;
-		} else if (this.accounting !== accounting) this.accounting = "mixed";
-	}
-
-	snapshot(): NonNullable<SubagentBatchBudget["tokens"]> {
-		return {
-			total: this.total,
-			reserved: this.reserved,
-			charged: this.charged,
-			remaining: this.remaining,
-			released: this.released,
-			overshoot: this.overshoot,
-			accounting: this.accounting,
-		};
-	}
 }
 
 class SubagentBatchBudgetLedger {
@@ -11369,9 +10649,6 @@ export async function runResolvedSubagentBatch(
 	const totalBudgetBytes = preflight.budget.totalOutputBytes;
 	const admission = options.admission;
 	const budget = new SubagentBatchBudgetLedger(totalBudgetBytes);
-	const tokenBudget = preflight.budget.tokens
-		? new SubagentBatchTokenBudgetLedger(preflight.budget.tokens.total)
-		: undefined;
 	const controller = new AbortController();
 	const items: Array<SubagentBatchItemResult | undefined> = new Array(tasks.length);
 	const diagnostics: SubagentDiagnostic[] = [];
@@ -11410,10 +10687,7 @@ export async function runResolvedSubagentBatch(
 				preflight,
 				items: completedItems,
 				usage,
-				budget: {
-					...budget.snapshot(),
-					...(tokenBudget ? { tokens: tokenBudget.snapshot() } : {}),
-				},
+				budget: budget.snapshot(),
 				diagnostics,
 			});
 		};
@@ -11467,23 +10741,10 @@ export async function runResolvedSubagentBatch(
 				if (admission && !admission.tryAcquire()) break;
 				const task = tasks[nextIndex]!;
 				const reservation = task.request.maxOutputBytes;
-				const tokenReservation = task.request.execution.maxTotalTokens;
 				if (!budget.reserve(reservation)) {
 					admission?.release();
 					if (active > 0) break;
 					markQueued(nextIndex++, "failed", "batch_budget_exhausted", "Batch budget cannot reserve this task.");
-					continue;
-				}
-				if (tokenBudget && tokenReservation !== undefined && !tokenBudget.reserve(tokenReservation)) {
-					admission?.release();
-					budget.reconcile(reservation, 0);
-					if (active > 0) break;
-					markQueued(
-						nextIndex++,
-						"failed",
-						"batch_token_budget_exhausted",
-						"Batch token budget cannot reserve this task.",
-					);
 					continue;
 				}
 				const index = nextIndex++;
@@ -11501,10 +10762,8 @@ export async function runResolvedSubagentBatch(
 							attempt: 1 | 2,
 							request: NormalizedSubagentRequest,
 							activeTools: readonly string[],
-							tokenBudgetLedger?: TokenBudgetLedger,
 						) =>
 							runner.runResolved(request, activeTools, {
-								tokenBudgetLedger,
 								model: request.retryModel ?? task.model,
 								modelRuntime: options.modelRuntime,
 								settingsManager: options.settingsManager,
@@ -11519,35 +10778,12 @@ export async function runResolvedSubagentBatch(
 								onEvent: (event) => options.onEvent?.({ ...event, taskId: task.id }),
 							});
 						return options.unsafeHostExec
-							? runAttempt(
-									1,
-									task.request,
-									parentActiveTools,
-									tokenReservation !== undefined
-										? new TokenBudgetLedger(
-												tokenReservation,
-												task.model && SUBAGENT_HARD_CAP_APIS.has(task.model.api)
-													? "enforced"
-													: "aggregate-soft",
-											)
-										: undefined,
-								)
+							? runAttempt(1, task.request, parentActiveTools)
 							: runSubagentWithRecovery(task.request, parentActiveTools, runAttempt, {
-									tokenBudgetLedger:
-										tokenReservation !== undefined
-											? new TokenBudgetLedger(
-													tokenReservation,
-													task.model && SUBAGENT_HARD_CAP_APIS.has(task.model.api)
-														? "enforced"
-														: "aggregate-soft",
-												)
-											: undefined,
 									getStopReason: () => {
 										if (stopReason) return stopReason;
 										return failFastTriggered ? "fail_fast" : undefined;
 									},
-									hardCap:
-										task.model && SUBAGENT_HARD_CAP_APIS.has(task.model.api) ? "enforced" : "aggregate-soft",
 									beforeAttempt: (attempt) => attempt === 1 || budget.reserve(reservation),
 									afterAttempt: (_attempt, result) =>
 										budget.reconcile(reservation, result.observedOutputBytes),
@@ -11556,19 +10792,6 @@ export async function runResolvedSubagentBatch(
 					.then(
 						(result) => {
 							if (options.unsafeHostExec) budget.reconcile(reservation, result.observedOutputBytes);
-							if (tokenBudget && tokenReservation !== undefined) {
-								const actual =
-									result.budget?.chargedTokens ??
-									(result.usage
-										? result.usage.inputTokens + result.usage.outputTokens + result.usage.cacheWriteTokens
-										: 0);
-								tokenBudget.reconcile(tokenReservation, actual, result.budget?.accounting ?? "estimated");
-								if (result.budget?.exhausted)
-									diagnostics.push({
-										code: "batch_token_budget_exhausted",
-										message: `${task.id}: token work budget exhausted.`,
-									});
-							}
 							const verification =
 								result.status === "needs_time"
 									? pendingSubagentVerification(result)
@@ -11601,9 +10824,6 @@ export async function runResolvedSubagentBatch(
 						},
 						(error: unknown) => {
 							if (options.unsafeHostExec) budget.reconcile(reservation, 0);
-							if (tokenBudget && tokenReservation !== undefined) {
-								tokenBudget.reconcile(tokenReservation, 0);
-							}
 							const failure = classifySubagentFailure(error, "runtime");
 							const result = batchTaskResult(task, "failed", failure.code, failure.message, failure.retryable);
 							items[index] = batchItem(task, result);
@@ -12003,14 +11223,6 @@ const subagentExecutionParameters = Type.Object(
 		topP: Type.Optional(
 			Type.Number({ minimum: SUBAGENT_EXECUTION_LIMITS.minTopP, maximum: SUBAGENT_EXECUTION_LIMITS.maxTopP }),
 		),
-		maxTotalTokens: Type.Optional(
-			Type.Integer({
-				minimum: SUBAGENT_EXECUTION_LIMITS.minTotalTokens,
-				maximum: SUBAGENT_EXECUTION_LIMITS.maxTotalTokens,
-				description:
-					"Soft cumulative input + output + cache-write token limit; cache reads are reported separately.",
-			}),
-		),
 	},
 	{
 		additionalProperties: false,
@@ -12168,9 +11380,6 @@ const delegateBatchParameters = Type.Object({
 	tasks: Type.Array(delegateBatchTaskParameters, { minItems: 1, maxItems: SUBAGENT_BATCH_LIMITS.maxTasks }),
 	concurrency: Type.Optional(Type.Integer({ minimum: 1, maximum: SUBAGENT_BATCH_LIMITS.maxConcurrency })),
 	totalBudgetBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: SUBAGENT_BATCH_LIMITS.defaultBudgetBytes })),
-	totalTokenBudget: Type.Optional(
-		Type.Integer({ minimum: SUBAGENT_BATCH_LIMITS.minTokenBudget, maximum: SUBAGENT_BATCH_LIMITS.maxTokenBudget }),
-	),
 	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 * 60 * 1000 })),
 	failFast: Type.Optional(Type.Boolean()),
 });
@@ -12206,9 +11415,6 @@ const reviewBatchParameters = Type.Object({
 	tasks: Type.Array(reviewTaskParameters, { minItems: 1, maxItems: SUBAGENT_BATCH_LIMITS.maxTasks }),
 	concurrency: Type.Optional(Type.Integer({ minimum: 1, maximum: SUBAGENT_BATCH_LIMITS.maxConcurrency })),
 	totalBudgetBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: SUBAGENT_BATCH_LIMITS.defaultBudgetBytes })),
-	totalTokenBudget: Type.Optional(
-		Type.Integer({ minimum: SUBAGENT_BATCH_LIMITS.minTokenBudget, maximum: SUBAGENT_BATCH_LIMITS.maxTokenBudget }),
-	),
 	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 * 60 * 1000 })),
 	failFast: Type.Optional(Type.Boolean()),
 });
@@ -12257,16 +11463,7 @@ type SubagentJobTool = ToolDefinition<typeof subagentJobParameters, { inspection
 type ManageSubagentTool = ToolDefinition<
 	typeof manageSubagentParameters,
 	| {
-			action:
-				| "inspect"
-				| "peek"
-				| "wait"
-				| "extend"
-				| "follow_up"
-				| "stop"
-				| "detach"
-				| "resume"
-				| "delete";
+			action: "inspect" | "peek" | "wait" | "extend" | "follow_up" | "stop" | "detach" | "resume" | "delete";
 			resumedFromRunId?: string;
 			deleted?: { runId: string; deleted: boolean };
 			runId: string;
@@ -12502,11 +11699,6 @@ function formatSubagentJobInspection(inspection: SubagentJobInspection): string 
 			inspection.budget
 				? `Output reservation: ${inspection.budget.reservedOutputBytes}/${inspection.budget.ownerBudgetBytes} bytes.`
 				: undefined,
-			inspection.budget?.resolvedMaxTotalTokens !== undefined
-				? inspection.budget.chargedTokens !== undefined && inspection.budget.remainingTokens !== undefined
-					? `Token usage (last persisted boundary): ${inspection.budget.chargedTokens}/${inspection.budget.resolvedMaxTotalTokens} charged; ${inspection.budget.remainingTokens} remaining.`
-					: `Token ceiling: ${inspection.budget.resolvedMaxTotalTokens}; usage is not persisted at a safe boundary.`
-				: undefined,
 			inspection.job.contract
 				? `Accepted contract: thinking=${inspection.job.contract.thinking}, timeout=${inspection.job.contract.timeoutMs}ms, turns=${inspection.job.contract.maxTurns}, tool calls=${inspection.job.contract.maxToolCalls}, output=${inspection.job.contract.maxOutputBytes} bytes, tools=${inspection.job.contract.tools.join(",") || "none"}.`
 				: undefined,
@@ -12549,9 +11741,6 @@ function formatBatchToolResult(result: SubagentBatchResult): string {
 		formatSubagentLaunchDigest(result.preflight),
 		`Subagent batch ${result.status} (${result.batchId}).`,
 		`Budget: ${result.budget.consumed}/${result.budget.total} output bytes consumed; ${result.budget.released} released.`,
-		result.budget.tokens
-			? `Token budget: ${result.budget.tokens.charged}/${result.budget.tokens.total} charged; ${result.budget.tokens.remaining} remaining; ${result.budget.tokens.overshoot} overshoot${result.budget.tokens.accounting === "provider" ? "" : " ~"}.`
-			: undefined,
 		...result.items.map(
 			(item) =>
 				`Task ${item.taskId}: ${item.result.status}; verification ${item.verification.verified ? "passed" : "failed"}.\n${item.result.summary}`,
@@ -12566,9 +11755,6 @@ function formatReviewBatchToolResult(result: ReviewBatchResult): string {
 		formatSubagentLaunchDigest(result.preflight),
 		`Reviewer batch ${result.status} (${result.batchId}).`,
 		`Budget: ${result.budget.consumed}/${result.budget.total} output bytes consumed; ${result.budget.released} released.`,
-		result.budget.tokens
-			? `Token budget: ${result.budget.tokens.charged}/${result.budget.tokens.total} charged; ${result.budget.tokens.remaining} remaining; ${result.budget.tokens.overshoot} overshoot${result.budget.tokens.accounting === "provider" ? "" : " ~"}.`
-			: undefined,
 		...result.reviewers.map((reviewer) => {
 			const findings = reviewer.findings.map(
 				(finding) =>
@@ -13684,9 +12870,6 @@ export function formatIceSubagentSettingsSummary(settingsManager: SettingsManage
 					? [`temperature=${contract.values.temperature} [${contract.sources.temperature}]`]
 					: []),
 				...(contract.values.topP !== undefined ? [`topP=${contract.values.topP} [${contract.sources.topP}]`] : []),
-				...(contract.values.maxTotalTokens !== undefined
-					? [`tokens=${contract.values.maxTotalTokens} [${contract.sources.maxTotalTokens}]`]
-					: []),
 			];
 			lines.push(`${role}: ${contract.denied ? `denied (${contract.denied.code})` : values.join(" · ")}`);
 		}
@@ -13758,9 +12941,6 @@ function applyIceProfileSettingsSummary(
 			effectiveMaxTurns: contract.values.maxTurns,
 			effectiveMaxToolCalls: contract.values.maxToolCalls,
 			effectiveMaxOutputBytes: contract.values.maxOutputBytes,
-			...(contract.values.maxTotalTokens !== undefined
-				? { effectiveMaxTotalTokens: contract.values.maxTotalTokens }
-				: {}),
 			...(contract.values.temperature !== undefined ? { effectiveTemperature: contract.values.temperature } : {}),
 			...(contract.values.topP !== undefined ? { effectiveTopP: contract.values.topP } : {}),
 			effectiveSettingSources: Object.freeze({ ...contract.sources }),
@@ -13805,10 +12985,6 @@ function isCurrentSubagentAuthorityValid(
 				maxTurns: normalized.execution.maxTurns,
 				maxToolCalls: normalized.execution.maxToolCalls,
 				maxOutputBytes: normalized.execution.maxOutputBytes,
-				...(normalized.execution.maxTotalTokens !== undefined &&
-				normalized.iceContract.sources.maxTotalTokens === "call"
-					? { maxTotalTokens: normalized.execution.maxTotalTokens }
-					: {}),
 			},
 		});
 		if (
@@ -13817,10 +12993,7 @@ function isCurrentSubagentAuthorityValid(
 			contract.values.timeoutMs < normalized.timeoutMs ||
 			contract.values.maxTurns < normalized.execution.maxTurns ||
 			contract.values.maxToolCalls < normalized.execution.maxToolCalls ||
-			contract.values.maxOutputBytes < normalized.execution.maxOutputBytes ||
-			(normalized.execution.maxTotalTokens !== undefined &&
-				(contract.values.maxTotalTokens === undefined ||
-					contract.values.maxTotalTokens < normalized.execution.maxTotalTokens))
+			contract.values.maxOutputBytes < normalized.execution.maxOutputBytes
 		)
 			return false;
 		const acceptedTools = (normalized.execution.tools ?? normalized.profile.requestedTools).filter(
@@ -14178,7 +13351,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 			requiredCriteriaSatisfied:
 				verification.requirementSummary?.requiredSatisfied ?? (verification.verified ? requiredCriteriaTotal : 0),
 			parentSteeringCount: attention?.steering ?? 0,
-			budget: result.budget,
+			usage: result.usage,
 		});
 		attentionLedger.delete(runId);
 	};
@@ -15250,10 +14423,8 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					attempt: 1 | 2,
 					childRequest: NormalizedSubagentRequest,
 					activeTools: readonly string[],
-					tokenBudgetLedger?: TokenBudgetLedger,
 				) =>
 					runner.runResolved(childRequest, activeTools, {
-						tokenBudgetLedger,
 						model: childRequest.retryModel ?? model,
 						modelRuntime: ctx.modelRegistry.getRuntime(),
 						settingsManager,
@@ -15280,7 +14451,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					? runChild(1, normalized, effectiveParentActiveTools)
 					: runSubagentWithRecovery(normalized, effectiveParentActiveTools, runChild, {
 							getStopReason: () => (signal?.aborted ? "cancelled" : undefined),
-							hardCap: SUBAGENT_HARD_CAP_APIS.has(model.api) ? "enforced" : "aggregate-soft",
 						});
 				let result: SubagentResult;
 				if (managedLaunch && managedHandlePromise) {
@@ -15536,9 +14706,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 						maxTurns: normalized.execution.maxTurns,
 						maxToolCalls: normalized.execution.maxToolCalls,
 						maxOutputBytes: normalized.execution.maxOutputBytes,
-						...(normalized.execution.maxTotalTokens !== undefined
-							? { maxTotalTokens: normalized.execution.maxTotalTokens }
-							: {}),
 						...(normalized.execution.temperature !== undefined
 							? { temperature: normalized.execution.temperature }
 							: {}),
@@ -15603,10 +14770,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 									maxTurns: normalized.execution.maxTurns,
 									maxToolCalls: normalized.execution.maxToolCalls,
 									maxOutputBytes: normalized.execution.maxOutputBytes,
-									...(normalized.execution.maxTotalTokens !== undefined &&
-									normalized.iceContract.sources.maxTotalTokens === "call"
-										? { maxTotalTokens: normalized.execution.maxTotalTokens }
-										: {}),
 								},
 							});
 							const acceptedTools = (normalized.execution.tools ?? normalized.profile.requestedTools).filter(
@@ -15635,9 +14798,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 								currentContract.values.maxTurns < normalized.execution.maxTurns ||
 								currentContract.values.maxToolCalls < normalized.execution.maxToolCalls ||
 								currentContract.values.maxOutputBytes < normalized.execution.maxOutputBytes ||
-								(normalized.execution.maxTotalTokens !== undefined &&
-									(currentContract.values.maxTotalTokens === undefined ||
-										currentContract.values.maxTotalTokens < normalized.execution.maxTotalTokens)) ||
 								acceptedTools.some((tool) => currentContract.deniedTools.includes(tool)) ||
 								acceptedHookIds.join("|") !== currentHookIds.join("|")
 							) {
@@ -15665,10 +14825,8 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 							attempt: 1 | 2,
 							childRequest: NormalizedSubagentRequest,
 							activeTools: readonly string[],
-							tokenBudgetLedger?: TokenBudgetLedger,
 						) =>
 							runner.runResolved(childRequest, activeTools, {
-								tokenBudgetLedger,
 								model,
 								modelRuntime,
 								settingsManager,
@@ -15712,7 +14870,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 							? await runAttempt(1, normalized, promotionActiveTools)
 							: await runSubagentWithRecovery(normalized, promotionActiveTools, runAttempt, {
 									getStopReason: () => (jobSignal.aborted ? "cancelled" : undefined),
-									hardCap: SUBAGENT_HARD_CAP_APIS.has(model.api) ? "enforced" : "aggregate-soft",
 								});
 						const jobVerification =
 							result.status === "needs_time"
@@ -15935,7 +15092,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					admission: subagentAdmission,
 					failFast: params.failFast,
 					totalBudgetBytes: params.totalBudgetBytes,
-					totalTokenBudget: params.totalTokenBudget,
 					modelRuntime: ctx.modelRegistry.getRuntime(),
 					settingsManager,
 					unsafeHostExec,
@@ -15970,7 +15126,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 							cwd: ctx.cwd,
 							evidenceCount: item.result.evidence?.paths.length,
 							usage: item.result.usage,
-							budget: item.result.budget,
 							diagnostics: item.result.diagnostics.map((diagnostic) => diagnostic.code),
 						},
 						onUpdate,
@@ -16115,7 +15270,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					concurrency: params.concurrency,
 					failFast: params.failFast,
 					totalBudgetBytes: params.totalBudgetBytes,
-					totalTokenBudget: params.totalTokenBudget,
 					modelRuntime: ctx.modelRegistry.getRuntime(),
 					settingsManager,
 					unsafeHostExec,
@@ -16150,7 +15304,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 							cwd: ctx.cwd,
 							evidenceCount: reviewer.result.evidence?.paths.length,
 							usage: reviewer.result.usage,
-							budget: reviewer.result.budget,
 							diagnostics: reviewer.result.diagnostics.map((diagnostic) => diagnostic.code),
 						},
 						onUpdate,
@@ -16289,14 +15442,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 			values: ["0", "8", "16", "32", "40", "64", "128", "512"],
 		},
 		{
-			id: "max-total-tokens",
-			label: "Default child token budget",
-			description:
-				"Soft cumulative limit for input + output + cache-write tokens; cache reads are reported separately; one in-flight response may overshoot",
-			currentValue: "off",
-			values: ["off", "1024", "4096", "8192", "16384", "32768", "65536", "131072", "262144", "1000000"],
-		},
-		{
 			id: "policy-summary",
 			label: "Effective policy",
 			description: "Inspect source-aware role budgets, trust, hooks, and bounded settings errors",
@@ -16334,12 +15479,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					) as Record<string, unknown>;
 					if (id === "enabled") subagents.enabled = value === "true";
 					else if (id === "hooks-enabled") hooks.enabled = value === "true";
-					else if (
-						id === "thinking-default" ||
-						id === "max-turns" ||
-						id === "max-tool-calls" ||
-						id === "max-total-tokens"
-					) {
+					else if (id === "thinking-default" || id === "max-turns" || id === "max-tool-calls") {
 						const defaults = (
 							subagents.defaults && typeof subagents.defaults === "object" && !Array.isArray(subagents.defaults)
 								? subagents.defaults
@@ -16348,8 +15488,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 						if (id === "thinking-default") defaults.thinking = value;
 						else if (id === "max-turns") defaults.maxTurns = Number(value);
 						else if (id === "max-tool-calls") defaults.maxToolCalls = Number(value);
-						else if (value === "off") delete defaults.maxTotalTokens;
-						else defaults.maxTotalTokens = Number(value);
 						subagents.defaults = defaults;
 					} else return;
 					next.subagents = subagents;
@@ -16384,9 +15522,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 		);
 		settingsItems.find((item) => item.id === "max-turns")!.currentValue = String(defaults.maxTurns ?? 12);
 		settingsItems.find((item) => item.id === "max-tool-calls")!.currentValue = String(defaults.maxToolCalls ?? 40);
-		settingsItems.find((item) => item.id === "max-total-tokens")!.currentValue = String(
-			defaults.maxTotalTokens ?? "off",
-		);
 		shuttingDown = false;
 		parentBusy = false;
 		if (parentRunState) detachParentRun(parentRunState);

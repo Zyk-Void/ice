@@ -509,30 +509,6 @@ describe("subagent observatory reducer", () => {
 		expect(text).not.toContain("api_key");
 	});
 
-	it("renders token meters separately and marks estimated accounting", () => {
-		const text = formatProgressSnapshot(
-			snapshotFor("token-meter", {
-				budget: {
-					maxTotalTokens: 20_000,
-					workPhaseLimit: 18_000,
-					reportReserveTokens: 2_000,
-					chargedTokens: 12,
-					remainingTokens: 19_988,
-					inputTokens: 5,
-					outputTokens: 6,
-					cacheReadTokens: 9,
-					cacheWriteTokens: 1,
-					overshootTokens: 0,
-					accounting: "estimated",
-					exhausted: false,
-					hardCap: "aggregate-soft",
-				},
-			}),
-		);
-		expect(text).toContain("tokens 12/20000 ~");
-		expect(text).toContain("cache-read 9");
-	});
-
 	it("projects durable jobs as bounded metadata without result bodies", () => {
 		const source = durableInspectionFor("job-secret", "completed");
 		const projected = projectDurableSubagentJob({

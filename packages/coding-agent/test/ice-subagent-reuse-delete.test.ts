@@ -12,6 +12,7 @@ import {
 	NativeSubagentRunner,
 	normalizeSubagentRequest,
 	type SubagentRequest,
+	type SubagentResult,
 	subagentMcpToolName,
 } from "../src/ice-subagents.ts";
 
@@ -78,6 +79,14 @@ class ReusableChildSession {
 		this.messages.push(
 			assistantMessage(`{"summary":"report ${this.promptCalls.length}","evidence":{"paths":["src"]}}`),
 		);
+	}
+}
+
+/** Child session used to verify that failed terminal runs remain history-only and deletable. */
+class FailingChildSession extends ReusableChildSession {
+	async prompt(text: string): Promise<void> {
+		this.promptCalls.push(text);
+		throw new Error("synthetic child failure");
 	}
 }
 
@@ -164,6 +173,94 @@ describe("ICE subagent reuse and delete", () => {
 		// The superseded handle is replaced, not duplicated.
 		expect(runner.listRetainedChildren(PARENT_SESSION).map((entry) => entry.runId)).toEqual([resumed.runId]);
 		expect(runner.listRetainedChildren(PARENT_SESSION)[0]?.resumeCount).toBe(1);
+	});
+
+	it("multiplexes a live child, resumes the same session, and deletes all terminal state", async () => {
+		let releaseFirst!: () => void;
+		const firstTurn = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+		let firstStarted!: () => void;
+		const firstStartedPromise = new Promise<void>((resolve) => {
+			firstStarted = resolve;
+		});
+		let releaseSecond!: () => void;
+		const secondTurn = new Promise<void>((resolve) => {
+			releaseSecond = resolve;
+		});
+		let secondStarted!: () => void;
+		const secondStartedPromise = new Promise<void>((resolve) => {
+			secondStarted = resolve;
+		});
+		const { cwd, agentDir } = await createWorkspace();
+		const gate: ChildGate = { wait: firstTurn, onStart: firstStarted, at: 1 };
+		const child = new ReusableChildSession(cwd, gate);
+		const supervisorRegistry = new SubagentRunSupervisorRegistry<SubagentResult>();
+		const runner = new NativeSubagentRunner({
+			agentDir,
+			supervisorRegistry,
+			createSession: async () => ({ session: child }) as unknown as CreateAgentSessionResult,
+		});
+		const normalized = normalizeSubagentRequest(request(cwd), cwd, { agentDir });
+		const runPromise = runner.runResolved(normalized, [...ACTIVE_TOOLS], { model: FAUX_MODEL });
+		await firstStartedPromise;
+
+		expect(runner.peekRuntime(normalized.runId, PARENT_SESSION)).toMatchObject({
+			childState: "running",
+			terminal: false,
+		});
+		expect(runner.detachRuntime(normalized.runId, PARENT_SESSION)).toMatchObject({
+			childState: "running",
+			terminal: false,
+		});
+		expect(await runner.waitRuntime(normalized.runId, PARENT_SESSION, 1)).toMatchObject({ waitExpired: true });
+		expect(runner.peekRuntime(normalized.runId, PARENT_SESSION)).toMatchObject({
+			childState: "running",
+			terminal: false,
+		});
+
+		releaseFirst();
+		expect((await runPromise).status).toBe("completed");
+		expect(runner.peekRuntime(normalized.runId, PARENT_SESSION)).toMatchObject({
+			childState: "completed",
+			terminal: true,
+		});
+		gate.wait = secondTurn;
+		gate.onStart = secondStarted;
+		gate.at = 2;
+
+		// The resumed execution keeps the original child session and gets a fresh managed handle.
+		const resumePromise = runner.resumeRuntime(normalized.runId, PARENT_SESSION, "Continue the same task.", [
+			...ACTIVE_TOOLS,
+		]);
+		await secondStartedPromise;
+		expect(runner.listRetainedChildren(PARENT_SESSION)).toHaveLength(0);
+		const resumedRunId = supervisorRegistry.list()[0]?.runId;
+		expect(resumedRunId).toBeDefined();
+		expect(runner.peekRuntime(resumedRunId!, PARENT_SESSION)).toMatchObject({
+			childState: "running",
+			terminal: false,
+		});
+		expect(runner.detachRuntime(resumedRunId!, PARENT_SESSION)).toMatchObject({
+			childState: "running",
+			terminal: false,
+		});
+		expect(await runner.waitRuntime(resumedRunId!, PARENT_SESSION, 1)).toMatchObject({ waitExpired: true });
+		releaseSecond();
+		expect((await resumePromise).status).toBe("completed");
+		expect(resumedRunId).toBeDefined();
+		expect(runner.peekRuntime(resumedRunId!, PARENT_SESSION)).toMatchObject({
+			childState: "completed",
+			terminal: true,
+		});
+		expect(await runner.deleteRetainedChild(resumedRunId!, PARENT_SESSION)).toEqual({
+			runId: resumedRunId,
+			deleted: true,
+		});
+		expect(runner.listRetainedChildren(PARENT_SESSION)).toHaveLength(0);
+		expect(runner.getRetainedManagedResult(resumedRunId!, PARENT_SESSION)).toBeUndefined();
+		expect(runner.peekRuntime(resumedRunId!, PARENT_SESSION)).toBeUndefined();
+		expect(child.dispose).toHaveBeenCalledTimes(1);
 	});
 
 	it("deletes a retained child idempotently and releases its session", async () => {
@@ -519,8 +616,11 @@ describe("ICE subagent reuse and delete", () => {
 		// Resume reused the retained session instead of rebuilding it, so `probe` is still the very
 		// wrapper the original run installed.
 		expect(createSessionCalls).toBe(1);
-		// A revoked reuse is not republished as a reusable handle.
-		expect(runner.listRetainedChildren(PARENT_SESSION)).toHaveLength(0);
+		// A revoked reuse is retained as history-only under its fresh run identity, but cannot be reused.
+		expect(runner.listRetainedChildren(PARENT_SESSION)).toEqual([
+			expect.objectContaining({ runId: resumed.runId, terminalStatus: "failed" }),
+		]);
+		expect(runner.peekRuntime(normalized.runId, PARENT_SESSION)).toBeUndefined();
 
 		// The original wrapper now reads the resumed run's authority, which no longer validates.
 		const dispatched = await probe!.execute("probe-call", { path: "src" }, undefined, undefined, undefined).then(
@@ -529,6 +629,47 @@ describe("ICE subagent reuse and delete", () => {
 		);
 		expect(dispatched).toMatchObject({ code: "capability_denied" });
 		expect((dispatched as Error).message).toMatch(/no longer authorize this child tool dispatch/);
+		await expect(
+			runner.resumeRuntime(resumed.runId, PARENT_SESSION, "again", [...ACTIVE_TOOLS]),
+		).rejects.toMatchObject({
+			code: "child_protocol_failure",
+		});
+		expect(await runner.deleteRetainedChild(resumed.runId, PARENT_SESSION)).toEqual({
+			runId: resumed.runId,
+			deleted: true,
+		});
+		expect(child.dispose).toHaveBeenCalledTimes(1);
+	});
+
+	it("retains failed children as history-only entries", async () => {
+		const { cwd, agentDir } = await createWorkspace();
+		const child = new FailingChildSession(cwd);
+		const runner = new NativeSubagentRunner({
+			agentDir,
+			supervisorRegistry: new SubagentRunSupervisorRegistry(),
+			createSession: async () => ({ session: child }) as unknown as CreateAgentSessionResult,
+		});
+		const normalized = normalizeSubagentRequest(request(cwd), cwd, { agentDir });
+		const result = await runner.runResolved(normalized, [...ACTIVE_TOOLS], { model: FAUX_MODEL });
+
+		expect(result.status).toBe("failed");
+		expect(runner.listRetainedChildren(PARENT_SESSION)).toEqual([
+			expect.objectContaining({ runId: normalized.runId, terminalStatus: "failed", resumeCount: 0 }),
+		]);
+		expect(runner.peekRuntime(normalized.runId, PARENT_SESSION)).toMatchObject({
+			childState: "failed",
+			terminal: true,
+			result: expect.objectContaining({ status: "failed" }),
+		});
+		expect(() => runner.detachRuntime(normalized.runId, PARENT_SESSION)).toThrow(/already terminal/);
+		await expect(
+			runner.resumeRuntime(normalized.runId, PARENT_SESSION, "again", [...ACTIVE_TOOLS]),
+		).rejects.toMatchObject({ code: "child_protocol_failure" });
+		expect(await runner.deleteRetainedChild(normalized.runId, PARENT_SESSION)).toEqual({
+			runId: normalized.runId,
+			deleted: true,
+		});
+		expect(child.dispose).toHaveBeenCalledTimes(1);
 	});
 
 	it("stops a live child and then deletes it without a retained handle", async () => {
@@ -555,16 +696,23 @@ describe("ICE subagent reuse and delete", () => {
 		releaseTurn();
 		expect((await runPromise).status).toBe("cancelled");
 
-		// Only a verified completion is retained, so the cancelled child is released rather than kept
-		// as a handle that resumeRuntime would have to reject.
-		expect(runner.listRetainedChildren(PARENT_SESSION)).toHaveLength(0);
+		// Cancelled children remain available for history inspection and deletion, but are never reusable.
+		expect(runner.listRetainedChildren(PARENT_SESSION)).toEqual([
+			expect.objectContaining({ runId: normalized.runId, terminalStatus: "cancelled" }),
+		]);
+		expect(runner.peekRuntime(normalized.runId, PARENT_SESSION)).toMatchObject({
+			childState: "cancelled",
+			terminal: true,
+		});
+		expect(() => runner.detachRuntime(normalized.runId, PARENT_SESSION)).toThrow(/already terminal/);
 		await expect(
 			runner.resumeRuntime(normalized.runId, PARENT_SESSION, "again", [...ACTIVE_TOOLS]),
 		).rejects.toMatchObject({ code: "child_protocol_failure" });
 		expect(await runner.deleteRetainedChild(normalized.runId, PARENT_SESSION)).toEqual({
 			runId: normalized.runId,
-			deleted: false,
+			deleted: true,
 		});
-		expect(child.dispose).toHaveBeenCalled();
+		expect(runner.peekRuntime(normalized.runId, PARENT_SESSION)).toBeUndefined();
+		expect(child.dispose).toHaveBeenCalledTimes(1);
 	});
 });

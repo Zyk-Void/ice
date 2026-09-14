@@ -5,11 +5,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
-import type { Context } from "@zykairotis/ice-ai";
+import type { AssistantMessage, Context } from "@zykairotis/ice-ai";
 import { createAssistantMessageEventStream, ModelsError } from "@zykairotis/ice-ai";
 import type { Api, Model, StreamFunction, StreamOptions } from "@zykairotis/ice-ai/compat";
 import {
-	type AssistantMessage,
 	fauxAssistantMessage,
 	fauxToolCall,
 	registerApiProvider,
@@ -32,13 +31,7 @@ import { importRufloAgentPack, mapAgentPackTools, unsupportedAgentPackFields } f
 import { IceAgentViewBridge } from "../src/ice-agent-view-bridge.ts";
 import { JOB_COMPLETION_MESSAGE_TYPE, JOB_ENTRY_TYPE, SubagentJobRegistry } from "../src/ice-subagent-jobs.ts";
 import { getProgressSnapshot } from "../src/ice-subagent-observatory.ts";
-import {
-	ICE_HOOK_JOURNAL_ENTRY_TYPE,
-	type IceHookHandler,
-	IceSubagentHookDispatcher,
-	parseIceHooksSettings,
-	resolveIceSubagentHooks,
-} from "../src/ice-subagent-settings.ts";
+import { ICE_HOOK_JOURNAL_ENTRY_TYPE, type IceHookHandler } from "../src/ice-subagent-settings.ts";
 import { SubagentRunSupervisorRegistry } from "../src/ice-subagent-timeout-supervisor.ts";
 import * as iceSubagentsModule from "../src/ice-subagents.ts";
 import iceSubagents, {
@@ -369,17 +362,11 @@ function request(cwd: string, role: string = "self"): SubagentRequest {
 	};
 }
 
-function resolvedBatchTask(
-	cwd: string,
-	id: string,
-	role: string = "self",
-	maxTotalTokens?: number,
-): ResolvedSubagentBatchTask {
+function resolvedBatchTask(cwd: string, id: string, role: string = "self"): ResolvedSubagentBatchTask {
 	const childRequest = normalizeSubagentRequest(
 		{
 			...request(cwd, role),
 			task: `Trace task ${id}.`,
-			...(maxTotalTokens !== undefined ? { execution: { maxTotalTokens } } : {}),
 		},
 		cwd,
 	);
@@ -421,22 +408,8 @@ function testModel(provider: string, id: string): Model<Api> {
 	return { provider, id } as Model<Api>;
 }
 
-function commonPrefixBytes(left: string, right: string): number {
-	const leftBytes = Buffer.from(left, "utf8");
-	const rightBytes = Buffer.from(right, "utf8");
-	let index = 0;
-	while (index < leftBytes.length && index < rightBytes.length && leftBytes[index] === rightBytes[index]) index += 1;
-	return index;
-}
-
 const SCRIPTED_USAGE_API = "usage-scripted";
 
-/**
- * Registers an API whose stream replays scripted assistant messages verbatim,
- * preserving their exact usage so token-budget enforcement is deterministic.
- * `api` defaults to a custom aggregate-soft id; passing a built-in api id
- * (e.g. "anthropic-messages") exercises the enforced hard-cap route.
- */
 function registerScriptedUsageProvider(
 	responses: AssistantMessage[],
 	options: { api?: string } = {},
@@ -497,23 +470,20 @@ function registerScriptedUsageProvider(
 	};
 }
 
-function scriptedUsage(input: number, output: number, cacheWrite = 0) {
-	return {
-		input,
-		output,
-		cacheRead: 0,
-		cacheWrite,
-		totalTokens: input + output + cacheWrite,
-		cost: { input: 0.01, output: 0.01, cacheRead: 0, cacheWrite: 0, total: 0.02 },
-	};
-}
-
 async function scriptedModelRuntime(cwd: string, model: Model<Api>): Promise<ModelRuntime> {
 	const authStorage = AuthStorage.inMemory();
 	await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "scripted-key" }));
 	const modelRuntime = await ModelRuntime.create({ credentials: authStorage, modelsPath: join(cwd, "models.json") });
 	modelRuntime.registerProvider(model.provider, { baseUrl: model.baseUrl, api: model.api, models: [model] });
 	return modelRuntime;
+}
+
+function commonPrefixBytes(left: string, right: string): number {
+	const leftBytes = Buffer.from(left, "utf8");
+	const rightBytes = Buffer.from(right, "utf8");
+	let index = 0;
+	while (index < leftBytes.length && index < rightBytes.length && leftBytes[index] === rightBytes[index]) index += 1;
+	return index;
 }
 
 function batchResult(
@@ -649,7 +619,7 @@ describe("ICE subagent contracts", () => {
 		const manage = harness.tools.get("manage_subagent");
 		expect(manage).toBeDefined();
 		const schema = manage?.parameters as { properties?: Record<string, unknown> };
-		for (const field of ["model", "profile", "scope", "tools", "execution", "maxOutputBytes", "maxTotalTokens"]) {
+		for (const field of ["model", "profile", "scope", "tools", "execution", "maxOutputBytes"]) {
 			expect(schema.properties).not.toHaveProperty(field);
 		}
 		expect(manage?.description).toMatch(/preserves run ID.*model.*profile.*scope.*tool authority.*output budget/i);
@@ -661,17 +631,7 @@ describe("ICE subagent contracts", () => {
 		expect(schema).toMatchObject({ additionalProperties: false });
 		// The combined lifecycle exposes live-multiplexing actions (peek/wait/detach)
 		// alongside terminal reuse/delete actions in one phase-aware union.
-		for (const action of [
-			"inspect",
-			"peek",
-			"wait",
-			"extend",
-			"follow_up",
-			"stop",
-			"detach",
-			"resume",
-			"delete",
-		]) {
+		for (const action of ["inspect", "peek", "wait", "extend", "follow_up", "stop", "detach", "resume", "delete"]) {
 			expect(Value.Check(schema, { runId: "run-1", action })).toBe(true);
 		}
 		// An action outside the closed union is rejected outright.
@@ -4275,6 +4235,13 @@ describe("ICE subagent contracts", () => {
 		).toThrowError(/thinking must be a supported level/);
 	});
 
+	it("rejects removed aggregate token execution overrides before launch", async () => {
+		const cwd = await createWorkspace();
+		expect(() =>
+			normalizeSubagentRequest({ ...request(cwd), execution: { maxTotalTokens: 20_000 } as never }, cwd),
+		).toThrowError(/maxTotalTokens.*removed/i);
+	});
+
 	it("passes only selected resources into the native child loader", async () => {
 		const cwd = await createWorkspace();
 		const agentDir = await mkdtemp(join(tmpdir(), "ice-subagents-agent-"));
@@ -4749,6 +4716,69 @@ describe("ICE subagent contracts", () => {
 		expect(promptText).toContain("Selected prompt execution guidance.");
 		expect((liveSessionDuringPrompt as { session?: unknown } | undefined)?.session).toBe(fakeSession);
 		expect(liveSessions.get(normalized.runId)).toBeUndefined();
+	});
+
+	it.each([
+		["immediate provider failure", 0],
+		["provider failure before the deadline", 10],
+	] as const)("keeps %s as a failed run, not a timeout", async (_label, delayMs) => {
+		const cwd = await createWorkspace();
+		const normalized = normalizeSubagentRequest({ ...request(cwd), timeoutMs: 100 }, cwd);
+		const providerError = new Error("provider stream failed");
+		const fakeSession = {
+			sessionId: `child-provider-error-${delayMs}`,
+			model: {} as Model<Api>,
+			messages: [],
+			extensionRunner: createNoopExtensionRunner(),
+			subscribe: vi.fn(() => vi.fn()),
+			prompt: vi.fn(async () => {
+				if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+				throw providerError;
+			}),
+			abort: vi.fn(async () => {}),
+			dispose: vi.fn(),
+			getSessionStats: vi.fn(() => ({
+				tokens: { input: 3, output: 2, cacheRead: 1, cacheWrite: 0 },
+				cost: 0.25,
+			})),
+		} as unknown as CreateAgentSessionResult["session"];
+		const result = await new NativeSubagentRunner({
+			createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
+		}).runResolved(normalized, ["delegate", "read"]);
+
+		expect(result).toMatchObject({
+			status: "failed",
+			diagnostics: [{ code: "child_runtime_failure", message: "provider stream failed" }],
+		});
+		expect(result.status).not.toBe("timed_out");
+	});
+
+	it("reports an actual child deadline as a timeout", async () => {
+		const cwd = await createWorkspace();
+		const normalized = normalizeSubagentRequest({ ...request(cwd), timeoutMs: 20 }, cwd);
+		const fakeSession = {
+			sessionId: "child-real-timeout",
+			model: {} as Model<Api>,
+			messages: [],
+			extensionRunner: createNoopExtensionRunner(),
+			subscribe: vi.fn(() => vi.fn()),
+			prompt: vi.fn(() => new Promise<void>(() => {})),
+			abort: vi.fn(async () => {}),
+			dispose: vi.fn(),
+			getSessionStats: vi.fn(() => ({
+				tokens: { input: 3, output: 2, cacheRead: 1, cacheWrite: 0 },
+				cost: 0.25,
+			})),
+		} as unknown as CreateAgentSessionResult["session"];
+		const result = await new NativeSubagentRunner({
+			createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
+		}).runResolved(normalized, ["delegate", "read"]);
+
+		expect(result).toMatchObject({
+			status: "timed_out",
+			diagnostics: [{ code: "timeout" }],
+		});
+		expect(fakeSession.abort).toHaveBeenCalledOnce();
 	});
 
 	it("completes through a real native child with the faux provider", async () => {
@@ -5650,164 +5680,6 @@ describe("ICE subagent contracts", () => {
 		).toBeUndefined();
 	});
 
-	it("blocks same-response tools and skips finalization when the full request context cannot fit the reserve", async () => {
-		const cwd = await createWorkspace();
-		await writeFile(join(cwd, "src", "app.ts"), "export const app = true;\n");
-		// 100_000 total -> 95_904 work limit + 4_096 reserve. The first response
-		// crosses the work limit. Although the final-report instruction itself is
-		// small, the complete provider request context cannot fit the reserve, so
-		// the second scripted response must never be requested.
-		const scripted = registerScriptedUsageProvider(
-			[
-				{
-					...fauxAssistantMessage(fauxToolCall("read", { path: "src/app.ts" }, { id: "crossing-tool" })),
-					usage: scriptedUsage(60_000, 20_000, 15_905),
-				},
-				{
-					...fauxAssistantMessage('{"summary":"must not be consumed","evidence":{"paths":["src/app.ts"]}}'),
-					usage: scriptedUsage(5_000, 2_500),
-				},
-			],
-			{ api: "anthropic-messages" },
-		);
-		try {
-			const model = scripted.model;
-			const modelRuntime = await scriptedModelRuntime(cwd, model);
-			const normalized = normalizeSubagentRequest({ ...request(cwd), execution: { maxTotalTokens: 100_000 } }, cwd);
-			const events: iceSubagentsModule.SubagentEvent[] = [];
-			const result = await new NativeSubagentRunner({ agentDir: cwd }).runResolved(
-				normalized,
-				["delegate", "read"],
-				{ model, modelRuntime, onEvent: (event) => events.push(event) },
-			);
-
-			const phases = events
-				.filter((event) => event.type === "subagent_token_budget")
-				.map((event) => event.tokenBudgetPhase);
-			expect(phases).toEqual([
-				"resolved",
-				"work_exhausted",
-				"tool_denied",
-				"finalizing",
-				"finalization_unavailable",
-			]);
-
-			// The gate denied the crossing response's tool call before execution, and
-			// the denied attempt is suppressed from tool lifecycle telemetry.
-			const exhaustedIndex = events.findIndex(
-				(event) => event.type === "subagent_token_budget" && event.tokenBudgetPhase === "work_exhausted",
-			);
-			expect(
-				events
-					.slice(exhaustedIndex + 1)
-					.some((event) => event.type === "subagent_tool_start" || event.type === "subagent_tool_end"),
-			).toBe(false);
-
-			expect(result.status).toBe("failed");
-			expect(result.partial).toBe(true);
-			expect(result.budget).toMatchObject({
-				maxTotalTokens: 100_000,
-				workPhaseLimit: 95_904,
-				reportReserveTokens: 4_096,
-				chargedTokens: 95_905,
-				overshootTokens: 0,
-				exhausted: true,
-				accounting: "provider",
-				hardCap: "enforced",
-			});
-			expect(result.diagnostics.some((diagnostic) => diagnostic.code === "token_budget_exhausted")).toBe(true);
-			expect(result.diagnostics.some((diagnostic) => diagnostic.code === "token_finalization_unavailable")).toBe(
-				true,
-			);
-			expect(scripted.consumed()).toBe(1);
-		} finally {
-			scripted.unregister();
-		}
-	});
-
-	it("returns a deterministic parent-side failure without another model request on aggregate-soft routes", async () => {
-		const cwd = await createWorkspace();
-		// Custom api id -> aggregate-soft: the plan forbids spending another model
-		// request when the route cannot honor a hard output authority.
-		const scripted = registerScriptedUsageProvider([
-			{
-				...fauxAssistantMessage(fauxToolCall("read", { path: "src/app.ts" }, { id: "crossing-tool" })),
-				usage: scriptedUsage(22_000, 4_000),
-			},
-		]);
-		let afterToolObservations = 0;
-		const parsedHooks = parseIceHooksSettings({
-			definitions: [{ id: "after-tool-counter", event: "subagent.afterTool", required: false }],
-		});
-		const hooks = resolveIceSubagentHooks({ hooks: parsedHooks, role: "self" });
-		const hookRuntime: iceSubagentsModule.SubagentHookRuntime = {
-			dispatcher: new IceSubagentHookDispatcher({
-				handlers: {
-					"subagent.afterTool": () => {
-						afterToolObservations += 1;
-						return { outcome: "continue" as const };
-					},
-				},
-				onRecord: () => {},
-			}),
-			hooks,
-			records: [],
-			pendingObservations: new Set(),
-			ownerSessionId: "parent-token-budget",
-			runId: "run-token-soft",
-			role: "self",
-		};
-		try {
-			const model = scripted.model;
-			const modelRuntime = await scriptedModelRuntime(cwd, model);
-			const normalized = normalizeSubagentRequest({ ...request(cwd), execution: { maxTotalTokens: 20_000 } }, cwd);
-			const events: iceSubagentsModule.SubagentEvent[] = [];
-			const result = await new NativeSubagentRunner({ agentDir: cwd }).runResolved(
-				normalized,
-				["delegate", "read"],
-				{
-					model,
-					modelRuntime,
-					hookRuntime,
-					onEvent: (event) => events.push(event),
-				},
-			);
-
-			const phases = events
-				.filter((event) => event.type === "subagent_token_budget")
-				.map((event) => event.tokenBudgetPhase);
-			expect(phases).toEqual(["resolved", "work_exhausted", "tool_denied", "finalization_unavailable"]);
-
-			// The denied tool call produced no tool lifecycle telemetry and no
-			// afterTool observation: the tool's execute() never ran.
-			const deniedIndex = events.findIndex(
-				(event) => event.type === "subagent_token_budget" && event.tokenBudgetPhase === "tool_denied",
-			);
-			expect(
-				events
-					.slice(deniedIndex + 1)
-					.some((event) => event.type === "subagent_tool_start" || event.type === "subagent_tool_end"),
-			).toBe(false);
-			expect(afterToolObservations).toBe(0);
-
-			expect(result.status).toBe("failed");
-			expect(result.partial).toBe(true);
-			expect(result.diagnostics.some((diagnostic) => diagnostic.code === "token_finalization_unavailable")).toBe(
-				true,
-			);
-			expect(result.diagnostics.some((diagnostic) => diagnostic.code === "token_budget_exhausted")).toBe(true);
-			expect(result.budget).toMatchObject({
-				chargedTokens: 26_000,
-				overshootTokens: 6_000,
-				exhausted: true,
-				hardCap: "aggregate-soft",
-			});
-			expect(scripted.consumed()).toBe(1);
-		} finally {
-			scripted.unregister();
-		}
-	});
-
 	it("queues owner-bound follow-up once and rejects takeover conflicts", async () => {
 		const cwd = await createWorkspace();
 		const normalized = normalizeSubagentRequest(request(cwd), cwd);
@@ -6458,10 +6330,19 @@ describe("ICE subagent contracts", () => {
 		});
 		expect(result.status).toBe("timed_out");
 		expect(abort).toHaveBeenCalledOnce();
+		// Timed-out children remain history-only until the parent explicitly deletes them.
+		const retained = runner.listRetainedChildren("parent-1");
+		expect(retained).toEqual([expect.objectContaining({ terminalStatus: "timed_out" })]);
+		expect(shutdown).not.toHaveBeenCalled();
+		expect(dispose).not.toHaveBeenCalled();
+		expect(events.at(-1)).toBe("subagent_timed_out");
+		expect(await runner.deleteRetainedChild(retained[0]!.runId, "parent-1")).toEqual({
+			runId: retained[0]!.runId,
+			deleted: true,
+		});
 		expect(shutdown).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
 		expect(dispose).toHaveBeenCalledOnce();
 		expect(lifecycle).toEqual(["shutdown", "dispose"]);
-		expect(events.at(-1)).toBe("subagent_timed_out");
 	});
 
 	it("propagates parent cancellation during a child prompt", async () => {
@@ -6749,7 +6630,7 @@ describe("ICE subagent contracts", () => {
 		}
 	});
 
-	it("retries a proven pre-effect startup failure with the same authority and remaining aggregate budgets", async () => {
+	it("retries a proven pre-effect startup failure with the same authority and remaining execution/output limits", async () => {
 		const cwd = await createWorkspace();
 		const task = resolvedBatchTask(cwd, "retry");
 		const attempts: number[] = [];
@@ -7160,117 +7041,17 @@ describe("ICE subagent contracts", () => {
 		expect(result.budget.consumed).toBeLessThanOrEqual(result.budget.total);
 	});
 
-	it("admits token reservations atomically and releases unused capacity", async () => {
+	it("rejects the removed aggregate token budget before launching tasks", async () => {
 		const cwd = await createWorkspace();
-		const tasks = ["first", "second"].map((id) => resolvedBatchTask(cwd, id, "self", 40_000));
-		let active = 0;
-		let maximumActive = 0;
-		let calls = 0;
-		const result = await runResolvedSubagentBatch(
-			tasks,
-			["delegate", "read"],
-			{
-				runResolved: async (task) => {
-					calls++;
-					active++;
-					maximumActive = Math.max(maximumActive, active);
-					await Promise.resolve();
-					active--;
-					const resolvedTask = tasks.find((candidate) => candidate.request.runId === task.runId)!;
-					return batchResult(resolvedTask);
-				},
-			},
-			{ concurrency: 2, totalTokenBudget: 60_000 },
-		);
-		expect(calls).toBe(2);
-		expect(maximumActive).toBe(1);
-		expect(result.budget.tokens).toMatchObject({
-			total: 60_000,
-			reserved: 0,
-			charged: 14,
-			released: 79_986,
-			overshoot: 0,
-		});
-	});
-
-	it("rejects token-bounded batches before launching tasks without a child ceiling", async () => {
-		const cwd = await createWorkspace();
-		const task = resolvedBatchTask(cwd, "missing-token-ceiling");
+		const task = resolvedBatchTask(cwd, "removed-token-budget");
 		const runner: Pick<NativeSubagentRunner, "runResolved"> = {
 			runResolved: vi.fn(async () => batchResult(task)),
 		};
-		await expect(
-			runResolvedSubagentBatch([task], ["delegate", "read"], runner, { totalTokenBudget: 60_000 }),
-		).rejects.toThrow(/maxTotalTokens/);
+		const removedOption = { totalTokenBudget: 60_000 } as unknown as Parameters<typeof runResolvedSubagentBatch>[3];
+		await expect(runResolvedSubagentBatch([task], ["delegate", "read"], runner, removedOption)).rejects.toThrow(
+			/totalTokenBudget.*removed/i,
+		);
 		expect(runner.runResolved).not.toHaveBeenCalled();
-	});
-
-	it("reuses one token reservation and ledger across startup recovery", async () => {
-		const cwd = await createWorkspace();
-		const task = resolvedBatchTask(cwd, "token-retry", "self", 40_000);
-		const ledgers: unknown[] = [];
-		let attempts = 0;
-		const result = await runResolvedSubagentBatch(
-			[task],
-			["delegate", "read"],
-			{
-				runResolved: async (_request, _tools, options) => {
-					attempts++;
-					ledgers.push(options?.tokenBudgetLedger);
-					if (attempts === 1) {
-						return {
-							...batchResult(task, "failed", "temporary"),
-							childSessionId: undefined,
-							partial: false,
-							retrySafeStartup: true,
-							observedTurns: 0,
-							diagnostics: [{ code: "child_startup_failure" as const, message: "temporary", retryable: true }],
-						};
-					}
-					return batchResult(task);
-				},
-			},
-			{ totalTokenBudget: 40_000 },
-		);
-		expect(attempts).toBe(2);
-		expect(ledgers[0]).toBeDefined();
-		expect(ledgers[0]).toBe(ledgers[1]);
-		expect(result.budget.tokens).toMatchObject({
-			total: 40_000,
-			reserved: 0,
-			charged: 14,
-			released: 39_986,
-		});
-		expect(result.items[0]?.result.budget?.chargedTokens).toBe(14);
-	});
-
-	it("records batch token overshoot truthfully instead of clipping it", async () => {
-		const cwd = await createWorkspace();
-		const task = resolvedBatchTask(cwd, "token-overshoot", "self", 40_000);
-		const result = await runResolvedSubagentBatch(
-			[task],
-			["delegate", "read"],
-			{
-				runResolved: async () => ({
-					...batchResult(task),
-					usage: {
-						inputTokens: 40_000,
-						outputTokens: 5_000,
-						cacheReadTokens: 9_999,
-						cacheWriteTokens: 0,
-						cost: 2,
-					},
-				}),
-			},
-			{ totalTokenBudget: 40_000 },
-		);
-		expect(result.budget.tokens).toMatchObject({
-			total: 40_000,
-			reserved: 0,
-			charged: 45_000,
-			released: 0,
-			overshoot: 5_000,
-		});
 	});
 
 	it("preserves settled siblings when one worker fails", async () => {
