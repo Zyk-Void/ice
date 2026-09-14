@@ -237,9 +237,11 @@ function buildRequestOptions(model: Model<"mistral-conversations">, options?: Mi
 	if (options?.headers) Object.assign(headers, options.headers);
 
 	// Mistral infrastructure uses `x-affinity` for KV-cache reuse (prefix caching).
-	// Respect explicit caller-provided header values.
-	if (shouldUsePromptCaching(options) && !headers["x-affinity"]) {
-		headers["x-affinity"] = options.sessionId;
+	// Respect explicit caller-provided header values. This is cache affinity,
+	// not conversation continuation state, so it may use the explicit cache key.
+	const promptCacheKey = getPromptCacheKey(options);
+	if (promptCacheKey && !headers["x-affinity"]) {
+		headers["x-affinity"] = promptCacheKey;
 	}
 
 	if (Object.keys(headers).length > 0) {
@@ -268,7 +270,8 @@ function buildChatPayload(
 	if (options?.toolChoice) payload.toolChoice = mapToolChoice(options.toolChoice);
 	if (options?.promptMode) payload.promptMode = options.promptMode;
 	if (options?.reasoningEffort) payload.reasoningEffort = options.reasoningEffort;
-	if (shouldUsePromptCaching(options)) payload.promptCacheKey = options.sessionId;
+	const promptCacheKey = getPromptCacheKey(options);
+	if (promptCacheKey) payload.promptCacheKey = promptCacheKey;
 
 	if (context.systemPrompt) {
 		payload.messages.unshift({
@@ -280,8 +283,9 @@ function buildChatPayload(
 	return payload;
 }
 
-function shouldUsePromptCaching(options?: MistralOptions): options is MistralOptions & { sessionId: string } {
-	return options?.cacheRetention !== "none" && !!options?.sessionId;
+function getPromptCacheKey(options?: MistralOptions): string | undefined {
+	if (options?.cacheRetention === "none") return undefined;
+	return options?.promptCacheKey ?? options?.sessionId;
 }
 
 function getMistralCachedPromptTokens(usage: unknown, promptTokens: number): number {

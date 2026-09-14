@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import type { Context } from "@zykairotis/ice-ai";
 import { createAssistantMessageEventStream, ModelsError } from "@zykairotis/ice-ai";
-import type { Api, Model } from "@zykairotis/ice-ai/compat";
+import type { Api, Model, StreamFunction, StreamOptions } from "@zykairotis/ice-ai/compat";
 import {
 	type AssistantMessage,
 	fauxAssistantMessage,
@@ -49,6 +49,7 @@ import iceSubagents, {
 	createScopedWriterToolDefinitions,
 	createSubagentLaunchProvenance,
 	createWriterWorkspace,
+	deriveSubagentPromptCacheKey,
 	deriveSubagentTools,
 	deriveWriterTools,
 	emitObservatoryUpdate,
@@ -391,6 +392,14 @@ function verificationFixture(cwd: string, role: "self" | "review" = "self") {
 
 function testModel(provider: string, id: string): Model<Api> {
 	return { provider, id } as Model<Api>;
+}
+
+function commonPrefixBytes(left: string, right: string): number {
+	const leftBytes = Buffer.from(left, "utf8");
+	const rightBytes = Buffer.from(right, "utf8");
+	let index = 0;
+	while (index < leftBytes.length && index < rightBytes.length && leftBytes[index] === rightBytes[index]) index += 1;
+	return index;
 }
 
 const SCRIPTED_USAGE_API = "usage-scripted";
@@ -2368,7 +2377,11 @@ describe("ICE subagent contracts", () => {
 				["delegate", "read"],
 			),
 		).toThrowError(/Combined subagent handoff context/);
-		const prompt = buildSubagentPrompt(normalized);
+		const promptRequest = {
+			...normalized,
+			execution: { ...normalized.execution, tools: ["read"] },
+		};
+		const prompt = buildSubagentPrompt(promptRequest, [{ name: "selected-resource", content: "resource body" }]);
 		expect(preflight.tasks[0]?.forkContext).toEqual({
 			mode: "fork",
 			sourceSessionId: "parent-session",
@@ -2385,10 +2398,16 @@ describe("ICE subagent contracts", () => {
 		});
 		expect(digest).not.toContain("fork body");
 		expect(digest).not.toContain("packet body");
+		expect(prompt.indexOf("Execution contract")).toBeLessThan(prompt.indexOf("Explicitly selected prompt content"));
+		expect(prompt.indexOf("Explicitly selected prompt content")).toBeLessThan(
+			prompt.indexOf("Sanitized parent fork context"),
+		);
 		expect(prompt.indexOf("Sanitized parent fork context")).toBeLessThan(
 			prompt.indexOf("Explicit parent context packet"),
 		);
 		expect(prompt.indexOf("Explicit parent context packet")).toBeLessThan(prompt.indexOf("Task:"));
+		expect(prompt.indexOf("Keep the complete JSON report within")).toBeLessThan(prompt.indexOf("Task:"));
+		expect(prompt.indexOf("Return exactly one JSON object")).toBeLessThan(prompt.indexOf("Task:"));
 	});
 
 	it("keeps fork children fresh and isolates sibling snapshots", async () => {
@@ -2425,6 +2444,289 @@ describe("ICE subagent contracts", () => {
 		expect(buildSubagentPrompt(first)).not.toContain("second fork");
 		expect(buildSubagentPrompt(second)).toContain("second fork");
 		expect(buildSubagentPrompt(second)).not.toContain("first fork");
+	});
+
+	it("derives stable fork cache affinity without sharing child session identity", async () => {
+		const cwd = await createWorkspace();
+		const parentContext = {
+			getSessionId: () => "parent-session",
+			getLeafId: () => "leaf-1",
+			buildSessionContext: () => ({
+				messages: [{ role: "user" as const, content: "shared fork prefix", timestamp: 1 }],
+			}),
+		};
+		const first = normalizeSubagentRequest(
+			{ ...request(cwd), contextMode: "fork", task: "Inspect the first file." },
+			cwd,
+			{ parentContext },
+		);
+		const second = normalizeSubagentRequest(
+			{ ...request(cwd), contextMode: "fork", task: "Inspect the second file." },
+			cwd,
+			{ parentContext },
+		);
+		const firstKey = deriveSubagentPromptCacheKey(first, testModel("faux", "faux-model"), ["read"]);
+		const secondKey = deriveSubagentPromptCacheKey(second, testModel("faux", "faux-model"), ["read"]);
+		expect(firstKey).toMatch(/^ice-fork-v1-[0-9a-f]{52}$/);
+		expect(secondKey).toBe(firstKey);
+		expect(deriveSubagentPromptCacheKey(first, testModel("faux", "faux-model"), ["grep"])).not.toBe(firstKey);
+		expect(
+			deriveSubagentPromptCacheKey(normalizeSubagentRequest(request(cwd), cwd), undefined, ["read"]),
+		).toBeUndefined();
+
+		const sessionIds: string[] = [];
+		const cacheKeys: Array<string | undefined> = [];
+		const managers: Array<NonNullable<CreateAgentSessionOptions["sessionManager"]>> = [];
+		const createChild = async (normalized: ReturnType<typeof normalizeSubagentRequest>) => {
+			const childNumber = managers.length + 1;
+			const streamFunction = vi.fn((_model: Model<Api>, _context: Context, options: StreamOptions = {}) => {
+				sessionIds.push(options.sessionId ?? "missing-session");
+				cacheKeys.push(options.promptCacheKey);
+				return {} as never;
+			}) as unknown as StreamFunction;
+			const fakeSession = {
+				sessionId: `child-${childNumber}`,
+				messages: [],
+				agent: { streamFunction },
+			} as unknown as CreateAgentSessionResult["session"];
+			const child = await createNativeSubagentSession(
+				{ request: normalized, parentActiveTools: ["delegate", "read"], model: testModel("faux", "faux-model") },
+				async (options) => {
+					if (!options.sessionManager) throw new Error("child session manager missing");
+					managers.push(options.sessionManager);
+					return { session: fakeSession } as CreateAgentSessionResult;
+				},
+			);
+			const wrapped = (child.session as unknown as { agent: { streamFunction: StreamFunction } }).agent
+				.streamFunction;
+			wrapped(testModel("faux", "faux-model"), {} as Context, { sessionId: fakeSession.sessionId });
+			wrapped(testModel("faux", "faux-model"), {} as Context, {
+				sessionId: fakeSession.sessionId,
+				cacheRetention: "none",
+			});
+			return child;
+		};
+
+		const firstChild = await createChild(first);
+		const secondChild = await createChild(second);
+		expect(firstChild.promptCacheKey).toBe(firstKey);
+		expect(secondChild.promptCacheKey).toBe(firstKey);
+		expect(sessionIds).toEqual(["child-1", "child-1", "child-2", "child-2"]);
+		expect(cacheKeys).toEqual([firstKey, undefined, firstKey, undefined]);
+		expect(managers).toHaveLength(2);
+		expect(managers[0]).not.toBe(managers[1]);
+		expect(managers[0]?.getEntries()).toEqual([]);
+		expect(managers[1]?.getEntries()).toEqual([]);
+	});
+
+	it("records the shared prompt prefix and child-specific task boundary", async () => {
+		const cwd = await createWorkspace();
+		const parentContext = {
+			getSessionId: () => "parent-session",
+			getLeafId: () => "leaf-1",
+			buildSessionContext: () => ({
+				messages: [
+					{ role: "user" as const, content: "shared fork prefix", timestamp: 1 },
+					{ role: "user" as const, content: "shared follow-up context", timestamp: 2 },
+				],
+			}),
+		};
+		const base = normalizeSubagentRequest({ ...request(cwd), contextMode: "fork" }, cwd, { parentContext });
+		const parent = { ...base, task: "Parent baseline task." };
+		const first = { ...base, task: "Inspect the first file." };
+		const second = { ...base, task: "Inspect the second file." };
+		const model = testModel("faux", "faux-model");
+		const cacheKey = deriveSubagentPromptCacheKey(first, model, ["read", "grep"]);
+		if (!cacheKey) throw new Error("Expected a fork cache key");
+
+		const records = [
+			{
+				label: "parent",
+				sessionId: "parent-session",
+				promptCacheKey: undefined,
+				cacheRetention: "short" as const,
+				prompt: buildSubagentPrompt(parent),
+			},
+			{
+				label: "child-1",
+				sessionId: "child-1",
+				promptCacheKey: cacheKey,
+				cacheRetention: "short" as const,
+				prompt: buildSubagentPrompt(first),
+			},
+			{
+				label: "child-2",
+				sessionId: "child-2",
+				promptCacheKey: cacheKey,
+				cacheRetention: "short" as const,
+				prompt: buildSubagentPrompt(second),
+			},
+		];
+		const taskMarker = "\n\nTask:\n\n";
+		const firstTaskOffset = records[1].prompt.indexOf(taskMarker);
+		const secondTaskOffset = records[2].prompt.indexOf(taskMarker);
+		expect(firstTaskOffset).toBeGreaterThan(0);
+		expect(secondTaskOffset).toBe(firstTaskOffset);
+		expect(records[1].prompt.slice(0, firstTaskOffset)).toBe(records[2].prompt.slice(0, secondTaskOffset));
+		expect(records[1].prompt.slice(firstTaskOffset + taskMarker.length)).not.toBe(
+			records[2].prompt.slice(secondTaskOffset + taskMarker.length),
+		);
+
+		const beforeCacheKeys = records.map((record) => record.sessionId);
+		const afterCacheKeys = records.map((record) => record.promptCacheKey ?? record.sessionId);
+		const serialized = records.map((record) =>
+			JSON.stringify({
+				prompt: record.prompt,
+				cacheRetention: record.cacheRetention,
+				sessionId: record.sessionId,
+				promptCacheKey: record.sessionId,
+			}),
+		);
+		const beforePrefixBytes = commonPrefixBytes(serialized[0] ?? "", serialized[1] ?? "");
+		const afterSerialized = records.map((record, index) =>
+			JSON.stringify({
+				prompt: record.prompt,
+				cacheRetention: record.cacheRetention,
+				sessionId: record.sessionId,
+				promptCacheKey: afterCacheKeys[index],
+			}),
+		);
+		const afterPrefixBytes = commonPrefixBytes(afterSerialized[1] ?? "", afterSerialized[2] ?? "");
+		expect(new Set(beforeCacheKeys).size).toBe(3);
+		expect(new Set(afterCacheKeys).size).toBe(2);
+		const serializedPromptPrefixBytes = commonPrefixBytes(
+			JSON.stringify(records[1].prompt),
+			JSON.stringify(records[2].prompt),
+		);
+		expect(afterPrefixBytes).toBe(Buffer.byteLength('{"prompt":') + serializedPromptPrefixBytes);
+		expect(afterPrefixBytes).toBeGreaterThan(commonPrefixBytes(records[1].prompt, records[2].prompt));
+		expect(beforePrefixBytes).toBeGreaterThan(0);
+		expect(
+			records.map(({ label, sessionId, promptCacheKey, cacheRetention }) => ({
+				label,
+				sessionId,
+				promptCacheKey,
+				cacheRetention,
+			})),
+		).toEqual([
+			{ label: "parent", sessionId: "parent-session", promptCacheKey: undefined, cacheRetention: "short" },
+			{ label: "child-1", sessionId: "child-1", promptCacheKey: cacheKey, cacheRetention: "short" },
+			{ label: "child-2", sessionId: "child-2", promptCacheKey: cacheKey, cacheRetention: "short" },
+		]);
+	});
+
+	it("canonicalizes prompt sets while preserving provider-visible sequence identity", async () => {
+		const cwd = await createWorkspace();
+		const parentContext = {
+			getSessionId: () => "parent-session",
+			getLeafId: () => "leaf-1",
+			buildSessionContext: () => ({
+				messages: [{ role: "user" as const, content: "shared fork prefix", timestamp: 1 }],
+			}),
+		};
+		const base = normalizeSubagentRequest({ ...request(cwd), contextMode: "fork" }, cwd, { parentContext });
+		const model = testModel("faux", "faux-model");
+		const baseKey = deriveSubagentPromptCacheKey(base, model, ["read", "grep"]);
+		if (!baseKey) throw new Error("Expected a fork cache key");
+		const reorderedKey = deriveSubagentPromptCacheKey(base, model, ["grep", "read"]);
+		expect(reorderedKey).not.toBe(baseKey);
+
+		const executionA = { ...base, execution: { ...base.execution, tools: ["read", "grep"] } };
+		const executionB = { ...base, execution: { ...base.execution, tools: ["grep", "read"] } };
+		expect(deriveSubagentPromptCacheKey(executionA, model, ["read"])).toBe(
+			deriveSubagentPromptCacheKey(executionB, model, ["read"]),
+		);
+		expect(buildSubagentPrompt(executionA)).toBe(buildSubagentPrompt(executionB));
+
+		const scopeA = { ...base, scope: { ...base.scope, roots: [join(cwd, "z"), join(cwd, "a")] } };
+		const scopeB = { ...base, scope: { ...base.scope, roots: [join(cwd, "a"), join(cwd, "z")] } };
+		expect(deriveSubagentPromptCacheKey(scopeA, model, ["read"])).toBe(
+			deriveSubagentPromptCacheKey(scopeB, model, ["read"]),
+		);
+		expect(buildSubagentPrompt(scopeA)).toBe(buildSubagentPrompt(scopeB));
+
+		const withMcp = {
+			...base,
+			selectedMcpTools: ["server/z", "server/a"],
+			mcpAuthorizations: [
+				{ selector: "server/z", access: "read-only" as const },
+				{ selector: "server/a", access: "read-only" as const },
+			],
+		};
+		const withReorderedMcp = {
+			...withMcp,
+			selectedMcpTools: ["server/a", "server/z"],
+			mcpAuthorizations: [...withMcp.mcpAuthorizations].reverse(),
+		};
+		expect(deriveSubagentPromptCacheKey(withReorderedMcp, model, ["read", "grep"])).not.toBe(
+			deriveSubagentPromptCacheKey(withMcp, model, ["read", "grep"]),
+		);
+
+		const resourceA = {
+			kind: "prompt" as const,
+			name: "prompt-a",
+			source: "user" as const,
+			sourcePath: "/prompt-a",
+			canonicalPath: "/prompt-a",
+			sourceHash: "hash-a",
+		};
+		const resourceB = {
+			...resourceA,
+			name: "prompt-b",
+			sourcePath: "/prompt-b",
+			canonicalPath: "/prompt-b",
+			sourceHash: "hash-b",
+		};
+		const withResources = { ...base, resources: { ...base.resources, prompts: [resourceA, resourceB] } };
+		const withReorderedResources = {
+			...withResources,
+			resources: { ...withResources.resources, prompts: [resourceB, resourceA] },
+		};
+		expect(deriveSubagentPromptCacheKey(withReorderedResources, model, ["read"])).not.toBe(
+			deriveSubagentPromptCacheKey(withResources, model, ["read"]),
+		);
+
+		expect(deriveSubagentPromptCacheKey({ ...base, task: "A different task." }, model, ["read"])).toBe(
+			deriveSubagentPromptCacheKey(base, model, ["read"]),
+		);
+		expect(
+			deriveSubagentPromptCacheKey({ ...base, profile: { ...base.profile, sourceHash: "changed-profile" } }, model, [
+				"read",
+			]),
+		).not.toBe(deriveSubagentPromptCacheKey(base, model, ["read"]));
+		expect(
+			deriveSubagentPromptCacheKey(
+				{ ...base, profile: { ...base.profile, systemPrompt: "changed system" } },
+				model,
+				["read"],
+			),
+		).not.toBe(deriveSubagentPromptCacheKey(base, model, ["read"]));
+		expect(deriveSubagentPromptCacheKey({ ...base, projectTrusted: !base.projectTrusted }, model, ["read"])).not.toBe(
+			deriveSubagentPromptCacheKey(base, model, ["read"]),
+		);
+		expect(deriveSubagentPromptCacheKey(base, model, ["read"], true)).not.toBe(
+			deriveSubagentPromptCacheKey(base, model, ["read"]),
+		);
+		expect(
+			deriveSubagentPromptCacheKey(
+				{
+					...withResources,
+					resources: {
+						...withResources.resources,
+						prompts: [{ ...resourceA, sourceHash: "hash-changed" }, resourceB],
+					},
+				},
+				model,
+				["read"],
+			),
+		).not.toBe(deriveSubagentPromptCacheKey(withResources, model, ["read"]));
+		expect(
+			deriveSubagentPromptCacheKey(
+				{ ...withMcp, mcpAuthorizations: [{ selector: "server/z", access: "mutation" as const }] },
+				model,
+				["read"],
+			),
+		).not.toBe(deriveSubagentPromptCacheKey(withMcp, model, ["read"]));
 	});
 
 	it("preserves zero-packet fresh prompt behavior", async () => {
