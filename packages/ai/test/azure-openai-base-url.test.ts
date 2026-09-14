@@ -151,7 +151,8 @@ describe("azure-openai-responses base URL normalization", () => {
 		await streamAzureOpenAIResponses(model, context, {
 			apiKey: "test-api-key",
 			azureBaseUrl: "https://my-resource.openai.azure.com",
-			sessionId: "x".repeat(67),
+			sessionId: "child-session",
+			promptCacheKey: "x".repeat(67),
 		}).result();
 
 		expect(azureMock.lastParams?.prompt_cache_key).toBe("x".repeat(64));

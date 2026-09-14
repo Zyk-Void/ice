@@ -78,6 +78,7 @@
 - Added model-specific `ultra` thinking support through `thinkingLevelMap`, preserving provider-native values without enabling it for models that do not advertise the level ([#5](https://github.com/Zykairotis/ice/pull/5)).
 - Added deferred provider request contracts, durable response handles, authenticated fetch/cancel dispatch, and faux-provider support for pending, ready, failed, and cancelled responses ([#7339](https://github.com/earendil-works/pi/pull/7339) by [@davidbrai](https://github.com/davidbrai)).
 - Added Baseten as a built-in OpenAI-compatible provider with models.dev catalog generation and native `chat_template_args` reasoning controls.
+- Added typed prompt-cache affinity keys independent from provider session identities for supported cache-aware adapters, preserving continuation and transport session state.
 
 ### Changed
 

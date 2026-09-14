@@ -199,7 +199,7 @@ function writeEmptySseResponse(response: ServerResponse): void {
 async function captureAnthropicRequest(
 	model: Model<"anthropic-messages">,
 	context: Context,
-	options?: { sessionId?: string; cacheRetention?: string },
+	options?: { sessionId?: string; promptCacheKey?: string; cacheRetention?: string },
 ): Promise<CapturedRequest> {
 	let capturedRequest: CapturedRequest | undefined;
 
@@ -222,6 +222,7 @@ async function captureAnthropicRequest(
 			apiKey: "test-key",
 			cacheRetention: (options?.cacheRetention as "none" | "short" | "long") ?? "short",
 			sessionId: options?.sessionId,
+			promptCacheKey: options?.promptCacheKey,
 		});
 
 		for await (const event of stream) {
@@ -256,6 +257,16 @@ describe("Fireworks Anthropic session affinity and tool compat", () => {
 		});
 
 		expect(request.headers["x-session-affinity"]).toBe("fireworks-session-1");
+	});
+
+	it("keeps x-session-affinity on the child session when a cache key is provided", async () => {
+		const model = createFireworksModel();
+		const request = await captureAnthropicRequest(model, createContext(), {
+			sessionId: "fireworks-child-session",
+			promptCacheKey: "shared-fork-prefix",
+		});
+
+		expect(request.headers["x-session-affinity"]).toBe("fireworks-child-session");
 	});
 
 	it("omits x-session-affinity header for native Anthropic models", async () => {

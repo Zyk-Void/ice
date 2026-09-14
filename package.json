@@ -24,6 +24,7 @@
 		"ice:m12:report": "tsx benchmarks/native-vs-subprocess/src/cli.ts report",
 		"ice:m12:self-test": "tsx benchmarks/native-vs-subprocess/src/cli.ts self-test",
 		"ice:m13:verify": "tsx benchmarks/native-vs-subprocess/src/cli.ts m13:verify",
+		"ice:subagent-prompt-cache:bench": "tsx benchmarks/subagent-prompt-cache/src/cli.ts",
 		"check:pinned-deps": "node scripts/check-pinned-deps.mjs",
 		"check:shrinkwrap": "node scripts/generate-coding-agent-shrinkwrap.mjs --check",
 		"check:install-lock:coding-agent": "node scripts/generate-coding-agent-install-lock.mjs --check",
