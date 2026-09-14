@@ -25,6 +25,7 @@ import { KEYBINDINGS, KeybindingsManager } from "../src/core/keybindings.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import type { CreateAgentSessionOptions, CreateAgentSessionResult } from "../src/core/sdk.ts";
+import { createAgentSession } from "../src/core/sdk.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { importRufloAgentPack, mapAgentPackTools, unsupportedAgentPackFields } from "../src/ice-agent-packs.ts";
 import { IceAgentViewBridge } from "../src/ice-agent-view-bridge.ts";
@@ -86,6 +87,7 @@ import iceSubagents, {
 	SUBAGENT_PROFILE_ALIASES,
 	SUBAGENT_PROFILE_LIMITS,
 	SUBAGENT_PROFILES,
+	SUBAGENT_REPORT_ARTIFACT_LIMITS,
 	type SubagentBatchTaskLifecycleEvent,
 	SubagentError,
 	SubagentLiveSessionRegistry,
@@ -101,6 +103,7 @@ import iceSubagents, {
 	type WriterPatchVerificationContext,
 	type WriterRequest,
 	type WriterResult,
+	writeSubagentReportArtifact,
 } from "../src/ice-subagents.ts";
 
 const tempDirs: string[] = [];
@@ -4426,6 +4429,297 @@ describe("ICE subagent contracts", () => {
 		}
 	});
 
+	it("uses the core provider retry path without replaying a completed child tool", async () => {
+		const cwd = await createWorkspace();
+		await writeFile(join(cwd, "src", "app.ts"), "export const app = true;\n");
+		const scripted = registerScriptedUsageProvider(
+			[
+				fauxAssistantMessage(fauxToolCall("read", { path: "src/app.ts" }, { id: "retry-read" })),
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+				fauxAssistantMessage('{"summary":"recovered child report","evidence":{"paths":["src/app.ts"]}}'),
+			],
+			{ api: "anthropic-messages" },
+		);
+		const settingsManager = SettingsManager.inMemory();
+		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 1, baseDelayMs: 1 } });
+		const events: iceSubagentsModule.SubagentEvent[] = [];
+		const bridge = new IceAgentViewBridge();
+		let childRetrySettings: ReturnType<SettingsManager["getRetrySettings"]> | undefined;
+		try {
+			const model = scripted.model;
+			const modelRuntime = await scriptedModelRuntime(cwd, model);
+			const normalized = normalizeSubagentRequest(request(cwd), cwd);
+			const result = await new NativeSubagentRunner({
+				agentDir: cwd,
+				artifactRoot: join(cwd, "artifacts"),
+				agentViewBridge: bridge,
+				createSession: async (sessionOptions) => {
+					childRetrySettings = sessionOptions.settingsManager?.getRetrySettings();
+					return createAgentSession(sessionOptions);
+				},
+			}).runResolved(normalized, ["delegate", "read"], {
+				model,
+				modelRuntime,
+				settingsManager,
+				onEvent: (event) => events.push(event),
+			});
+
+			expect(childRetrySettings).toMatchObject({ enabled: true, maxRetries: 1, baseDelayMs: 1 });
+			expect(result.status).toBe("completed");
+			expect(scripted.consumed()).toBe(3);
+			expect(events.filter((event) => event.type === "subagent_tool_start")).toHaveLength(1);
+			const retryEvents = events.filter((event) => event.type === "subagent_retry");
+			expect(retryEvents.map((event) => event.retry?.state)).toEqual(["scheduled", "recovered"]);
+			expect(retryEvents[0]?.retry).toMatchObject({ attempt: 1, maxAttempts: 1, delayMs: 1 });
+			expect(retryEvents[0]?.retry?.diagnostic).toBe("overloaded_error");
+			expect(bridge.getView(normalized.runId)?.presentation?.retry).toMatchObject({
+				state: "recovered",
+				attempt: 1,
+				maxAttempts: 1,
+			});
+		} finally {
+			scripted.unregister();
+		}
+	});
+
+	it("surfaces an exhausted core retry as a failed retry state", async () => {
+		const cwd = await createWorkspace();
+		const scripted = registerScriptedUsageProvider(
+			[
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error_final" }),
+			],
+			{ api: "anthropic-messages" },
+		);
+		const settingsManager = SettingsManager.inMemory();
+		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 1, baseDelayMs: 1 } });
+		const events: iceSubagentsModule.SubagentEvent[] = [];
+		const bridge = new IceAgentViewBridge();
+		try {
+			const modelRuntime = await scriptedModelRuntime(cwd, scripted.model);
+			const normalized = normalizeSubagentRequest(request(cwd), cwd);
+			const result = await new NativeSubagentRunner({ agentDir: cwd, agentViewBridge: bridge }).runResolved(
+				normalized,
+				["delegate", "read"],
+				{
+					model: scripted.model,
+					modelRuntime,
+					settingsManager,
+					onEvent: (event) => events.push(event),
+				},
+			);
+
+			expect(result.status).toBe("failed");
+			expect(scripted.consumed()).toBe(2);
+			const retryEvents = events.filter((event) => event.type === "subagent_retry");
+			expect(retryEvents.map((event) => event.retry?.state)).toEqual(["scheduled", "failed"]);
+			expect(retryEvents.at(-1)?.retry?.diagnostic).toContain("overloaded_error_final");
+			expect(bridge.getView(normalized.runId)?.presentation?.retry).toMatchObject({
+				state: "failed",
+				attempt: 1,
+				maxAttempts: 1,
+			});
+		} finally {
+			scripted.unregister();
+		}
+	});
+
+	it("cancels a child cleanly while the core retry path is in backoff", async () => {
+		const cwd = await createWorkspace();
+		const scripted = registerScriptedUsageProvider(
+			[fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })],
+			{ api: "anthropic-messages" },
+		);
+		const settingsManager = SettingsManager.inMemory();
+		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 1, baseDelayMs: 60_000 } });
+		const controller = new AbortController();
+		const events: iceSubagentsModule.SubagentEvent[] = [];
+		try {
+			const model = scripted.model;
+			const modelRuntime = await scriptedModelRuntime(cwd, model);
+			const normalized = normalizeSubagentRequest({ ...request(cwd), timeoutMs: 5_000 }, cwd);
+			const result = await Promise.race([
+				new NativeSubagentRunner({ agentDir: cwd }).runResolved(normalized, ["delegate", "read"], {
+					model,
+					modelRuntime,
+					settingsManager,
+					signal: controller.signal,
+					onEvent: (event) => {
+						events.push(event);
+						if (event.type === "subagent_retry" && event.retry?.state === "scheduled") controller.abort();
+					},
+				}),
+				new Promise<SubagentResult>((_, reject) =>
+					setTimeout(() => reject(new Error("child did not cancel during retry backoff")), 500),
+				),
+			]);
+			expect(result.status).toBe("cancelled");
+			expect(scripted.consumed()).toBe(1);
+			expect(events.some((event) => event.type === "subagent_retry")).toBe(true);
+		} finally {
+			controller.abort();
+			scripted.unregister();
+		}
+	});
+
+	it("enters one-shot wrap-up before the hard turn boundary", async () => {
+		const cwd = await createWorkspace();
+		const normalized = normalizeSubagentRequest({ ...request(cwd), execution: { maxTurns: 2 } }, cwd);
+		const messages: AgentMessage[] = [];
+		const promptCalls: string[] = [];
+		let notify: ((event: AgentSessionEvent) => void) | undefined;
+		const shouldStopAfterTurn = vi.fn(async () => false);
+		const agent = {
+			shouldStopAfterTurn,
+		};
+		const fakeSession = {
+			sessionId: "child-wrap-up",
+			model: testModel("faux", "faux"),
+			messages,
+			agent,
+			extensionRunner: createNoopExtensionRunner(),
+			subscribe: vi.fn((listener: (event: AgentSessionEvent) => void) => {
+				notify = listener;
+				return vi.fn();
+			}),
+			prompt: vi.fn(async (prompt: string) => {
+				promptCalls.push(prompt);
+				notify?.({ type: "turn_start" } as AgentSessionEvent);
+				messages.push({
+					role: "assistant",
+					content:
+						promptCalls.length === 1
+							? "work completed; prepare the final report"
+							: '{"summary":"wrapped up","evidence":{"paths":["src"]}}',
+					stopReason: "stop",
+				} as unknown as AgentMessage);
+				notify?.({ type: "message_update" } as AgentSessionEvent);
+				notify?.({ type: "turn_end" } as AgentSessionEvent);
+				await agent.shouldStopAfterTurn();
+			}),
+			setActiveToolsByName: vi.fn(),
+			getActiveToolNames: vi.fn(() => ["read"]),
+			abort: vi.fn(async () => {}),
+			dispose: vi.fn(),
+			getSessionStats: vi.fn(() => ({
+				tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				cost: 0,
+			})),
+		} as unknown as CreateAgentSessionResult["session"];
+		const events: iceSubagentsModule.SubagentEvent[] = [];
+		const result = await new NativeSubagentRunner({
+			createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
+		}).runResolved(normalized, ["delegate", "read"], { onEvent: (event) => events.push(event) });
+
+		expect(result.status).toBe("completed");
+		expect(result.observedTurns).toBe(2);
+		expect(promptCalls).toHaveLength(2);
+		expect(promptCalls[1]).toContain("ICE VOID SUBAGENT WRAP UP");
+		expect(promptCalls[1]).toContain("active final-output contract");
+		expect(promptCalls[1]).not.toContain("JSON");
+		expect(events.filter((event) => event.type === "subagent_wrap_up")).toHaveLength(1);
+		expect(shouldStopAfterTurn).toHaveBeenCalledTimes(2);
+	});
+
+	it("keeps the hard turn limit authoritative when wrap-up does not produce a report", async () => {
+		const cwd = await createWorkspace();
+		const normalized = normalizeSubagentRequest({ ...request(cwd), execution: { maxTurns: 2 } }, cwd);
+		const messages: AgentMessage[] = [];
+		const promptCalls: string[] = [];
+		let notify: ((event: AgentSessionEvent) => void) | undefined;
+		const agent = {
+			shouldStopAfterTurn: vi.fn(async () => false),
+		};
+		const fakeSession = {
+			sessionId: "child-wrap-up-limit",
+			model: testModel("faux", "faux"),
+			messages,
+			agent,
+			extensionRunner: createNoopExtensionRunner(),
+			subscribe: vi.fn((listener: (event: AgentSessionEvent) => void) => {
+				notify = listener;
+				return vi.fn();
+			}),
+			prompt: vi.fn(async (prompt: string) => {
+				promptCalls.push(prompt);
+				notify?.({ type: "turn_start" } as AgentSessionEvent);
+				messages.push({
+					role: "assistant",
+					content: promptCalls.length === 1 ? "work without a report" : "still not valid JSON",
+					stopReason: "stop",
+				} as unknown as AgentMessage);
+				notify?.({ type: "message_update" } as AgentSessionEvent);
+				notify?.({ type: "turn_end" } as AgentSessionEvent);
+				await agent.shouldStopAfterTurn();
+			}),
+			setActiveToolsByName: vi.fn(),
+			getActiveToolNames: vi.fn(() => ["read"]),
+			abort: vi.fn(async () => {}),
+			dispose: vi.fn(),
+			getSessionStats: vi.fn(() => ({
+				tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				cost: 0,
+			})),
+		} as unknown as CreateAgentSessionResult["session"];
+		const events: iceSubagentsModule.SubagentEvent[] = [];
+		const result = await new NativeSubagentRunner({
+			createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
+		}).runResolved(normalized, ["delegate", "read"], { onEvent: (event) => events.push(event) });
+
+		expect(result.status).toBe("failed");
+		expect(result.observedTurns).toBe(2);
+		expect(promptCalls).toHaveLength(2);
+		expect(events.filter((event) => event.type === "subagent_wrap_up")).toHaveLength(1);
+		expect(result.diagnostics.some((diagnostic) => diagnostic.code === "batch_budget_exhausted")).toBe(true);
+	});
+
+	it("bounds and redacts report artifacts before returning their pointer", async () => {
+		const artifactRoot = await mkdtemp(join(tmpdir(), "ice-report-artifact-"));
+		tempDirs.push(artifactRoot);
+		const content = `api_key=secret-token\n${"x".repeat(SUBAGENT_REPORT_ARTIFACT_LIMITS.maxBytes + 128)}`;
+		const artifact = writeSubagentReportArtifact({
+			runId: "artifact-boundary",
+			content,
+			artifactRoot,
+			contentType: "application/json",
+		});
+		expect(artifact).toMatchObject({
+			id: "artifact-boundary",
+			contentType: "application/json",
+			bytes: SUBAGENT_REPORT_ARTIFACT_LIMITS.maxBytes,
+			truncated: true,
+		});
+		const saved = await readFile(artifact!.path, "utf8");
+		expect(saved).not.toContain("secret-token");
+		expect(Buffer.byteLength(saved)).toBe(SUBAGENT_REPORT_ARTIFACT_LIMITS.maxBytes);
+		expect((await stat(artifact!.path)).mode & 0o777).toBe(0o444);
+		expect((await stat(artifactRoot)).mode & 0o777).toBe(0o700);
+
+		const duplicate = writeSubagentReportArtifact({
+			runId: "artifact-boundary",
+			content: "replacement must not happen",
+			artifactRoot,
+		});
+		expect(duplicate).toBeUndefined();
+		expect(await readFile(artifact!.path, "utf8")).toBe(saved);
+	});
+
+	it("rejects report artifacts beneath a symlinked root", async () => {
+		const parent = await mkdtemp(join(tmpdir(), "ice-report-artifact-parent-"));
+		const target = await mkdtemp(join(tmpdir(), "ice-report-artifact-target-"));
+		tempDirs.push(parent, target);
+		const alias = join(parent, "alias");
+		await symlink(target, alias, "dir");
+
+		expect(
+			writeSubagentReportArtifact({
+				runId: "symlink-root",
+				content: "must not follow the alias",
+				artifactRoot: alias,
+			}),
+		).toBeUndefined();
+	});
+
 	it("blocks same-response tools and skips finalization when the full request context cannot fit the reserve", async () => {
 		const cwd = await createWorkspace();
 		await writeFile(join(cwd, "src", "app.ts"), "export const app = true;\n");
@@ -4751,16 +5045,67 @@ describe("ICE subagent contracts", () => {
 				cost: 0,
 			})),
 		} as unknown as CreateAgentSessionResult["session"];
+		const artifactRoot = join(cwd, ".artifacts");
+		const normalized = normalizeSubagentRequest(request(cwd), cwd);
 		const result = await new NativeSubagentRunner({
+			artifactRoot,
 			createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
-		}).run(request(cwd), ["delegate", "read"]);
+		}).runResolved(normalized, ["delegate", "read"]);
 		// An oversized report is a bounded report-protocol failure after real work:
 		// never verified completed, never pretending no work happened.
 		expect(result.status).toBe("verification_failed");
 		expect(result.diagnostics[0]?.code).toBe("report_protocol_failure");
 		expect(result.observedOutputBytes).toBe(Buffer.byteLength(rawReport));
 		expect(result.workArtifact?.reportProtocol).toMatchObject({ status: "truncated" });
-		expect(verifySubagentResult(result, normalizeSubagentRequest(request(cwd), cwd)).verified).toBe(false);
+		expect(result.reportArtifact).toMatchObject({
+			id: normalized.runId,
+			contentType: "application/json",
+			originalBytes: Buffer.byteLength(rawReport),
+			truncated: false,
+		});
+		expect(result.diagnostics.some((diagnostic) => diagnostic.code === "report_spilled")).toBe(true);
+		expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(normalized.maxOutputBytes);
+		expect(verifySubagentResult(result, normalized).verified).toBe(false);
+	});
+
+	it("spills oversized partial output on provider failure without exposing credentials", async () => {
+		const cwd = await createWorkspace();
+		const rawPartial = `Bearer partial-secret\n${"y".repeat(SUBAGENT_REPORT_ARTIFACT_LIMITS.maxBytes + 64)}`;
+		const childMessages: AgentMessage[] = [
+			{
+				role: "assistant",
+				content: rawPartial,
+				stopReason: "stop",
+			} as unknown as AgentMessage,
+		];
+		const fakeSession = {
+			sessionId: "child-partial-over-cap",
+			model: {} as Model<Api>,
+			messages: childMessages,
+			extensionRunner: createNoopExtensionRunner(),
+			subscribe: vi.fn(() => vi.fn()),
+			prompt: vi.fn(async () => {
+				throw new Error("provider disconnected");
+			}),
+			abort: vi.fn(async () => {}),
+			dispose: vi.fn(),
+			getSessionStats: vi.fn(() => ({
+				tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+				cost: 0,
+			})),
+		} as unknown as CreateAgentSessionResult["session"];
+		const artifactRoot = join(cwd, ".artifacts");
+		const result = await new NativeSubagentRunner({
+			artifactRoot,
+			createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
+		}).run(request(cwd), ["delegate", "read"]);
+		const artifact = result.reportArtifact;
+		expect(result.status).toBe("failed");
+		expect(artifact).toBeDefined();
+		expect(result.diagnostics.some((diagnostic) => diagnostic.code === "report_spilled")).toBe(true);
+		const saved = await readFile(artifact!.path, "utf8");
+		expect(saved).not.toContain("partial-secret");
+		expect(Buffer.byteLength(saved)).toBeLessThanOrEqual(SUBAGENT_REPORT_ARTIFACT_LIMITS.maxBytes);
 	});
 
 	it("uses a self-delegation structured report contract with findings", async () => {
@@ -5065,6 +5410,7 @@ describe("ICE subagent contracts", () => {
 		const progressPaths: Array<string | undefined> = [];
 		const result = await Promise.race([
 			new NativeSubagentRunner({
+				artifactRoot: join(cwd, "artifacts"),
 				createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
 			}).runResolved(normalized, ["delegate", "read"], {
 				onEvent: (event) => {
@@ -5075,7 +5421,14 @@ describe("ICE subagent contracts", () => {
 				setTimeout(() => reject(new Error("output budget was not enforced during streaming")), 100),
 			),
 		]);
-		expect(result).toMatchObject({ status: "failed", diagnostics: [{ code: "output_truncated" }] });
+		expect(result.status).toBe("failed");
+		expect(result.diagnostics[0]).toMatchObject({ code: "output_truncated" });
+		expect(result.reportArtifact).toMatchObject({
+			contentType: "text/plain",
+			originalBytes: 30_043,
+			truncated: false,
+		});
+		expect(result.diagnostics.some((diagnostic) => diagnostic.code === "report_spilled")).toBe(true);
 		expect(abort).toHaveBeenCalledTimes(1);
 		expect(progressPaths).toEqual([undefined]);
 	});
@@ -5112,11 +5465,14 @@ describe("ICE subagent contracts", () => {
 		} as unknown as CreateAgentSessionResult["session"];
 
 		const result = await new NativeSubagentRunner({
+			artifactRoot: join(cwd, "artifacts"),
 			createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
 			agentViewBridge: bridge,
 		}).runResolved(normalized, ["delegate", "read"]);
 
-		expect(result).toMatchObject({ status: "failed", diagnostics: [{ code: "output_truncated" }] });
+		expect(result.status).toBe("failed");
+		expect(result.diagnostics[0]).toMatchObject({ code: "output_truncated" });
+		expect(result.reportArtifact?.path).toContain(join(cwd, "artifacts"));
 		expect(bridge.getView(normalized.runId)).toMatchObject({
 			kind: "historical-subagent",
 			status: "failed",

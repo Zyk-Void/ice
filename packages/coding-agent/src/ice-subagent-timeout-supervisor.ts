@@ -1,7 +1,16 @@
 import { redactCredentialText } from "./utils/redact.ts";
 
 export type SubagentSupervisorState = "running" | "awaiting_extension" | "terminal";
-export type SubagentSupervisorPhase = "startup" | "working" | "controlled_wait" | "finalization";
+export type SubagentSupervisorPhase = "startup" | "working" | "wrapping_up" | "controlled_wait" | "finalization";
+export type SubagentRetryStateKind = "scheduled" | "recovered" | "failed";
+
+export interface SubagentRetryState {
+	readonly state: SubagentRetryStateKind;
+	readonly attempt: number;
+	readonly maxAttempts: number;
+	readonly delayMs?: number;
+	readonly diagnostic?: string;
+}
 export type SubagentToolActivityOutcome = "running" | "ok" | "error" | "aborted";
 export type SubagentSupervisorStopReason = "cancelled" | "timed_out";
 
