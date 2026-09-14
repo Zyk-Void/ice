@@ -642,12 +642,23 @@ describe("ICE subagent contracts", () => {
 		expect(manage?.description).toMatch(/preserves run ID.*model.*profile.*scope.*tool authority.*output budget/i);
 	});
 
-	it("validates the manage_subagent contract as a closed schema that rejects widening", async () => {
+	it("validates the phase-aware manage_subagent contract as a closed schema that rejects widening", async () => {
 		const harness = await createAsyncToolHarness();
 		const schema = harness.tools.get("manage_subagent")!.parameters;
 		expect(schema).toMatchObject({ additionalProperties: false });
-		// Every declared lifecycle action validates, including the reuse/delete additions.
-		for (const action of ["inspect", "extend", "follow_up", "stop", "resume", "delete"]) {
+		// The combined lifecycle exposes live-multiplexing actions (peek/wait/detach)
+		// alongside terminal reuse/delete actions in one phase-aware union.
+		for (const action of [
+			"inspect",
+			"peek",
+			"wait",
+			"extend",
+			"follow_up",
+			"stop",
+			"detach",
+			"resume",
+			"delete",
+		]) {
 			expect(Value.Check(schema, { runId: "run-1", action })).toBe(true);
 		}
 		// An action outside the closed union is rejected outright.
@@ -658,6 +669,62 @@ describe("ICE subagent contracts", () => {
 		}
 		expect(Value.Check(schema, { runId: "run-1", action: "resume", message: "continue" })).toBe(true);
 		expect(Value.Check(schema, { runId: "run-1", action: "delete" })).toBe(true);
+		// waitMs stays a bounded management-wait window on the combined schema.
+		const manage = harness.tools.get("manage_subagent");
+		const properties = manage?.parameters as { properties?: Record<string, unknown> };
+		expect(properties.properties?.waitMs).toMatchObject({
+			minimum: 1,
+			maximum: iceSubagentsModule.SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS,
+		});
+		expect(manage?.description).toMatch(/phase-aware/i);
+		expect(manage?.description).toMatch(/detach retains the same live child/i);
+		expect(manage?.description).toMatch(/resume continues a retained completed child/i);
+	});
+
+	it("routes manage_subagent actions through owner-scoped validation with phase gates", async () => {
+		const harness = await createAsyncToolHarness();
+		const manage = harness.tools.get("manage_subagent")!;
+		type ManageOutcome = { isError?: boolean; details?: { error?: { code?: string; message?: string } } };
+		const execute = async (params: Record<string, unknown>): Promise<ManageOutcome> =>
+			(await manage.execute(
+				"call-manage",
+				{ runId: "run-unknown-0001", ...params } as never,
+				undefined,
+				undefined,
+				harness.context,
+			)) as ManageOutcome;
+
+		// Live-only actions reject an unknown handle at the ownership boundary.
+		for (const action of ["peek", "inspect", "detach", "stop", "extend"] as const) {
+			const rejected = await execute({ action });
+			expect(rejected.isError).toBe(true);
+			expect(rejected.details?.error?.code).toBe("child_protocol_failure");
+		}
+		// Only the detach branch reports the detach-specific rejection.
+		expect((await execute({ action: "detach" })).details?.error?.message).toMatch(/can be detached/i);
+		// follow_up requires a stable requestId and a bounded message.
+		expect((await execute({ action: "follow_up" })).details?.error?.code).toBe("malformed_result");
+
+		// waitMs is validated before ownership, proving the wait branch reaches the
+		// bounded management wait rather than any child execution path.
+		for (const waitMs of [0, iceSubagentsModule.SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS + 1]) {
+			const outOfWindow = await execute({ action: "wait", waitMs });
+			expect(outOfWindow.isError).toBe(true);
+			expect(outOfWindow.details?.error?.code).toBe("malformed_result");
+			expect(outOfWindow.details?.error?.message).toMatch(/Management wait must be an integer between 1 and/);
+		}
+		const inWindow = await execute({ action: "wait", waitMs: 50 });
+		expect(inWindow.isError).toBe(true);
+		expect(inWindow.details?.error?.code).toBe("child_protocol_failure");
+		expect(inWindow.details?.error?.message).toMatch(/owned by this parent session/);
+
+		// Terminal-only actions reject the same unknown handle: there is no retained
+		// child to resume, and delete reports the idempotent forgotten outcome.
+		expect((await execute({ action: "resume", message: "continue" })).details?.error?.code).toBe(
+			"child_protocol_failure",
+		);
+		const forgotten = await execute({ action: "delete" });
+		expect(forgotten.isError).toBe(false);
 	});
 
 	it("shares one directories-only scope schema across delegated tools", async () => {

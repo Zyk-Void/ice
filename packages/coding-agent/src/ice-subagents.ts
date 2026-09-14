@@ -151,6 +151,7 @@ import {
 import {
 	getIceSubagentHookHandlers,
 	ICE_HOOK_JOURNAL_ENTRY_TYPE,
+	ICE_SUBAGENT_SETTINGS_LIMITS,
 	type IceContractCallInput,
 	type IceHookContextAddition,
 	type IceHookDispatcherOptions,
@@ -173,6 +174,9 @@ import {
 } from "./ice-subagent-telemetry.ts";
 import {
 	formatSubagentToolActivity,
+	projectSubagentManagementState,
+	projectSubagentTerminalStatus,
+	type SubagentManagementChildState,
 	SubagentRunSupervisor,
 	SubagentRunSupervisorRegistry,
 	type SubagentRuntimeAttention,
@@ -249,6 +253,41 @@ export const SUBAGENT_PROFILE_LIMITS = {
 	minTopP: 0,
 	maxTopP: 1,
 } as const;
+
+/** Conservative per-call ceiling for a management `wait`; expiry is never a child timeout. */
+export const SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS = 60_000;
+export const SUBAGENT_MANAGEMENT_WAIT_DEFAULT_MS = 30_000;
+/** Bounded number of settled detached-run terminal results retained for post-terminal management. */
+const SUBAGENT_RETAINED_RESULT_LIMIT = 32;
+/**
+ * Bounded retention window granted to a detached child. It is separate from the
+ * supervisor extension reserve, so detaching never spends the extension budget.
+ */
+export const SUBAGENT_DETACH_RETENTION_MS = 2 * 60 * 1_000;
+
+/**
+ * Bounded result of an observational management action. `waitExpired` is true
+ * only when the parent's management window elapsed before a child state change;
+ * it never implies the child timed out.
+ */
+export interface SubagentManagedObservation {
+	readonly runId: string;
+	readonly childState: SubagentManagementChildState;
+	readonly terminal: boolean;
+	readonly waitExpired: boolean;
+	readonly attention?: SubagentRuntimeAttention;
+	readonly result?: SubagentResult;
+}
+
+/**
+ * Launch-time admission handle for a retained managed child. It is delivered
+ * once, when supervision starts, so the parent can return control before the
+ * initial hard timeout while the same child session keeps running.
+ */
+export interface SubagentManagedHandle {
+	readonly runId: string;
+	readonly childSessionId?: string;
+}
 
 export interface UnsafeSubagentStartupArgOptions {
 	stdinIsTTY: boolean;
@@ -7437,6 +7476,8 @@ export interface NativeSubagentRunOptions {
 	onEvent?: (event: SubagentEvent) => void;
 	onRuntimeAttention?: (attention: SubagentRuntimeAttention) => void;
 	onManagedResult?: (result: SubagentResult) => void | Promise<void>;
+	/** Launch-time admission handle; invoked once when supervision starts for this run. */
+	onManagedHandle?: (handle: SubagentManagedHandle) => void;
 	/** Parent-owned lifecycle hook runtime; absent when the feature is disabled. */
 	hookRuntime?: SubagentHookRuntime;
 	/** Optional per-run parent-owned MCP dispatch override. */
@@ -7519,9 +7560,14 @@ export class NativeSubagentRunner {
 	private readonly runtimeManagementEnabled: boolean;
 	private readonly supervisorOwners = new Map<string, string>();
 	private readonly followUpRequests = new Map<string, Set<string>>();
+	/** Stage 2: reusable terminal child sessions retained for explicit resume/delete. */
 	private readonly retainedChildren = new Map<string, RetainedSubagentSession>();
 	/** Superseded retained runId -> the active run that claimed it while a resume is in flight. */
 	private readonly activeResumeClaims = new Map<string, string>();
+	/** Live multiplexed runs detached from the parent tool call but still under supervision. */
+	private readonly detachedRuns = new Map<string, { promise?: Promise<SubagentResult> }>();
+	/** Terminal result observation ledger for settled managed runs (all terminal states). */
+	private readonly retainedManagedResults = new Map<string, { result: SubagentResult; parentSessionId: string }>();
 
 	constructor(options: NativeSubagentRunnerOptions = {}) {
 		assertIceSubagentBackendPolicy();
@@ -7541,6 +7587,222 @@ export class NativeSubagentRunner {
 			: undefined;
 	}
 
+	/**
+	 * Observational snapshot of a live retained run. Peeking mutates no runtime
+	 * budget and grants no authority; ownership is checked by parent session.
+	 * Settled runs keep serving their bounded terminal observation from the
+	 * retained-result ledger after supervisor cleanup.
+	 */
+	peekRuntime(runId: string, parentSessionId: string): SubagentManagedObservation | undefined {
+		const supervisor = this.getOwnedSupervisor(runId, parentSessionId);
+		if (supervisor) {
+			const snapshot = supervisor.getSnapshot();
+			const { childState, terminal } = projectSubagentManagementState(snapshot);
+			const retained = terminal ? this.retainedManagedResults.get(runId) : undefined;
+			return Object.freeze({
+				runId,
+				childState,
+				terminal,
+				waitExpired: false,
+				attention: Object.freeze({
+					...snapshot,
+					lastActivities: Object.freeze(snapshot.lastActivities.slice(-3)),
+				}),
+				...(retained && retained.parentSessionId === parentSessionId ? { result: retained.result } : {}),
+			});
+		}
+		const retained = this.retainedManagedResults.get(runId);
+		if (retained && retained.parentSessionId === parentSessionId) {
+			return Object.freeze({
+				runId,
+				childState: projectSubagentTerminalStatus(retained.result.status),
+				terminal: true,
+				waitExpired: false,
+				result: retained.result,
+			});
+		}
+		return undefined;
+	}
+
+	/**
+	 * Wait for a terminal or attention child state for at most `waitMs`, then
+	 * return the latest observation. Expiry sets `waitExpired` and never marks
+	 * the child `timed_out`. Event driven through the supervisor lifecycle
+	 * waiters; there is no polling loop.
+	 */
+	async waitRuntime(
+		runId: string,
+		parentSessionId: string,
+		waitMs: number,
+		signal?: AbortSignal,
+	): Promise<SubagentManagedObservation> {
+		if (!Number.isInteger(waitMs) || waitMs < 1 || waitMs > SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS) {
+			throw new SubagentError(
+				"malformed_result",
+				`Management wait must be an integer between 1 and ${SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS} ms.`,
+			);
+		}
+		const supervisor = this.getOwnedSupervisor(runId, parentSessionId);
+		if (!supervisor) {
+			// A settled run can outlive its supervisor in the bounded retained
+			// ledger; there is nothing left to wait for, so report it directly.
+			const settled = this.peekRuntime(runId, parentSessionId);
+			if (settled) return settled;
+			throw new SubagentError(
+				"child_protocol_failure",
+				"The selected subagent is not a live retained run owned by this parent session.",
+			);
+		}
+		const deadline = Date.now() + waitMs;
+		for (;;) {
+			const observation = this.peekRuntime(runId, parentSessionId);
+			if (!observation) {
+				throw new SubagentError(
+					"child_protocol_failure",
+					"The selected subagent is no longer a live retained run owned by this parent session.",
+				);
+			}
+			// Attention states pause the child clock awaiting an explicit decision;
+			// they are wait-satisfying states, not waiting-in-progress states.
+			if (observation.childState !== "running") return observation;
+			let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+			try {
+				await Promise.race([
+					supervisor.waitForLifecycleChange(signal),
+					new Promise<void>((resolve) => {
+						timer = globalThis.setTimeout(resolve, Math.max(0, deadline - Date.now()));
+					}),
+				]);
+			} finally {
+				if (timer) globalThis.clearTimeout(timer);
+			}
+			// Loop first so a terminal transition racing the deadline is reported
+			// as the observed state; only a still-running child after the deadline
+			// returns with waitExpired (a management expiry, never a child timeout).
+			if (signal?.aborted) {
+				// Parent cancellation stops the wait without inventing a child outcome.
+				const cancelled = this.peekRuntime(runId, parentSessionId);
+				if (!cancelled) {
+					throw new SubagentError(
+						"child_protocol_failure",
+						"The selected subagent is no longer a live retained run owned by this parent session.",
+					);
+				}
+				return cancelled;
+			}
+			if (Date.now() < deadline) continue;
+			const afterDeadline = this.peekRuntime(runId, parentSessionId);
+			if (!afterDeadline) {
+				throw new SubagentError(
+					"child_protocol_failure",
+					"The selected subagent is no longer a live retained run owned by this parent session.",
+				);
+			}
+			if (afterDeadline.childState !== "running") return afterDeadline;
+			return Object.freeze({ ...afterDeadline, waitExpired: true });
+		}
+	}
+
+	/**
+	 * Retain the same child under management so the parent can continue other
+	 * work, without a replacement child and without replaying the initial prompt.
+	 * The same run ID, session, model, profile, scope, and tool authority
+	 * continue. A running child is retained in place and no budget changes; a
+	 * paused child resumes under the separate bounded retention pool, never the
+	 * extension reserve, so detaching cannot silently spend extension budget.
+	 * Idempotent per run.
+	 */
+	detachRuntime(runId: string, parentSessionId: string): SubagentManagedObservation | undefined {
+		const supervisor = this.getOwnedSupervisor(runId, parentSessionId);
+		if (!supervisor) return undefined;
+		const state = supervisor.stateValue;
+		if (state === "terminal") return this.peekRuntime(runId, parentSessionId);
+		if (!this.detachedRuns.has(runId)) {
+			if (state === "awaiting_extension") {
+				const retentionMs = Math.min(
+					SUBAGENT_DETACH_RETENTION_MS,
+					supervisor.getSnapshot().remainingRetentionMs ?? 0,
+				);
+				if (retentionMs < 1_000) return undefined;
+				const continuation = supervisor.retain(retentionMs);
+				this.detachedRuns.set(runId, { promise: continuation });
+				// The continuation settles through the runner managed-terminal path;
+				// swallow only the detached rejection so it cannot become unhandled.
+				void continuation.catch(() => {});
+			} else {
+				// Retain in place: the child keeps running under its admitted budget
+				// and the parent simply stops blocking on it.
+				this.detachedRuns.set(runId, {});
+			}
+		}
+		return this.peekRuntime(runId, parentSessionId);
+	}
+
+	/** Terminal result of a settled retained run; absent while the run is live. */
+	getRetainedManagedResult(runId: string, parentSessionId: string): SubagentResult | undefined {
+		const retained = this.retainedManagedResults.get(runId);
+		return retained && retained.parentSessionId === parentSessionId ? retained.result : undefined;
+	}
+
+	/**
+	 * Store a terminal managed result for post-terminal observation. Returns true
+	 * only for the first publication of a run, which is the exactly-once guard
+	 * shared by every managed terminal observer.
+	 *
+	 * The result ledger is keyed by managed run identity. A `resume` mints a new
+	 * run id for the continued execution, so the superseded terminal handle keeps
+	 * its own observation until it is explicitly deleted or evicted; it never
+	 * masquerades as the resumed run.
+	 */
+	noteManagedTerminalResult(runId: string, parentSessionId: string, result: SubagentResult): boolean {
+		if (this.activeResumeClaims.has(runId)) return false;
+		if (this.retainedManagedResults.has(runId)) return false;
+		if (result.status === "needs_time") return false;
+		this.retainedManagedResults.set(runId, { result, parentSessionId });
+		this.detachedRuns.delete(runId);
+		while (this.retainedManagedResults.size > SUBAGENT_RETAINED_RESULT_LIMIT) {
+			const oldest = this.retainedManagedResults.keys().next().value;
+			if (oldest === undefined) break;
+			this.retainedManagedResults.delete(oldest);
+		}
+		return true;
+	}
+
+	/**
+	 * Publish a terminal result for a run whose terminal path is owned by the
+	 * runner promise rather than a supervisor callback. This covers runs the
+	 * parent stopped blocking on at launch time, so their completion is still
+	 * observable through the retained-result ledger. It runs before the
+	 * supervisor is terminated and unregistered, so a concurrent management wait
+	 * never observes a gap between terminal state and the retained result.
+	 * Idempotent.
+	 */
+	private async settleManagedRun(
+		runId: string,
+		parentSessionId: string,
+		result: SubagentResult,
+		onManagedResult?: (result: SubagentResult) => void | Promise<void>,
+	): Promise<void> {
+		if (!this.runtimeManagementEnabled) return;
+		// A retry-safe startup failure is not terminal for the run: the shared
+		// recovery loop re-attempts the same run ID.
+		if (result.status === "needs_time" || result.retrySafeStartup === true) return;
+		// Retain before the terminal transition wakes any pending management wait,
+		// so a waiter never observes terminal state without a retained result.
+		const firstPublication = this.noteManagedTerminalResult(runId, parentSessionId, result);
+		this.getOwnedSupervisor(runId, parentSessionId)?.finish(result, result.status);
+		if (firstPublication && onManagedResult) {
+			// A run that reached its terminal state without an extension or stop
+			// decision never passes through finalizeManaged, so its durable observer
+			// is notified here to keep terminal publication exactly once.
+			try {
+				await onManagedResult(result);
+			} catch {
+				// Durable/job observers cannot change a terminal child result.
+			}
+		}
+	}
+
 	async extendRuntime(runId: string, parentSessionId: string, additionalMs: number): Promise<SubagentResult> {
 		const supervisor = this.getOwnedSupervisor(runId, parentSessionId);
 		if (!supervisor) throw new SubagentError("child_protocol_failure", "The selected subagent is not extendable.");
@@ -7549,7 +7811,13 @@ export class NativeSubagentRunner {
 
 	async stopRuntime(runId: string, parentSessionId: string): Promise<SubagentResult> {
 		const supervisor = this.getOwnedSupervisor(runId, parentSessionId);
-		if (!supervisor) throw new SubagentError("child_protocol_failure", "The selected subagent is not running.");
+		if (!supervisor) {
+			// A settled run outlives its supervisor in the bounded retained ledger;
+			// stopping it again reports the same terminal result instead of failing.
+			const settled = this.getRetainedManagedResult(runId, parentSessionId);
+			if (settled) return settled;
+			throw new SubagentError("child_protocol_failure", "The selected subagent is not running.");
+		}
 		return supervisor.stop("cancelled");
 	}
 
@@ -7594,6 +7862,8 @@ export class NativeSubagentRunner {
 		await this.supervisorRegistry.shutdownAll();
 		this.supervisorOwners.clear();
 		this.followUpRequests.clear();
+		this.detachedRuns.clear();
+		this.retainedManagedResults.clear();
 		// Deterministic cleanup: await every retained session's shutdown event and dispose
 		// rather than returning while disposal is still in flight.
 		await Promise.allSettled(
@@ -7629,6 +7899,10 @@ export class NativeSubagentRunner {
 			if (oldest.done) break;
 			const evicted = this.retainedChildren.get(oldest.value);
 			this.retainedChildren.delete(oldest.value);
+			// Eviction forgets the managed terminal observation as well, so a peek
+			// cannot outlive the retained session it describes.
+			this.retainedManagedResults.delete(oldest.value);
+			this.detachedRuns.delete(oldest.value);
 			if (evicted) await shutdownChildSession(evicted.session);
 		}
 	}
@@ -7696,8 +7970,12 @@ export class NativeSubagentRunner {
 		retained.resumeCount += 1;
 		// Claim the handle synchronously before the first await: while this execution is in
 		// flight the superseded handle must reject both a second resume and a delete, and the
-		// reused session must not be reachable through two identities at once.
+		// reused session must not be reachable through two identities at once. The old
+		// terminal observation is forgotten at the same instant so the superseded run id
+		// cannot keep serving a stale peekable result while its session is live again.
 		this.retainedChildren.delete(runId);
+		this.retainedManagedResults.delete(runId);
+		this.detachedRuns.delete(runId);
 		this.activeResumeClaims.set(runId, request.runId);
 		// Defence in depth beside `revalidateResumedChild`: the resumed run's policy carries the
 		// intersection of the child's original tools with current parent authority, so a tool
@@ -7772,7 +8050,12 @@ export class NativeSubagentRunner {
 		}
 	}
 
-	/** Stage 4: owner-scoped, idempotent removal of a retained terminal child. */
+	/**
+	 * Stage 4: owner-scoped, idempotent removal of a retained terminal child.
+	 * Forgets the reusable session, the managed terminal observation, and any
+	 * detached multiplexing handle together: after a successful delete no
+	 * management operation may keep serving the forgotten run's result.
+	 */
 	async deleteRetainedChild(runId: string, parentSessionId: string): Promise<{ runId: string; deleted: boolean }> {
 		// A handle claimed by an in-flight resume is still active: deleting it would dispose
 		// the session underneath the running execution.
@@ -7790,7 +8073,10 @@ export class NativeSubagentRunner {
 					"The selected subagent is still active; stop it before deleting.",
 				);
 			}
-			// Idempotent: an unknown or already-forgotten handle is not an error.
+			// Idempotent: an unknown or already-forgotten child session is not an error.
+			// A stray managed terminal observation (e.g. a stopped live run that was
+				// never retained as a reusable session) stays observable through peek;
+				// delete only forgets reusable sessions, so report not-found here.
 			return { runId, deleted: false };
 		}
 		if (retained.parentSessionId !== parentSessionId) {
@@ -7800,6 +8086,8 @@ export class NativeSubagentRunner {
 			);
 		}
 		this.retainedChildren.delete(runId);
+		this.retainedManagedResults.delete(runId);
+		this.detachedRuns.delete(runId);
 		this.agentViewBridge?.removeHistoricalSnapshot(runId);
 		await shutdownChildSession(retained.session);
 		return { runId, deleted: true };
@@ -7822,7 +8110,10 @@ export class NativeSubagentRunner {
 		);
 	}
 
-	private getOwnedSupervisor(
+	/** Owner-scoped live supervisor lookup. Public so the phase-aware `manage_subagent`
+	 * dispatcher can gate live-only actions (detach/stop) against terminal-only
+	 * actions (resume/delete) without reaching into the registry. */
+	getOwnedSupervisor(
 		runId: string,
 		parentSessionId: string,
 	): SubagentRunSupervisor<SubagentResult> | undefined {
@@ -7986,6 +8277,9 @@ export class NativeSubagentRunner {
 		let authorityRevoked = false;
 		let lastProgressAt = 0;
 		let terminalStatus: string | undefined;
+		// Terminal result of this attempt, captured before teardown so the retained
+		// ledger is populated ahead of supervisor cleanup.
+		let settledTerminalResult: SubagentResult | undefined;
 		// W15/W16: enforced turn and tool-call budgets. Reservation happens before
 		// dispatch so parallel scheduling cannot oversubscribe the shared counter;
 		// cancellation never refunds an executed side-effecting call.
@@ -8679,6 +8973,11 @@ export class NativeSubagentRunner {
 				});
 				this.supervisorRegistry.register(supervisor);
 				this.supervisorOwners.set(runId, normalized.parentSessionId);
+				try {
+					options.onManagedHandle?.({ runId, childSessionId: childSession.sessionId });
+				} catch {
+					// Admission observers cannot affect child execution.
+				}
 				liveControl = baseLiveControl
 					? {
 							...baseLiveControl,
@@ -8925,15 +9224,42 @@ export class NativeSubagentRunner {
 			};
 			const finalizeManaged = async (result: SubagentResult): Promise<SubagentResult> => {
 				if (result.status === "needs_time") return result;
-				await observeTerminalHook(result);
+				// An explicit parent control decision owns the terminal
+				// classification: an aborted child turn cannot downgrade a
+				// cancellation into a generic failure or a silent completion.
+				const controlled: SubagentResult =
+					control === "cancelled" || control === "timed_out"
+						? result.status === control
+							? result
+							: {
+									...result,
+									status: control,
+									diagnostics: [
+										...result.diagnostics,
+										{
+											code: control === "cancelled" ? "cancellation" : "timeout",
+											message:
+												control === "cancelled"
+													? "Parent cancelled the retained child; the terminal status is cancellation."
+													: "Parent ended the retained child at its time decision; the terminal status is timeout.",
+										},
+									],
+								}
+						: result;
+				await observeTerminalHook(controlled);
 				await flushSubagentHookObservations(options.hookRuntime);
-				supervisor?.finish(result, result.status);
+				// Retain before the terminal transition wakes any pending management
+				// wait, so a waiter never observes terminal state without a result.
+				const firstPublication = this.noteManagedTerminalResult(runId, normalized.parentSessionId, controlled);
+				supervisor?.finish(controlled, controlled.status);
 				await cleanupTerminalSession();
-				const decorated = decorateSubagentResult(result);
-				try {
-					await options.onManagedResult?.(decorated);
-				} catch {
-					// Durable/job observers cannot change a terminal child result.
+				const decorated = decorateSubagentResult(controlled);
+				if (firstPublication) {
+					try {
+						await options.onManagedResult?.(decorated);
+					} catch {
+						// Durable/job observers cannot change a terminal child result.
+					}
 				}
 				return decorated;
 			};
@@ -9817,7 +10143,9 @@ export class NativeSubagentRunner {
 				}
 				return runAfterInitial(reportStartIndex);
 			};
-			return decorateSubagentResult(await runInitial());
+			const initialResult = decorateSubagentResult(await runInitial());
+			settledTerminalResult = initialResult;
+			return initialResult;
 		} catch (error) {
 			const failure = classifySubagentFailure(error, childSession ? "runtime" : "startup", childToolFailed);
 			const retrySafeStartup =
@@ -9850,7 +10178,7 @@ export class NativeSubagentRunner {
 						: "subagent_failed",
 				status,
 			);
-			return decorateSubagentResult({
+			const failedResult = decorateSubagentResult({
 				...base,
 				childSessionId: childSession?.sessionId,
 				retrySafeStartup,
@@ -9874,9 +10202,21 @@ export class NativeSubagentRunner {
 				diagnostics: [diagnostic],
 				...(usage ? { usage } : {}),
 			});
+			settledTerminalResult = failedResult;
+			return failedResult;
 		} finally {
 			if (timeout) globalThis.clearTimeout(timeout);
 			await observeTerminalHook();
+			if (settledTerminalResult) {
+				// Publish before supervisor teardown so a concurrent management wait
+				// never observes terminal state without a retained result.
+				await this.settleManagedRun(
+					runId,
+					normalized.parentSessionId,
+					settledTerminalResult,
+					options.onManagedResult,
+				);
+			}
 			if (supervisor?.stateValue !== "awaiting_extension") await flushSubagentHookObservations(options.hookRuntime);
 			if (supervisor?.stateValue !== "awaiting_extension") await cleanupTerminalSession();
 		}
@@ -11293,6 +11633,24 @@ const delegateParameters = Type.Object(
 );
 
 const delegateAsyncParameters = delegateParameters;
+
+/**
+ * The foreground `delegate` tool accepts one extra control-plane option: a
+ * managed launch that returns a retained handle at admission. The durable async
+ * job surface keeps its own acceptance contract and does not expose it.
+ */
+const delegateForegroundParameters = Type.Object(
+	{
+		...delegateParameters.properties,
+		background: Type.Optional(
+			Type.Boolean({
+				description:
+					"Return a retained managed handle as soon as the child is admitted instead of blocking until it finishes. The same run ID, child session, model, profile, scope, and tool authority continue; manage the run with manage_subagent.",
+			}),
+		),
+	},
+	{ additionalProperties: false },
+);
 const listSubagentProfilesParameters = Type.Object({
 	query: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
 });
@@ -11305,9 +11663,12 @@ const manageSubagentParameters = Type.Object(
 		runId: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$" }),
 		action: Type.Union([
 			Type.Literal("inspect"),
+			Type.Literal("peek"),
+			Type.Literal("wait"),
 			Type.Literal("extend"),
 			Type.Literal("follow_up"),
 			Type.Literal("stop"),
+			Type.Literal("detach"),
 			Type.Literal("resume"),
 			Type.Literal("delete"),
 		]),
@@ -11316,12 +11677,20 @@ const manageSubagentParameters = Type.Object(
 			Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$" }),
 		),
 		message: Type.Optional(Type.String({ minLength: 1, maxLength: 8 * 1024 })),
+		waitMs: Type.Optional(
+			Type.Integer({
+				minimum: 1,
+				maximum: SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS,
+				description:
+					"Bounded management wait window. Expiry reports the current state with waitExpired; it never marks the child timed_out.",
+			}),
+		),
 		wait: Type.Optional(Type.Boolean()),
 	},
 	{
 		additionalProperties: false,
 		description:
-			"Inspect, extend, follow up, resume, or delete the same retained ICE subagent. Follow-up requires a stable requestId and is rejected while a user has takeover control. Resume continues a retained completed child in its original session and authority; delete forgets a retained terminal child idempotently.",
+			"Inspect, peek, wait, extend, follow up, detach, stop, resume, or delete the same ICE subagent through one phase-aware lifecycle. Peek returns the latest bounded snapshot immediately; wait blocks the parent tool call for at most waitMs until a terminal or attention state. Detach retains the same live child under management so the parent can continue other work; it never spends the extension reserve. Follow-up requires a stable requestId and is rejected while a user has takeover control. Resume continues a retained completed child in its original session and authority; delete forgets a retained reusable session idempotently. Managed terminal observations outlive reusable sessions for peek/wait. Resume is valid only for retained completed children; delete is owner-scoped and idempotent.",
 	},
 );
 
@@ -11441,8 +11810,13 @@ type DelegateToolResult =
 			launch: SubagentLaunchProvenance;
 			progress?: SubagentProgressSnapshot;
 	  }
+	| {
+			managed: SubagentManagedHandle;
+			observation?: SubagentManagedObservation;
+			launch: SubagentLaunchProvenance;
+	  }
 	| SubagentToolErrorDetails;
-type DelegateTool = ToolDefinition<typeof delegateParameters, DelegateToolResult | undefined>;
+type DelegateTool = ToolDefinition<typeof delegateForegroundParameters, DelegateToolResult | undefined>;
 
 type DelegateAsyncTool = ToolDefinition<
 	typeof delegateAsyncParameters,
@@ -11465,11 +11839,21 @@ type SubagentJobTool = ToolDefinition<typeof subagentJobParameters, { inspection
 type ManageSubagentTool = ToolDefinition<
 	typeof manageSubagentParameters,
 	| {
-			action: "inspect" | "extend" | "follow_up" | "stop" | "resume" | "delete";
+			action:
+				| "inspect"
+				| "peek"
+				| "wait"
+				| "extend"
+				| "follow_up"
+				| "stop"
+				| "detach"
+				| "resume"
+				| "delete";
 			resumedFromRunId?: string;
 			deleted?: { runId: string; deleted: boolean };
 			runId: string;
 			attention?: SubagentRuntimeAttention;
+			observation?: SubagentManagedObservation;
 			result?: SubagentResult;
 			followUp?: { runId: string; status: "queued" | "duplicate" };
 	  }
@@ -11576,8 +11960,11 @@ function formatRuntimeAttention(attention: SubagentRuntimeAttention): string {
 	const activities = attention.lastActivities.slice(-3);
 	const suggestedMs = Math.min(attention.remainingExtendableMs, attention.phase === "finalization" ? 30_000 : 60_000);
 	return [
-		`Runtime attention: ${attention.phase} · ${attention.activeElapsedMs}/${attention.activeBudgetMs} ms used.`,
+		`Runtime attention: ${attention.phase} · ${attention.activeElapsedMs}/${attention.activeBudgetMs} ms used (initial ${attention.initialTimeoutMs} ms, ${attention.extensionCount} extension${attention.extensionCount === 1 ? "" : "s"}, +${attention.totalExtendedMs} ms).`,
 		`Remaining extendable time: ${attention.remainingExtendableMs} ms.${suggestedMs >= 1_000 ? ` Suggested extension: ${suggestedMs} ms.` : ""}`,
+		attention.remainingRetentionMs !== undefined
+			? `Remaining detach retention: ${attention.remainingRetentionMs} ms (separate from the extension reserve).`
+			: undefined,
 		attention.progressAgeMs !== undefined ? `Last progress: ${attention.progressAgeMs} ms ago.` : undefined,
 		attention.repeatedFailure
 			? `Advisory: the same action failed ${attention.repeatedFailure.count} times recently ("${attention.repeatedFailure.action}"); inspect before extending.`
@@ -11591,6 +11978,34 @@ function formatRuntimeAttention(attention: SubagentRuntimeAttention): string {
 	]
 		.filter((part): part is string => part !== undefined)
 		.join("\n");
+}
+
+/**
+ * Render a bounded management observation. `waitExpired` describes only the
+ * parent management window and is never presented as a child timeout.
+ */
+function formatManagedObservation(observation: SubagentManagedObservation): string {
+	const lines = [`Subagent ${observation.runId} is ${observation.childState}.`];
+	if (observation.waitExpired) {
+		lines.push(
+			"Management wait expired while the child was still running; the child did not time out and remains retained.",
+		);
+	}
+	if (observation.result) {
+		lines.push(
+			`Terminal result: ${observation.result.status} · ${observation.result.summary}`,
+			...(observation.result.partial ? ["The result is partial; treat it as unverified evidence."] : []),
+		);
+	}
+	if (observation.attention) {
+		lines.push(formatRuntimeAttention(observation.attention));
+		if (!observation.terminal) {
+			lines.push(
+				`Use manage_subagent with runId ${observation.runId} to peek, wait, extend, detach, or stop the same retained child.`,
+			);
+		}
+	}
+	return truncateSubagentOutput(redactCredentialText(lines.join("\n")), 16 * 1024).text;
 }
 
 function formatToolResult(result: SubagentResult, verification: SubagentVerification): string {
@@ -12794,6 +13209,9 @@ export function formatIceSubagentSettingsSummary(settingsManager: SettingsManage
 		lines.push(
 			`routing: ${global.subagents.modelSelection.mode === "configured" ? "configured candidates enabled" : "inherit-parent only"} · global-first ice policy`,
 		);
+		lines.push(
+			`budgets: hard maximum ${ICE_SUBAGENT_SETTINGS_LIMITS.maxTimeoutMs} ms per child · management wait default ${SUBAGENT_MANAGEMENT_WAIT_DEFAULT_MS} ms (max ${SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS} ms) · detach retention ${SUBAGENT_DETACH_RETENTION_MS} ms (separate from the extension reserve); a wait expiry is not a child timeout`,
+		);
 		lines.push("");
 		for (const role of contractRoles.slice(0, 12)) {
 			const contract = resolveIceSubagentContract({
@@ -12805,6 +13223,7 @@ export function formatIceSubagentSettingsSummary(settingsManager: SettingsManage
 			});
 			const values = [
 				`thinking=${contract.values.thinking} [${contract.sources.thinking}]`,
+				`timeout=${contract.values.timeoutMs}ms [${contract.sources.timeoutMs}]`,
 				`turns=${contract.values.maxTurns} [${contract.sources.maxTurns}]`,
 				`toolCalls=${contract.values.maxToolCalls} [${contract.sources.maxToolCalls}]`,
 				`output=${contract.values.maxOutputBytes} [${contract.sources.maxOutputBytes}]`,
@@ -13981,14 +14400,58 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 		name: "manage_subagent",
 		label: "manage_subagent",
 		description:
-			"Inspect, extend, follow up, or stop the same retained ICE child. Follow-up queues bounded untrusted task data through Ice steering, requires a stable requestId, and is rejected while a user has takeover control. Extend preserves run ID, child session, model, profile, scope, tool authority, and output budget; a retained completed child may be resumed in its original session and authority, or deleted explicitly.",
-		promptSnippet: "Inspect or manage a retained subagent timeout",
+			"Inspect, peek, wait for, extend, follow up, detach, stop, resume, or delete the same ICE child through one phase-aware lifecycle. Peek returns the latest bounded snapshot immediately. Wait blocks this tool call for at most waitMs until a terminal or attention state; a wait expiry reports the current state and never marks the child timed_out. Detach retains the same live child under management so the parent can continue other work. Follow-up queues bounded untrusted task data through Ice steering, requires a stable requestId, and is rejected while a user has takeover control. Extend preserves run ID, child session, model, profile, scope, tool authority, and output budget. Resume continues a retained completed child in its original session and authority; delete forgets a retained reusable session idempotently, while managed terminal observations stay peekable.",
+		promptSnippet: "Peek, wait for, resume, delete, or manage a retained subagent timeout",
 		parameters: manageSubagentParameters,
 		renderCall: (args, theme, context) => renderObservatoryCall("manage_subagent", args, theme, context),
 		renderResult: (result, options, theme, context) => renderObservatoryResult(result, options, theme, context),
 		execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
 			const parentSessionId = ctx.sessionManager.getSessionId();
 			try {
+				if (params.action === "peek") {
+					const observation = runner.peekRuntime(params.runId, parentSessionId);
+					if (!observation)
+						throw new SubagentError(
+							"child_protocol_failure",
+							"The selected subagent is not a live retained run owned by this parent session.",
+						);
+					return {
+						content: [{ type: "text", text: formatManagedObservation(observation) }],
+						details: { action: "peek" as const, runId: params.runId, observation },
+						isError: false,
+					};
+				}
+				if (params.action === "wait") {
+					const observation = await runner.waitRuntime(
+						params.runId,
+						parentSessionId,
+						params.waitMs ?? SUBAGENT_MANAGEMENT_WAIT_DEFAULT_MS,
+						_signal,
+					);
+					return {
+						content: [{ type: "text", text: formatManagedObservation(observation) }],
+						details: { action: "wait" as const, runId: params.runId, observation },
+						isError: false,
+					};
+				}
+				if (params.action === "detach") {
+					const observation = runner.detachRuntime(params.runId, parentSessionId);
+					if (!observation)
+						throw new SubagentError(
+							"child_protocol_failure",
+							"The selected subagent is not a live retained run that can be detached.",
+						);
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Detached retained subagent ${params.runId}; it keeps the same run ID, child session, model, scope, and tool authority, and it does not spend the extension reserve.\n${formatManagedObservation(observation)}`,
+							},
+						],
+						details: { action: "detach" as const, runId: params.runId, observation },
+						isError: false,
+					};
+				}
 				if (params.action === "inspect") {
 					const attention = runner.getRuntimeAttention(params.runId, parentSessionId);
 					if (!attention)
@@ -14084,6 +14547,15 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					};
 				}
 				if (params.action === "resume") {
+					// Phase gate: resume is valid only for a retained terminal child. A live
+					// run (supervisor-owned) or an in-flight resume claim must fail here
+					// instead of reaching the session layer.
+					if (runner.getOwnedSupervisor(params.runId, parentSessionId)) {
+						throw new SubagentError(
+							"child_protocol_failure",
+							"The selected subagent is still active; only a retained completed child can be resumed.",
+						);
+					}
 					if (!params.message) {
 						throw new SubagentError("malformed_result", "resume requires a bounded message.");
 					}
@@ -14119,6 +14591,14 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					};
 				}
 				if (params.action === "delete") {
+					// Phase gate: delete is valid only for a retained terminal child. A live
+					// run must be stopped first; the runner enforces the same boundary.
+					if (runner.getOwnedSupervisor(params.runId, parentSessionId)) {
+						throw new SubagentError(
+							"child_protocol_failure",
+							"The selected subagent is still active; stop it before deleting.",
+						);
+					}
 					const deleted = await runner.deleteRetainedChild(params.runId, parentSessionId);
 					return {
 						content: [
@@ -14132,6 +14612,15 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 						details: { action: "delete" as const, runId: params.runId, deleted },
 						isError: false,
 					};
+				}
+				// Phase gate: stop is valid only for a live run. A retained terminal
+				// child has no supervisor to stop; stopping it again is a no-op
+				// rejected here so terminal handles cannot masquerade as live runs.
+				if (!runner.getOwnedSupervisor(params.runId, parentSessionId)) {
+					throw new SubagentError(
+						"child_protocol_failure",
+						"The selected subagent is not running; retained terminal children support peek, wait, resume, or delete.",
+					);
 				}
 				const result = await runner.stopRuntime(params.runId, parentSessionId);
 				return {
@@ -14154,9 +14643,9 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	const delegate: DelegateTool = {
 		name: "delegate",
 		label: "delegate",
-		description: `${SUBAGENT_SCOPE_TOOL_GUIDANCE} ${SUBAGENT_INTERNAL_REPORT_GUIDANCE} Run one foreground ICE child as a file agent or self-delegation (role self with bounded parent instructions; no file needed). If the result status is needs_time, the SAME child session is retained; use manage_subagent to inspect, extend, or stop it instead of launching a duplicate replacement. File agents resolve global-first; models follow the deterministic call/primary/fallback/parent order without credential expansion. Safe mode clamps the selected profile to its requested read-only capabilities. Explicit --sub-yolo permits only the selected profile's requested built-in capabilities that are also active in the trusted parent after build-mode, trust, and parent-Bash checks; it does not grant every parent tool. Trusted ambient resources may load, but model-visible authority remains the explicit child tool allowlist and recursive delegation is not authorized. This is not a filesystem sandbox; the parent verifies and synthesizes the evidence.`,
+		description: `${SUBAGENT_SCOPE_TOOL_GUIDANCE} ${SUBAGENT_INTERNAL_REPORT_GUIDANCE} Run one foreground ICE child as a file agent or self-delegation (role self with bounded parent instructions; no file needed). If the result status is needs_time, the SAME child session is retained; use manage_subagent to inspect, extend, or stop it instead of launching a duplicate replacement. Set background: true to receive a retained managed handle as soon as the child is admitted: the same child session keeps running and is managed with manage_subagent, so a long child never blocks the parent tool call. File agents resolve global-first; models follow the deterministic call/primary/fallback/parent order without credential expansion. Safe mode clamps the selected profile to its requested read-only capabilities. Explicit --sub-yolo permits only the selected profile's requested built-in capabilities that are also active in the trusted parent after build-mode, trust, and parent-Bash checks; it does not grant every parent tool. Trusted ambient resources may load, but model-visible authority remains the explicit child tool allowlist and recursive delegation is not authorized. This is not a filesystem sandbox; the parent verifies and synthesizes the evidence.`,
 		promptSnippet: "Delegate one bounded file/self subagent",
-		parameters: delegateParameters,
+		parameters: delegateForegroundParameters,
 		renderCall: (args, theme, context) => renderObservatoryCall("delegate", args, theme, context),
 		renderResult: (result, options, theme, context) => renderObservatoryResult(result, options, theme, context),
 		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
@@ -14293,6 +14782,13 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					? [...unsafeAuthorization.parentActiveTools]
 					: [...ice.getActiveTools()];
 				const effectiveParentActiveTools = parentActiveTools;
+				const managedLaunch = params.background === true;
+				let resolveManagedHandle: ((handle: SubagentManagedHandle) => void) | undefined;
+				const managedHandlePromise = managedLaunch
+					? new Promise<SubagentManagedHandle>((resolve) => {
+							resolveManagedHandle = resolve;
+						})
+					: undefined;
 				const runChild = (
 					attempt: 1 | 2,
 					childRequest: NormalizedSubagentRequest,
@@ -14314,13 +14810,58 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 						hookRuntime,
 						onEvent: (event) =>
 							publishRuntimeProgress(observatory, toolCallId, "delegate", ctx.cwd, event, onUpdate),
+						...(managedLaunch
+							? {
+									onManagedHandle: (handle: SubagentManagedHandle) => {
+										resolveManagedHandle?.(handle);
+									},
+								}
+							: {}),
 					});
-				const result = unsafeHostExec
-					? await runChild(1, normalized, effectiveParentActiveTools)
-					: await runSubagentWithRecovery(normalized, effectiveParentActiveTools, runChild, {
+				const runPromise = unsafeHostExec
+					? runChild(1, normalized, effectiveParentActiveTools)
+					: runSubagentWithRecovery(normalized, effectiveParentActiveTools, runChild, {
 							getStopReason: () => (signal?.aborted ? "cancelled" : undefined),
 							hardCap: SUBAGENT_HARD_CAP_APIS.has(model.api) ? "enforced" : "aggregate-soft",
 						});
+				let result: SubagentResult;
+				if (managedLaunch && managedHandlePromise) {
+					// Return control at admission: the same child session keeps running
+					// under the supervisor, and the run promise is kept alive so its
+					// terminal result is published exactly once to the retained ledger.
+					//
+					// The retained child stays bound to the parent run signal handed to
+					// runResolved, exactly like delegate_async's parent-run tie: a normal run
+					// completion never aborts that signal, so returning here does not cancel
+					// the child. It terminates only on an explicit abort/compact/dispose of the
+					// launching run, on manage_subagent stop, or on session shutdown through
+					// runner.shutdown().
+					const outcome = await Promise.race([
+						runPromise.then((value) => ({ kind: "settled" as const, value })),
+						managedHandlePromise.then((handle) => ({ kind: "managed" as const, handle })),
+					]);
+					if (outcome.kind === "managed") {
+						void runPromise.catch(() => {});
+						const observation = runner.peekRuntime(outcome.handle.runId, normalized.parentSessionId);
+						return {
+							content: [
+								{
+									type: "text",
+									text: `Launched retained subagent ${outcome.handle.runId} in managed mode; it keeps the same run ID, child session, model, profile, scope, and tool authority.${observation ? `\n${formatManagedObservation(observation)}` : ""}`,
+								},
+							],
+							details: {
+								managed: outcome.handle,
+								...(observation ? { observation } : {}),
+								launch: createSubagentLaunchProvenance(normalized, model),
+							},
+							isError: false,
+						};
+					}
+					result = outcome.value;
+				} else {
+					result = await runPromise;
+				}
 				const verification =
 					result.status === "needs_time"
 						? pendingSubagentVerification(result)
