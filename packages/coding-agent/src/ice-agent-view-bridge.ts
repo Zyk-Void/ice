@@ -253,6 +253,7 @@ function normalizeRuntimeAttention(input: unknown): SubagentRuntimeAttention | u
 	const totalExtendedMs = boundedRuntimeNumber(input.totalExtendedMs);
 	const extensionCount = boundedRuntimeNumber(input.extensionCount);
 	const remainingExtendableMs = boundedRuntimeNumber(input.remainingExtendableMs);
+	const remainingRetentionMs = boundedRuntimeNumber(input.remainingRetentionMs);
 	if (
 		initialTimeoutMs === undefined ||
 		activeBudgetMs === undefined ||
@@ -355,6 +356,7 @@ function normalizeRuntimeAttention(input: unknown): SubagentRuntimeAttention | u
 		totalExtendedMs,
 		extensionCount,
 		remainingExtendableMs,
+		...(remainingRetentionMs !== undefined ? { remainingRetentionMs } : {}),
 		...(progressAgeMs !== undefined ? { progressAgeMs } : {}),
 		...(lastProgressAtMs !== undefined ? { lastProgressAtMs } : {}),
 		...(decisionDeadlineAtMs !== undefined ? { decisionDeadlineAtMs } : {}),
