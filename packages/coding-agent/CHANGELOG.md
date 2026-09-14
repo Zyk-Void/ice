@@ -13,7 +13,7 @@
 - Renamed first-party packages to the `@zykairotis/ice-*` family.
 - Renamed the public API surface to `Ice*`/`ice*`.
 - Removed the eleven bundled subagent roles (`explore`, `planner`, `coder`, `worker`, `tester`, `review`, `security`, `debugger`, `documenter`, `performance`, `refactor`) and all alias spellings. Delegation now resolves file agents global-first (`~/.ice/agents` wins over trusted `.ice/agents`; explicit custom `agentDir` uses `<agentDir>/agents`; shadowed sources are surfaced) plus self-delegation (`role: "self"` with bounded parent instructions); unknown names fail with discovery hints. Legacy `~/.ice/agent/agents` files are reported through a non-destructive migration manifest and are not moved automatically. `review_batch` now runs self-delegated reviewers.
-- File agents support effective `model`/`fallbackModel` references with deterministic call/primary/fallback/parent candidate order, bounded skip reasons, startup-only retry, aggregate budgets, and durable route/candidate capture; stale captured routes fail explicitly. File agents also support explicit opt-in `mcp` server/tool selectors dispatched only through the parent-owned adapter.
+- File agents support effective `model`/`fallbackModel` references with deterministic call/primary/fallback/parent candidate order, bounded skip reasons, startup-only retry, bounded execution/output limits, and durable route/candidate capture; stale captured routes fail explicitly. File agents also support explicit opt-in `mcp` server/tool selectors dispatched only through the parent-owned adapter.
 - `ice` settings, skills, prompts, context, and hooks resolve global-first; denies, mode restrictions, caps, and trust requirements still win. Stock `ice` behavior is unchanged.
 - Default delegation uses the exact current parent model; globally opted-in file/call candidates may select another configured route. Durable async jobs capture the chosen route at acceptance and reject stale promotion instead of rerouting. Isolated writer model policy is unchanged.
 - Changed JSON and RPC `message_update` events to emit only `assistantMessageEvent` deltas, removing the cumulative `message` and `assistantMessageEvent.partial` fields that caused quadratic output growth. Clients that need partial messages must assemble deltas between `message_start` and `message_end`; the latter remains authoritative ([#7290](https://github.com/earendil-works/pi/issues/7290)).
@@ -82,9 +82,11 @@
 
   For the config-form `ice.registerProvider(name, { refreshModels })`, callbacks that only return models remain unchanged; ice publishes the returned list. If such a callback previously used `context.store` for custom persistence, read `context.stored` and call `context.publish({ persist: entry })`. In `publish()`, omit `persist` to leave storage unchanged, pass a `ModelsStoreEntry` to write it, or pass `persist: null` to delete it.
 
-### Added
+### Removed
 
-- Added parent-owned aggregate token budgets for delegated children and batches: opt-in `maxTotalTokens`/`totalTokenBudget`, exact input + output + cache-write accounting with cache-read visibility but exclusion, provider/estimated/mixed provenance, bounded report reserves covering the incremental finalization prompt, monotonic soft overshoot, deterministic tool-free fallback, shared recovery/continuation ledgers, durable summaries, separate RPC/observatory wording, and at-most-once `subagent_token_budget` lifecycle trace events (resolved, work exhausted, tool denied, finalizing, finalization unavailable). Built-in routes receive runtime output authority where supported; custom routes remain aggregate-soft and no dollar-cost guarantee is implied.
+- Removed aggregate subagent token-budget controls and enforcement. Token counts remain available as observational usage telemetry; turn, tool-call, timeout, output-byte, and batch output reservations remain authoritative.
+
+### Added
 - Added automatic self parent-prompt snapshots with additive task guidance, explicit parent skill inheritance, registered child-safe extension capabilities, and self/file MCP selections using installed schemas and collision-resistant names.
 - Added public parent-owned adapter registration APIs, runnable/typed integration examples, resource/package global-precedence checks, and the HTML delegation operator guide.
 - Added cancellation-safe adapter waits, required MCP-hook dispatch coverage, live registration/schema revocation checks, and durable capability/resource fingerprints.

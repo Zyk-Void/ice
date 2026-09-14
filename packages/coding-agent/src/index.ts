@@ -336,20 +336,6 @@ export {
 } from "./ice-subagent-capabilities.ts";
 export { type IceHookHandler, registerIceSubagentHook } from "./ice-subagent-settings.ts";
 export {
-	calculateSubagentReportReserve,
-	estimateRequestUsage,
-	estimateSubagentRequestTokens,
-	type NormalizedTokenUsage,
-	normalizeTokenUsage,
-	type SessionTokenStats,
-	SessionUsageReconciler,
-	type TokenAccounting,
-	TokenBudgetLedger,
-	type TokenBudgetPhase,
-	type TokenBudgetSnapshot,
-	type TokenUsageEstimate,
-} from "./ice-subagent-token-budget.ts";
-export {
 	type IceSubagentMcpAdapter,
 	type IceSubagentMcpToolAuthorization,
 	registerIceSubagentMcpAdapter,

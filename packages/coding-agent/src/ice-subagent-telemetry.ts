@@ -1,4 +1,4 @@
-import type { SubagentStatus, SubagentTokenBudgetSummary } from "./ice-subagents.ts";
+import type { SubagentStatus, SubagentUsage } from "./ice-subagents.ts";
 import { redactCredentialText } from "./utils/redact.ts";
 
 /**
@@ -28,7 +28,7 @@ export interface SubagentOutcomeTelemetry {
 	readonly requiredCriteriaTotal: number;
 	readonly requiredCriteriaSatisfied: number;
 	readonly parentSteeringCount: number;
-	readonly budget?: SubagentTokenBudgetSummary;
+	readonly usage?: SubagentUsage;
 	readonly recordedAtMs: number;
 }
 
@@ -66,7 +66,7 @@ export interface SubagentOutcomeTelemetryInput {
 	requiredCriteriaTotal?: number;
 	requiredCriteriaSatisfied?: number;
 	parentSteeringCount?: number;
-	budget?: SubagentTokenBudgetSummary;
+	usage?: SubagentUsage;
 }
 
 function boundedSafeInteger(value: number | undefined, max: number): number {
@@ -91,36 +91,15 @@ function boundedStatus(value: SubagentStatus): SubagentStatus {
 	return value;
 }
 
-function boundedBudget(budget: SubagentTokenBudgetSummary | undefined): SubagentTokenBudgetSummary | undefined {
-	if (!budget) return undefined;
-	const values = [
-		budget.maxTotalTokens,
-		budget.workPhaseLimit,
-		budget.reportReserveTokens,
-		budget.chargedTokens,
-		budget.remainingTokens,
-		budget.inputTokens,
-		budget.outputTokens,
-		budget.cacheReadTokens,
-		budget.cacheWriteTokens,
-		budget.overshootTokens,
-	];
-	const expectedReserve = Math.min(4_096, Math.max(1_024, Math.floor(budget.maxTotalTokens * 0.1)));
+function boundedUsage(usage: SubagentUsage | undefined): SubagentUsage | undefined {
+	if (!usage) return undefined;
 	if (
-		values.some((value) => typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) ||
-		budget.maxTotalTokens < 1_024 ||
-		budget.maxTotalTokens > 1_000_000 ||
-		budget.reportReserveTokens !== expectedReserve ||
-		budget.workPhaseLimit !== budget.maxTotalTokens - expectedReserve ||
-		budget.chargedTokens !== budget.inputTokens + budget.outputTokens + budget.cacheWriteTokens ||
-		budget.remainingTokens !== Math.max(0, budget.maxTotalTokens - budget.chargedTokens) ||
-		budget.overshootTokens !== Math.max(0, budget.chargedTokens - budget.maxTotalTokens) ||
-		(budget.accounting !== "provider" && budget.accounting !== "estimated" && budget.accounting !== "mixed") ||
-		typeof budget.exhausted !== "boolean" ||
-		(budget.hardCap !== "enforced" && budget.hardCap !== "aggregate-soft")
+		![usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheWriteTokens, usage.cost].every(
+			(value) => Number.isFinite(value) && value >= 0,
+		)
 	)
 		return undefined;
-	return Object.freeze({ ...budget });
+	return Object.freeze({ ...usage });
 }
 
 export class SubagentTelemetryStore {
@@ -147,7 +126,7 @@ export class SubagentTelemetryStore {
 			requiredCriteriaTotal: boundedSafeInteger(input.requiredCriteriaTotal, 1024),
 			requiredCriteriaSatisfied: boundedSafeInteger(input.requiredCriteriaSatisfied, 1024),
 			parentSteeringCount: boundedSafeInteger(input.parentSteeringCount, 1024),
-			...(boundedBudget(input.budget) ? { budget: boundedBudget(input.budget) } : {}),
+			...(boundedUsage(input.usage) ? { usage: boundedUsage(input.usage) } : {}),
 			recordedAtMs: Date.now(),
 		});
 		// Same run re-recorded (e.g. after extension) replaces the earlier entry.

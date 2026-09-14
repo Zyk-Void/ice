@@ -1166,6 +1166,46 @@ describe("ICE agent-view integration", () => {
 		);
 	});
 
+	it("times out deterministically while the explicit finalization turn is pending", async () => {
+		const { cwd, agentDir } = await createWorkspace();
+		let startInitialTurn!: () => void;
+		const initialTurnStarted = new Promise<void>((resolve) => {
+			startInitialTurn = resolve;
+		});
+		let releaseInitialTurn!: () => void;
+		const initialTurn = new Promise<void>((resolve) => {
+			releaseInitialTurn = resolve;
+		});
+		const neverFinalizes = new Promise<void>(() => {});
+		const child = new InteractiveChildSession(cwd, initialTurn, startInitialTurn, { wait: neverFinalizes });
+		const registry = new SubagentLiveSessionRegistry();
+		const bridge = new IceAgentViewBridge();
+		bridge.setParentSession(passiveSession("parent", cwd));
+		bridge.connectLiveSessions(registry);
+		const normalized = normalizeSubagentRequest({ ...request(cwd), timeoutMs: 100 }, cwd, { agentDir });
+		const runner = new NativeSubagentRunner({
+			agentDir,
+			liveSessionRegistry: registry,
+			agentViewBridge: bridge,
+			createSession: async () => ({ session: child }) as unknown as CreateAgentSessionResult,
+		});
+		const runPromise = runner.runResolved(normalized, ["delegate", "read", "grep", "find", "ls"], {
+			model: { provider: "faux", id: "faux" } as Model<Api>,
+		});
+		await initialTurnStarted;
+		bridge.requestDisplay(normalized.runId);
+		bridge.requestTakeControl();
+		await bridge.sendInput(normalized.runId, "steer child");
+		releaseInitialTurn();
+		bridge.requestTakeControl();
+		await vi.waitFor(() => expect(child.promptCalls).toHaveLength(3));
+		expect(bridge.getView(normalized.runId)?.controlState).toBe("final-report-requested");
+		const result = await runPromise;
+		expect(result).toMatchObject({ status: "timed_out", diagnostics: [{ code: "timeout" }] });
+		expect(child.abort).toHaveBeenCalled();
+		expect(bridge.getView(normalized.runId)).toMatchObject({ kind: "historical-subagent", status: "timed_out" });
+	});
+
 	it("cancels deterministically while the explicit finalization turn is pending", async () => {
 		const { cwd, agentDir } = await createWorkspace();
 		let startInitialTurn!: () => void;

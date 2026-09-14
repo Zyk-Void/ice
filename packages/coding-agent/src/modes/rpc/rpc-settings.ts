@@ -162,8 +162,6 @@ function effectiveIceValue(settings: SettingsManager, key: string, fallback: Rpc
 				return contract.values.maxToolCalls;
 			case "ice.subagents.defaults.maxOutputBytes":
 				return contract.values.maxOutputBytes;
-			case "ice.subagents.defaults.maxTotalTokens":
-				return contract.values.maxTotalTokens ?? fallback;
 			case "ice.subagents.allowedRoles":
 				return contract.allowedRoles.value ? [...contract.allowedRoles.value] : [];
 			default:
@@ -283,19 +281,6 @@ const ICE_SETTINGS: RpcSettingsDefinition[] = [
 		constraints: { min: 1_024, max: 65_536, integer: true },
 		restartRequired: false,
 		read: (settings) => effectiveIceValue(settings, "ice.subagents.defaults.maxOutputBytes", 24_576) as number,
-	}),
-	iceSetting({
-		key: "ice.subagents.defaults.maxTotalTokens",
-		label: "Subagent token budget",
-		description:
-			"Soft cumulative limit for input + output + cache-write tokens; cache reads are reported separately; one in-flight response may overshoot.",
-		group: "ICE · Subagents",
-		kind: "number",
-		scope: "both",
-		defaultValue: 0,
-		constraints: { min: 1_024, max: 1_000_000, integer: true },
-		restartRequired: false,
-		read: (settings) => effectiveIceValue(settings, "ice.subagents.defaults.maxTotalTokens", 0) as number,
 	}),
 	iceSetting({
 		key: "ice.subagents.allowedRoles",
