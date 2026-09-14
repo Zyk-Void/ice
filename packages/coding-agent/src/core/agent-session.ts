@@ -1566,6 +1566,7 @@ export class AgentSession {
 	 */
 	async abort(): Promise<void> {
 		this.abortRetry();
+		this.abortCompaction();
 		this.agent.abort();
 		await this.waitForIdle();
 	}

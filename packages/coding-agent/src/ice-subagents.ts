@@ -1356,6 +1356,9 @@ export type SubagentTokenBudgetTracePhase =
 	| "finalizing"
 	| "finalization_unavailable";
 
+export type SubagentCompactionReason = "manual" | "threshold" | "overflow";
+export type SubagentCompactionStatus = "started" | "completed" | "aborted" | "failed";
+
 export interface SubagentEvent {
 	type:
 		| "subagent_created"
@@ -1363,6 +1366,8 @@ export interface SubagentEvent {
 		| "subagent_progress"
 		| "subagent_tool_start"
 		| "subagent_tool_end"
+		| "subagent_compaction_start"
+		| "subagent_compaction_end"
 		| "subagent_token_budget"
 		| "subagent_completed"
 		| "subagent_failed"
@@ -1384,6 +1389,10 @@ export interface SubagentEvent {
 	batchId?: string;
 	/** Present only on `subagent_token_budget`; at most one event per lifecycle phase. */
 	tokenBudgetPhase?: SubagentTokenBudgetTracePhase;
+	/** Bounded child compaction lifecycle metadata; summary contents are never projected. */
+	compactionReason?: SubagentCompactionReason;
+	compactionStatus?: SubagentCompactionStatus;
+	compactionWillRetry?: boolean;
 }
 
 function modelLabel(model: Model<Api> | undefined): string | undefined {
@@ -6367,6 +6376,15 @@ export async function createNativeSubagentSession(
 			: undefined,
 	});
 	await resourceLoader.reload();
+	// A child usually runs one long prompt rather than many user checkpoints. Use
+	// the existing AgentSession mid-run compaction pipeline by default so a child
+	// can compact between tool turns and resume the same turn. Apply this after
+	// resource loading because reload() refreshes SettingsManager state. An
+	// explicit setting (including `off`) remains authoritative, and parent
+	// compaction behavior is unchanged because this override is child-local.
+	if (settingsManager.getEffectiveSettings().compaction?.midRunCompaction === undefined) {
+		settingsManager.applyOverrides({ compaction: { midRunCompaction: "resume" } });
+	}
 	// Revalidate after loader reads and immediately before session creation.
 	revalidateSubagentProfile(profile);
 	revalidateSubagentResources(options.request.resources);
@@ -7361,6 +7379,9 @@ export class NativeSubagentRunner {
 				unsubscribeChild = undefined;
 				liveControl?.markTerminal();
 				if (childSession && terminalStatus) {
+					presentation = presentation
+						? normalizeIceAgentViewPresentation({ ...presentation, compacting: false })
+						: presentation;
 					this.agentViewBridge?.registerHistoricalSnapshot({
 						runId,
 						role: profile.name,
@@ -7401,6 +7422,11 @@ export class NativeSubagentRunner {
 			toolCallId?: string,
 			attention?: SubagentRuntimeAttention,
 			tokenBudgetPhase?: SubagentTokenBudgetTracePhase,
+			compaction?: {
+				reason: SubagentCompactionReason;
+				status: SubagentCompactionStatus;
+				willRetry?: boolean;
+			},
 		) => {
 			if (
 				type === "subagent_completed" ||
@@ -7421,6 +7447,13 @@ export class NativeSubagentRunner {
 				...(safePath ? { path: safePath } : {}),
 				...(attention ? { attention } : {}),
 				...(tokenBudgetPhase ? { tokenBudgetPhase } : {}),
+				...(compaction
+					? {
+							compactionReason: compaction.reason,
+							compactionStatus: compaction.status,
+							...(compaction.willRetry !== undefined ? { compactionWillRetry: compaction.willRetry } : {}),
+						}
+					: {}),
 			});
 		};
 		const observeAssistantText = (): string => {
@@ -7828,7 +7861,31 @@ export class NativeSubagentRunner {
 						},
 						options.signal,
 					);
-				} else if (event.type === "turn_end" || event.type === "compaction_end") {
+				} else if (event.type === "compaction_start") {
+					updatePresentation({ compacting: true });
+					emit("subagent_compaction_start", "running", undefined, undefined, undefined, undefined, undefined, {
+						reason: event.reason,
+						status: "started",
+					});
+				} else if (event.type === "compaction_end") {
+					updatePresentation({ compacting: false });
+					emit("subagent_compaction_end", "running", undefined, undefined, undefined, undefined, undefined, {
+						reason: event.reason,
+						status: event.aborted ? "aborted" : event.result ? "completed" : "failed",
+						willRetry: event.willRetry,
+					});
+					if (tokenUsageReconciler) {
+						try {
+							tokenUsageReconciler.reconcile(childSession!.getSessionStats());
+						} catch {
+							if (!tokenDiagnostics.some((entry) => entry.code === "token_usage_invalid"))
+								tokenDiagnostics.push({
+									code: "token_usage_invalid",
+									message: "Session token statistics could not be reconciled.",
+								});
+						}
+					}
+				} else if (event.type === "turn_end") {
 					if (tokenUsageReconciler) {
 						try {
 							tokenUsageReconciler.reconcile(childSession!.getSessionStats());

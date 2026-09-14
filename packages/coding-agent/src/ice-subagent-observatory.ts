@@ -61,6 +61,7 @@ export type ObservatoryPhase =
 	| "created"
 	| "queued"
 	| "starting"
+	| "compacting"
 	| "needs_time"
 	| "completed"
 	| "failed"
@@ -723,7 +724,7 @@ export function normalizeProgressPath(cwd: string | undefined, value: string | u
 	return boundedText(displayPath, OBSERVATORY_PATH_MAX_BYTES);
 }
 
-function phaseForRuntimeEvent(event: SubagentEvent): ObservatoryPhase {
+function phaseForRuntimeEvent(event: SubagentEvent, previous: SubagentProgressSnapshot | undefined): ObservatoryPhase {
 	switch (event.type) {
 		case "subagent_created":
 			return "created";
@@ -733,6 +734,14 @@ function phaseForRuntimeEvent(event: SubagentEvent): ObservatoryPhase {
 		case "subagent_tool_end":
 		case "subagent_progress":
 			return "tool_activity";
+		case "subagent_compaction_start":
+			return "compacting";
+		case "subagent_compaction_end": {
+			const previousActivity = [...(previous?.activity ?? [])]
+				.reverse()
+				.find((activity) => activity.phase !== "compacting");
+			return previousActivity?.phase ?? "running";
+		}
 		case "subagent_token_budget":
 			return "running";
 		case "subagent_needs_time":
@@ -1034,7 +1043,7 @@ export function reduceObservatoryEvent(state: ObservatoryState, input: Observato
 					{ attempt: existing.attempt ?? 1, runId: existing.runId, status: existing.status as SubagentStatus },
 				]
 			: (existing?.attemptHistory ?? []);
-	const phase = phaseForRuntimeEvent(input.event);
+	const phase = phaseForRuntimeEvent(input.event, existing);
 	const currentPath = normalizeProgressPath(input.cwd, input.currentPath ?? input.event.path);
 	const startedAt = existing?.startedAtMs ?? now;
 	const snapshot = createSnapshot({

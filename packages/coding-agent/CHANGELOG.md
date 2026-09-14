@@ -84,6 +84,7 @@
 
 ### Added
 
+- Added child-local native compaction defaults and bounded compaction lifecycle telemetry: long-running children use the existing AgentSession auto/overflow engine, resume after mid-run compaction, preserve explicit compaction settings and child authority, and expose only redacted start/end state to parent observability.
 - Added parent-owned aggregate token budgets for delegated children and batches: opt-in `maxTotalTokens`/`totalTokenBudget`, exact input + output + cache-write accounting with cache-read visibility but exclusion, provider/estimated/mixed provenance, bounded report reserves covering the incremental finalization prompt, monotonic soft overshoot, deterministic tool-free fallback, shared recovery/continuation ledgers, durable summaries, separate RPC/observatory wording, and at-most-once `subagent_token_budget` lifecycle trace events (resolved, work exhausted, tool denied, finalizing, finalization unavailable). Built-in routes receive runtime output authority where supported; custom routes remain aggregate-soft and no dollar-cost guarantee is implied.
 - Added automatic self parent-prompt snapshots with additive task guidance, explicit parent skill inheritance, registered child-safe extension capabilities, and self/file MCP selections using installed schemas and collision-resistant names.
 - Added public parent-owned adapter registration APIs, runnable/typed integration examples, resource/package global-precedence checks, and the HTML delegation operator guide.

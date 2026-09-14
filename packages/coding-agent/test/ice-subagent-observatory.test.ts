@@ -163,6 +163,44 @@ describe("subagent observatory reducer", () => {
 		});
 	});
 
+	it("projects child compaction and resumes the prior activity phase", () => {
+		let state = createObservatoryState();
+		state = apply(state, runtimeEvent("subagent_started", "running", { nowMs: 1_100 }));
+		state = apply(
+			state,
+			runtimeEvent("subagent_tool_start", "running", {
+				nowMs: 1_200,
+				event: { toolName: "read" },
+			}),
+		);
+		state = apply(
+			state,
+			runtimeEvent("subagent_compaction_start", "running", {
+				nowMs: 1_300,
+				event: { compactionReason: "threshold", compactionStatus: "started" },
+			}),
+		);
+		expect(state.active[0]).toMatchObject({ phase: "compacting", status: "running", terminal: false });
+		state = apply(
+			state,
+			runtimeEvent("subagent_compaction_end", "running", {
+				nowMs: 1_400,
+				event: {
+					compactionReason: "threshold",
+					compactionStatus: "completed",
+					compactionWillRetry: true,
+				},
+			}),
+		);
+		expect(state.active[0]).toMatchObject({ phase: "tool_activity", status: "running", terminal: false });
+		expect(state.active[0]?.activity.map((activity) => activity.phase)).toEqual([
+			"running",
+			"tool_activity",
+			"compacting",
+			"tool_activity",
+		]);
+	});
+
 	it("keeps batch children independent", () => {
 		let state = createObservatoryState();
 		state = apply(
