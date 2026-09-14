@@ -84,6 +84,7 @@ export interface IceAgentViewDescriptor {
 	readonly taskId?: string;
 	readonly session?: AgentSession;
 	readonly live: boolean;
+	readonly retentionState?: "reusable" | "history-only";
 	readonly readOnly: boolean;
 	readonly interactionMode?: IceAgentViewInteractionMode;
 	readonly controlState?: IceAgentViewControlState;
@@ -125,6 +126,7 @@ export interface IceAgentViewSnapshotInput {
 	readonly role: string;
 	readonly model?: string;
 	readonly status: string;
+	readonly retentionState?: "reusable" | "history-only";
 	readonly authority?: IceAgentViewAuthority;
 	readonly startedAt?: number;
 	readonly finishedAt: number;
@@ -491,6 +493,14 @@ export class IceAgentViewBridge {
 		this.publish();
 	}
 
+	/** Stage 4: drop a retained historical snapshot so a deleted child cannot be resurrected. */
+	removeHistoricalSnapshot(runId: string): boolean {
+		const removed = this.historical.delete(runId);
+		this.interactionModes.delete(runId);
+		if (removed) this.publish();
+		return removed;
+	}
+
 	registerHistoricalSnapshot(input: IceAgentViewSnapshotInput): void {
 		const id = input.runId;
 		const clonedMessages = cloneBoundedMessages(input.messages);
@@ -508,6 +518,7 @@ export class IceAgentViewBridge {
 				runId: input.runId,
 				taskId: input.taskId,
 				live: false,
+				retentionState: input.retentionState ?? "history-only",
 				readOnly: true,
 				interactionMode: "mirror" as const,
 				authority: input.authority,

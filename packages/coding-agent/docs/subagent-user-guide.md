@@ -11,11 +11,11 @@ Ice remains the only reasoning/tool loop. These controls belong to `ice`; ordina
 | `delegate_async` | Owner-scoped durable background investigation |
 | `delegate_batch` | Up to eight independently scoped sibling tasks |
 | `review_batch` | Independent correctness/security/tests/regression reviewers |
-| `manage_subagent` | Inspect, follow up, extend, or stop an eligible retained foreground run |
+| `manage_subagent` | Inspect, follow up, extend, stop, resume, or delete an eligible retained foreground run |
 | `inspect_subagent_job`, `cancel_subagent_job` | Inspect/cancel owned background jobs |
 | `delegate_write` | Separate build-only isolated writer workflow |
 
-Background jobs are not restart-resumable live sessions. Restart preserves inspectable terminal/interrupted state and never automatically relaunches ambiguous work. Foreground follow-up reuses the native child, requires an owner-bound run ID and stable request ID, and rejects user-takeover conflicts.
+Background jobs are not restart-resumable live sessions. Restart preserves inspectable terminal/interrupted state and never automatically relaunches ambiguous work. Foreground follow-up reuses the native child, requires an owner-bound run ID and stable request ID, and rejects user-takeover conflicts. An eligible completed foreground child is also retained as a live reusable session (bounded to 8 per runner, oldest terminal child evicted and released) so `resume` can continue it in place and `delete` can release it; `resume` mints a new run id with `resumedFromRunId` provenance, re-validates profile/resources/trust/tool authority fail-closed at the resume boundary, re-points the reused session's tool, stream, and turn-stop wrappers at the resumed run's hooks, authority callback, and budgets, and cannot widen the original model, profile, scope, or tools.
 
 ## Self-delegation: no file required
 

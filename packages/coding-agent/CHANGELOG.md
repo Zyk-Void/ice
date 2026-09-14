@@ -84,6 +84,8 @@
 
 ### Added
 
+- Added explicit subagent lifecycle reuse and deletion to `manage_subagent`. A completed child is now retained in bounded memory (8 per runner; the oldest terminal child is evicted and released) instead of being destroyed at cleanup, and can be resumed with `action: "resume"` in its original child session, or forgotten with `action: "delete"`. Resume mints a new run id with `resumedFromRunId` provenance so `verifySubagentResult` lineage stays sound, re-derives the child's profile, resources, project trust, and eligible tool authority from the current parent and rejects the request fail-closed when that authority no longer holds, exposes no parameter that could widen model/profile/scope/tools, carries its reuse budget across cycles, and refuses active, unknown, already-deleted, or non-owned handles. Delete is owner-scoped and idempotent, rejects active children with a stop-first diagnostic, and drops the retained session plus its historical view snapshot. The tool, stream, and turn-stop wrappers a retained child keeps read one mutable policy box that every execution cycle re-points, so a resumed run dispatches against its own hooks, authority callback, tool-call budget, token ledger, and report-only state instead of the original run's closures, and a reused session re-checks every wrapped tool against current parent authority fail-closed.
+
 - Added parent-owned aggregate token budgets for delegated children and batches: opt-in `maxTotalTokens`/`totalTokenBudget`, exact input + output + cache-write accounting with cache-read visibility but exclusion, provider/estimated/mixed provenance, bounded report reserves covering the incremental finalization prompt, monotonic soft overshoot, deterministic tool-free fallback, shared recovery/continuation ledgers, durable summaries, separate RPC/observatory wording, and at-most-once `subagent_token_budget` lifecycle trace events (resolved, work exhausted, tool denied, finalizing, finalization unavailable). Built-in routes receive runtime output authority where supported; custom routes remain aggregate-soft and no dollar-cost guarantee is implied.
 - Added automatic self parent-prompt snapshots with additive task guidance, explicit parent skill inheritance, registered child-safe extension capabilities, and self/file MCP selections using installed schemas and collision-resistant names.
 - Added public parent-owned adapter registration APIs, runnable/typed integration examples, resource/package global-precedence checks, and the HTML delegation operator guide.
@@ -143,6 +145,8 @@
 - Added a `ice` `/settings` → Providers submenu that lists configured providers and refetches a single catalog on demand. The `local` provider rewrites `models.json` from the 9Router endpoint.
 
 ### Changed
+
+- Rewrote the `manage_subagent` description and parameter schema. Terminal completed children are no longer unconditionally unrevivable: the previous "historical and terminal children cannot be revived" invariant is replaced by explicit resume/delete lifecycle actions, and `action` now accepts `resume` and `delete` alongside `inspect`, `extend`, `follow_up`, and `stop`.
 
 - Changed clipboard and Gondolin integrations to the published `@zykairotis/ice-*` fork packages, including cross-platform binary packaging, example setup, and generated install metadata.
 - Changed ICE RPC and interactive settings projections to show deny-first effective values; empty role allowlists are neutral preferences, while malformed settings block new delegation.

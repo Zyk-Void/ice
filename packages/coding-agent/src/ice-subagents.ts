@@ -1089,6 +1089,8 @@ export interface SubagentResult {
 	summary: string;
 	observedOutputBytes: number;
 	partial: boolean;
+	/** Stage 3 reuse provenance: the retained run this execution continues. */
+	resumedFromRunId?: string;
 	/** Present only for a retained, nonterminal timeout-attention result. */
 	attention?: SubagentRuntimeAttention;
 	truncated?: boolean;
@@ -3391,10 +3393,37 @@ function createSelectedMcpToolDefinitions(
 	});
 }
 
+/**
+ * Run-scoped execution policy consulted at dispatch time by the wrappers installed on a child
+ * session. Those wrappers outlive a single run once a completed child is retained and resumed, so
+ * they read this box instead of closing over one run's locals. `runResolved` re-points `current`
+ * at the new run's policy before the first resumed model prompt, which is what makes a reused
+ * `AgentSession` dispatch against current hooks, authority, and budgets.
+ */
+interface SubagentExecutionPolicy {
+	beforeTool?: NativeSubagentSessionOptions["beforeTool"];
+	reserveToolCall?: (toolCallId?: string) => boolean;
+	settleToolCall?: (executed: boolean, toolCallId?: string) => void;
+	/** Tools the current parent policy still authorizes for this child. */
+	eligibleTools: ReadonlySet<string>;
+	/**
+	 * True for a reused session. A fresh run relies on the eligible set applied when its tool
+	 * definitions were built; a reused session re-checks every wrapped tool so authority removed
+	 * since the original run fails closed instead of dispatching.
+	 */
+	strictEligibility: boolean;
+	tokenBudgetLedger?: TokenBudgetLedger;
+	reportOnly?: () => boolean;
+	shouldStopAfterTurn?: () => boolean | Promise<boolean>;
+}
+
+interface SubagentExecutionPolicyBox {
+	current: SubagentExecutionPolicy;
+}
+
 function wrapSubagentToolDefinitions(
 	definitions: readonly ToolDefinition[],
-	options: Pick<NativeSubagentSessionOptions, "beforeTool" | "reserveToolCall" | "settleToolCall">,
-	eligibleTools: ReadonlySet<string>,
+	policy: SubagentExecutionPolicyBox,
 	enforceEligibility = true,
 ): ToolDefinition[] {
 	return definitions.map((definition) => {
@@ -3402,15 +3431,18 @@ function wrapSubagentToolDefinitions(
 		return {
 			...definition,
 			execute: async (toolCallId, params, signal, onUpdate, ctx) => {
-				if (enforceEligibility) assertSubagentToolEligible(definition.name, eligibleTools);
-				await options.beforeTool?.(
+				const current = policy.current;
+				if (enforceEligibility || current.strictEligibility) {
+					assertSubagentToolEligible(definition.name, current.eligibleTools);
+				}
+				await current.beforeTool?.(
 					definition.name,
 					toolCallId,
 					(params && typeof params === "object" ? params : {}) as Record<string, unknown>,
 					signal,
 				);
 				if (signal?.aborted) throw new SubagentError("cancellation", "Child tool cancelled after policy hooks.");
-				if (options.reserveToolCall && !options.reserveToolCall(toolCallId)) {
+				if (current.reserveToolCall && !current.reserveToolCall(toolCallId)) {
 					throw new SubagentError(
 						"batch_budget_exhausted",
 						`Child exceeded its bounded tool-call budget before dispatching ${definition.name}.`,
@@ -3419,7 +3451,7 @@ function wrapSubagentToolDefinitions(
 				try {
 					return await execute(toolCallId, params, signal, onUpdate, ctx);
 				} finally {
-					options.settleToolCall?.(true, toolCallId);
+					current.settleToolCall?.(true, toolCallId);
 				}
 			},
 		} as ToolDefinition;
@@ -5890,6 +5922,11 @@ export interface NativeSubagentSessionOptions {
 	tokenBudgetLedger?: TokenBudgetLedger;
 	/** Dynamic report-only state for the bounded token finalizer. */
 	reportOnly?: () => boolean;
+	/**
+	 * Mutable policy box for a session whose wrappers may outlive one run. Absent for a plain
+	 * one-shot child, in which case the flat fields above seed a box that is never re-pointed.
+	 */
+	policyBox?: SubagentExecutionPolicyBox;
 }
 
 async function dispatchSubagentHookDecision(
@@ -6283,6 +6320,20 @@ export async function createNativeSubagentSession(
 	createSession: (options: CreateAgentSessionOptions) => Promise<CreateAgentSessionResult> = createAgentSession,
 ): Promise<NativeSubagentSession> {
 	if (options.request.readOnlyReview) options = { ...options, unsafeHostExec: false };
+	// A retained child keeps the wrappers installed by its original run; they read this box so a
+	// resumed run can re-point them at its own policy instead of inheriting the original closures.
+	const policyBox: SubagentExecutionPolicyBox = options.policyBox ?? {
+		current: {
+			beforeTool: options.beforeTool,
+			reserveToolCall: options.reserveToolCall,
+			settleToolCall: options.settleToolCall,
+			eligibleTools: new Set<string>(),
+			strictEligibility: false,
+			tokenBudgetLedger: options.tokenBudgetLedger,
+			reportOnly: options.reportOnly,
+			shouldStopAfterTurn: options.shouldStopAfterTurn,
+		},
+	};
 	const profile = options.request.profile;
 	revalidateSubagentProfile(profile);
 	revalidateSubagentResources(options.request.resources);
@@ -6380,6 +6431,9 @@ export async function createNativeSubagentSession(
 	// checks remain bounded by childTools. Resource roots extend path authority
 	// only; they never authorize a tool omitted from childTools.
 	const eligibleToolSet = new Set<string>(childTools);
+	// The wrappers installed below consult this box at dispatch time, so the run that owns the
+	// session owns the authority check rather than the run that built the definitions.
+	policyBox.current.eligibleTools = eligibleToolSet;
 	// Selected MCP tools are opt-in, explicit, and parent-owned: the child never
 	// loads an MCP adapter or opens a connection itself. Each selected
 	// server/tool dispatches through the parent adapter with hooks, budgets,
@@ -6416,7 +6470,7 @@ export async function createNativeSubagentSession(
 				allowExternalTools,
 				eligibleToolSet,
 			);
-	const scopedReadTools = wrapSubagentToolDefinitions(scopedReadDefinitions, options, eligibleToolSet, false);
+	const scopedReadTools = wrapSubagentToolDefinitions(scopedReadDefinitions, policyBox, false);
 	const externalDefinitions = createIceDelegableToolDefinitions(
 		externalTools,
 		{
@@ -6437,11 +6491,7 @@ export async function createNativeSubagentSession(
 		if (!childTools.includes(definition.name)) childTools.push(definition.name);
 		eligibleToolSet.add(definition.name);
 	}
-	const scopedMcpTools = wrapSubagentToolDefinitions(
-		[...mcpDefinitions, ...externalDefinitions],
-		options,
-		eligibleToolSet,
-	);
+	const scopedMcpTools = wrapSubagentToolDefinitions([...mcpDefinitions, ...externalDefinitions], policyBox);
 	const created = await createSession({
 		cwd: options.request.cwd,
 		agentDir,
@@ -6463,8 +6513,7 @@ export async function createNativeSubagentSession(
 								}),
 							}) as unknown as ToolDefinition,
 						],
-						options,
-						eligibleToolSet,
+						policyBox,
 					)
 				: []),
 		],
@@ -6484,10 +6533,12 @@ export async function createNativeSubagentSession(
 			};
 		}
 	).agent;
-	if (options.tokenBudgetLedger && childAgent?.streamFunction) {
+	if (childAgent?.streamFunction) {
 		const originalStreamFunction = childAgent.streamFunction;
 		childAgent.streamFunction = ((model: Model<Api>, context: Context, streamOptions: StreamOptions = {}) => {
-			const snapshot = options.tokenBudgetLedger!.snapshot();
+			const ledger = policyBox.current.tokenBudgetLedger;
+			if (!ledger) return originalStreamFunction(model, context, streamOptions);
+			const snapshot = ledger.snapshot();
 			if (snapshot.phase === "work") {
 				const inputEstimate = estimateSubagentRequestTokens(context).inputTokens ?? 0;
 				const outputAuthority = Math.max(1, snapshot.workPhaseLimit - snapshot.chargedTokens - inputEstimate);
@@ -6501,7 +6552,7 @@ export async function createNativeSubagentSession(
 								),
 							}
 						: {}),
-					...(options.reportOnly?.() ? { toolChoice: "none" as const } : {}),
+					...(policyBox.current.reportOnly?.() ? { toolChoice: "none" as const } : {}),
 					maxTokens:
 						streamOptions?.maxTokens === undefined
 							? outputAuthority
@@ -6525,7 +6576,7 @@ export async function createNativeSubagentSession(
 							),
 						}
 					: {}),
-				...(options.reportOnly?.() ? { toolChoice: "none" as const } : {}),
+				...(policyBox.current.reportOnly?.() ? { toolChoice: "none" as const } : {}),
 				maxTokens:
 					streamOptions?.maxTokens === undefined
 						? outputAuthority
@@ -6533,13 +6584,15 @@ export async function createNativeSubagentSession(
 			});
 		}) as StreamFunction;
 	}
-	if (options.shouldStopAfterTurn && childAgent) {
+	if (childAgent) {
 		const previousShouldStopAfterTurn = childAgent.shouldStopAfterTurn;
-		childAgent.shouldStopAfterTurn = async (context, signal) =>
-			(await previousShouldStopAfterTurn?.(context, signal)) ||
-			options.tokenBudgetLedger?.phase === "exhausted" ||
-			options.tokenBudgetLedger?.phase === "finalizing" ||
-			options.shouldStopAfterTurn!();
+		childAgent.shouldStopAfterTurn = async (context, signal) => {
+			if (await previousShouldStopAfterTurn?.(context, signal)) return true;
+			const policy = policyBox.current;
+			if (policy.tokenBudgetLedger?.phase === "exhausted") return true;
+			if (policy.tokenBudgetLedger?.phase === "finalizing") return true;
+			return (await policy.shouldStopAfterTurn?.()) ?? false;
+		};
 	}
 	return { session: created.session, profile, tools: childTools, prompt };
 }
@@ -7067,8 +7120,68 @@ export interface NativeSubagentRunOptions {
 	mcpToolAccess?: ReadonlyMap<string, IceSubagentMcpToolAccess>;
 	/** Advisory hook for parent steering (Take Control input); never affects execution. */
 	onSteering?: (runId: string) => void;
+	/** Stage 3 reuse: continue a retained terminal child session instead of creating a new one. */
+	resume?: {
+		session: CreateAgentSessionResult["session"];
+		tools: readonly string[];
+		resumedFromRunId: string;
+		/** Reuse cycles already consumed by this child, carried across re-retention. */
+		resumeCount: number;
+		/** Policy box installed by the original run; this run re-points it at its own policy. */
+		policyBox: SubagentExecutionPolicyBox;
+		/** Tools the current parent policy still authorizes for this child. */
+		eligibleTools: ReadonlySet<string>;
+	};
 	/** Internal shared ledger for startup fallback/recovery attempts. */
 	tokenBudgetLedger?: TokenBudgetLedger;
+}
+
+/** Bounded metadata for a retained terminal child; safe to surface to the parent. */
+export interface RetainedSubagentChild {
+	runId: string;
+	role: string;
+	terminalStatus: string;
+	finishedAt: number;
+	resumeCount: number;
+}
+
+/** Stage 3 reuse options. Deliberately cannot carry model/profile/scope/tool widening. */
+export interface NativeSubagentResumeOptions
+	extends Omit<NativeSubagentRunOptions, "resume" | "model" | "unsafeHostExec" | "projectTrusted"> {
+	/** Parent-owned hook runtime factory, bound to the resumed request. */
+	createHookRuntimeFor?: (request: NormalizedSubagentRequest) => SubagentHookRuntime | undefined;
+	/** Parent-owned revalidation, bound to the resumed request and its hook runtime. */
+	isAuthorityStillValidFor?: (
+		request: NormalizedSubagentRequest,
+		hookRuntime: SubagentHookRuntime | undefined,
+	) => boolean;
+}
+
+/** Stage 1 decision: only verified completions are eligible for reuse. */
+function isReusableTerminalStatus(status: string | undefined): boolean {
+	return status === "completed";
+}
+
+/** Bounded retained terminal children per runner; the oldest is evicted first. */
+const SUBAGENT_RETAINED_CHILD_LIMIT = 8;
+/** Bounded reuse cycles per retained child before it must be deleted. */
+const SUBAGENT_RETAINED_RESUME_LIMIT = 8;
+
+/** Stage 2: a terminal child session retained for explicit reuse or deletion. */
+interface RetainedSubagentSession {
+	runId: string;
+	parentSessionId: string;
+	role: string;
+	terminalStatus: string;
+	finishedAt: number;
+	resumeCount: number;
+	session: CreateAgentSessionResult["session"];
+	tools: readonly string[];
+	request: NormalizedSubagentRequest;
+	model?: Model<Api>;
+	unsafeHostExec: boolean;
+	/** Policy box the original run installed; a resume re-points this exact box. */
+	policyBox: SubagentExecutionPolicyBox;
 }
 
 export class NativeSubagentRunner {
@@ -7081,6 +7194,9 @@ export class NativeSubagentRunner {
 	private readonly runtimeManagementEnabled: boolean;
 	private readonly supervisorOwners = new Map<string, string>();
 	private readonly followUpRequests = new Map<string, Set<string>>();
+	private readonly retainedChildren = new Map<string, RetainedSubagentSession>();
+	/** Superseded retained runId -> the active run that claimed it while a resume is in flight. */
+	private readonly activeResumeClaims = new Map<string, string>();
 
 	constructor(options: NativeSubagentRunnerOptions = {}) {
 		assertIceSubagentBackendPolicy();
@@ -7153,6 +7269,232 @@ export class NativeSubagentRunner {
 		await this.supervisorRegistry.shutdownAll();
 		this.supervisorOwners.clear();
 		this.followUpRequests.clear();
+		// Deterministic cleanup: await every retained session's shutdown event and dispose
+		// rather than returning while disposal is still in flight.
+		await Promise.allSettled(
+			[...this.retainedChildren.values()].map((retained) => shutdownChildSession(retained.session)),
+		);
+		this.retainedChildren.clear();
+		this.activeResumeClaims.clear();
+	}
+
+	/** Stage 2: bounded retention of terminal children eligible for reuse or deletion. */
+	/** True when a retained entry already owns this exact child session. */
+	private hasRetainedSession(session: CreateAgentSessionResult["session"]): boolean {
+		for (const value of this.retainedChildren.values()) {
+			if (value.session === session) return true;
+		}
+		return false;
+	}
+
+	/** Drops any retained entry owning this exact child session, so no stale handle survives. */
+	private dropRetainedSession(session: CreateAgentSessionResult["session"]): void {
+		for (const [key, value] of this.retainedChildren) {
+			if (value.session === session) this.retainedChildren.delete(key);
+		}
+	}
+
+	private async retainTerminalChild(child: RetainedSubagentSession): Promise<void> {
+		// One retained entry per child session: a resume re-retains the same session under the
+		// new run id, so the superseded entry must not linger as a stale handle.
+		this.dropRetainedSession(child.session);
+		this.retainedChildren.set(child.runId, child);
+		while (this.retainedChildren.size > SUBAGENT_RETAINED_CHILD_LIMIT) {
+			const oldest = this.retainedChildren.keys().next();
+			if (oldest.done) break;
+			const evicted = this.retainedChildren.get(oldest.value);
+			this.retainedChildren.delete(oldest.value);
+			if (evicted) await shutdownChildSession(evicted.session);
+		}
+	}
+
+	/** Stage 3: continue a retained completed child in its original session and authority. */
+	async resumeRuntime(
+		runId: string,
+		parentSessionId: string,
+		message: string,
+		parentActiveTools: readonly string[],
+		options: NativeSubagentResumeOptions = {},
+	): Promise<SubagentResult> {
+		if (this.activeResumeClaims.has(runId)) {
+			throw new SubagentError("child_protocol_failure", "The retained subagent is already resuming.");
+		}
+		const retained = this.retainedChildren.get(runId);
+		if (!retained || retained.parentSessionId !== parentSessionId) {
+			throw new SubagentError(
+				"child_protocol_failure",
+				"The selected subagent is not a retained terminal child owned by this parent session.",
+			);
+		}
+		// Only a verified completion is reusable. Failed, cancelled, and timed-out terminal
+		// children stay retained for inspection and deletion but cannot be resumed.
+		if (!isReusableTerminalStatus(retained.terminalStatus)) {
+			throw new SubagentError(
+				"child_protocol_failure",
+				`Only a completed retained subagent can be resumed; this one is ${retained.terminalStatus}.`,
+			);
+		}
+		if (message.trim().length === 0 || Buffer.byteLength(message) > 8 * 1024) {
+			throw new SubagentError("malformed_result", "Resume message must be nonempty and at most 8 KiB.");
+		}
+		if (retained.resumeCount >= SUBAGENT_RETAINED_RESUME_LIMIT) {
+			throw new SubagentError(
+				"child_protocol_failure",
+				"The retained subagent has reached its reuse limit and must be deleted.",
+			);
+		}
+		// Reject pre-start conditions before consuming the retained handle.
+		if (!parentActiveTools.includes("delegate")) {
+			throw new SubagentError("capability_denied", "Delegation is not active in the parent policy.");
+		}
+		if (options.signal?.aborted) {
+			throw new SubagentError("cancellation", "Parent cancellation arrived before retained-child resume.");
+		}
+		this.revalidateResumedChild(retained, parentActiveTools);
+		// A new run identity keeps verifySubagentResult lineage sound; the retained session keeps
+		// its conversation history, and no resume parameter can widen the original authority.
+		const request: NormalizedSubagentRequest = {
+			...retained.request,
+			runId: randomUUID(),
+			task: message.trim(),
+		};
+		const { isAuthorityStillValidFor, createHookRuntimeFor, ...rest } = options;
+		const hookRuntime = createHookRuntimeFor?.(request);
+		// Fail closed before any resumed model turn when current authority has drifted. The
+		// retained session's wrappers are rebound through its mutable execution-policy box below.
+		if (isAuthorityStillValidFor && !isAuthorityStillValidFor(request, hookRuntime)) {
+			throw new SubagentError(
+				"capability_denied",
+				"Current settings, trust, profile, resources, or hooks no longer authorize resuming this child.",
+			);
+		}
+		retained.resumeCount += 1;
+		// Claim the handle synchronously before the first await: while this execution is in
+		// flight the superseded handle must reject both a second resume and a delete, and the
+		// reused session must not be reachable through two identities at once.
+		this.retainedChildren.delete(runId);
+		this.activeResumeClaims.set(runId, request.runId);
+		// Defence in depth beside `revalidateResumedChild`: the resumed run's policy carries the
+		// intersection of the child's original tools with current parent authority, so a tool
+		// removed since the original run fails closed at dispatch, not only at this boundary.
+		const resumedMcpTools = new Set((retained.request.selectedMcpTools ?? []).map(subagentMcpToolName));
+		const resumedEligibleTools = new Set(
+			retained.tools.filter((tool) => parentActiveTools.includes(tool) || resumedMcpTools.has(tool)),
+		);
+		try {
+			return await this.runResolved(request, parentActiveTools, {
+				...rest,
+				// Model, unsafe-exec, and trust state are reused verbatim: the resume surface
+				// exposes no parameter that could widen the child's original authority.
+				model: retained.model,
+				unsafeHostExec: retained.unsafeHostExec,
+				projectTrusted: retained.request.projectTrusted,
+				hookRuntime,
+				isAuthorityStillValid: isAuthorityStillValidFor
+					? () => isAuthorityStillValidFor(request, hookRuntime)
+					: undefined,
+				resume: {
+					session: retained.session,
+					tools: retained.tools,
+					resumedFromRunId: runId,
+					resumeCount: retained.resumeCount,
+					policyBox: retained.policyBox,
+					eligibleTools: resumedEligibleTools,
+				},
+			});
+		} catch (error) {
+			// Restore the handle so a thrown execution cannot silently drop retained state.
+			this.activeResumeClaims.delete(runId);
+			if (!this.hasRetainedSession(retained.session)) this.retainedChildren.set(runId, retained);
+			throw error;
+		}
+	}
+
+	/** Fail-closed revalidation for reuse; mirrors the launch-time authority gates. */
+	private revalidateResumedChild(retained: RetainedSubagentSession, parentActiveTools: readonly string[]): void {
+		revalidateSubagentProfile(retained.request.profile);
+		revalidateSubagentResources(retained.request.resources);
+		if (retained.unsafeHostExec) {
+			if (!retained.request.projectTrusted) {
+				throw new SubagentError("capability_denied", "Unsafe subagent host execution requires a trusted project.");
+			}
+			if (!parentActiveTools.includes("bash")) {
+				throw new SubagentError(
+					"capability_denied",
+					"Unsafe subagent host execution requires parent Bash capability.",
+				);
+			}
+		}
+		const mcpToolNames = new Set((retained.request.selectedMcpTools ?? []).map(subagentMcpToolName));
+		if (retained.request.mcpAuthorityStillValid?.() === false) {
+			throw new SubagentError("capability_denied", "Selected MCP authority changed since the child was retained.");
+		}
+		for (const delegated of retained.request.delegatedTools ?? []) {
+			if (!delegated.isCurrent() || !parentActiveTools.includes(delegated.name)) {
+				throw new SubagentError("capability_denied", `Delegated tool ${delegated.name} was revoked.`);
+			}
+		}
+		// Ordinary child tools must still be active in the parent. MCP definitions are synthetic
+		// child names and are validated by the captured MCP authority fingerprint above.
+		const revokedTools = retained.tools.filter(
+			(tool) => !mcpToolNames.has(tool) && !parentActiveTools.includes(tool),
+		);
+		if (revokedTools.length > 0) {
+			throw new SubagentError(
+				"capability_denied",
+				`Resumed child tool authority is no longer active in the parent: ${revokedTools.join(", ")}.`,
+			);
+		}
+	}
+
+	/** Stage 4: owner-scoped, idempotent removal of a retained terminal child. */
+	async deleteRetainedChild(runId: string, parentSessionId: string): Promise<{ runId: string; deleted: boolean }> {
+		// A handle claimed by an in-flight resume is still active: deleting it would dispose
+		// the session underneath the running execution.
+		if (this.activeResumeClaims.has(runId)) {
+			throw new SubagentError(
+				"child_protocol_failure",
+				"The selected subagent is still active; stop it before deleting.",
+			);
+		}
+		const retained = this.retainedChildren.get(runId);
+		if (!retained) {
+			if (this.supervisorOwners.get(runId) === parentSessionId) {
+				throw new SubagentError(
+					"child_protocol_failure",
+					"The selected subagent is still active; stop it before deleting.",
+				);
+			}
+			// Idempotent: an unknown or already-forgotten handle is not an error.
+			return { runId, deleted: false };
+		}
+		if (retained.parentSessionId !== parentSessionId) {
+			throw new SubagentError(
+				"child_protocol_failure",
+				"The selected subagent is not a retained terminal child owned by this parent session.",
+			);
+		}
+		this.retainedChildren.delete(runId);
+		this.agentViewBridge?.removeHistoricalSnapshot(runId);
+		await shutdownChildSession(retained.session);
+		return { runId, deleted: true };
+	}
+
+	/** Bounded metadata for the retained terminal children of one parent session. */
+	listRetainedChildren(parentSessionId: string): readonly RetainedSubagentChild[] {
+		return Object.freeze(
+			[...this.retainedChildren.values()]
+				.filter((child) => child.parentSessionId === parentSessionId)
+				.map((child) =>
+					Object.freeze({
+						runId: child.runId,
+						role: child.role,
+						terminalStatus: child.terminalStatus,
+						finishedAt: child.finishedAt,
+						resumeCount: child.resumeCount,
+					}),
+				),
+		);
 	}
 
 	private getOwnedSupervisor(
@@ -7266,6 +7608,7 @@ export class NativeSubagentRunner {
 			batchId: options.batchId,
 			model: modelLabel(options.model),
 			attempt: options.attempt,
+			...(options.resume ? { resumedFromRunId: options.resume.resumedFromRunId } : {}),
 			observedOutputBytes: 0,
 			...(normalized.scope.targets?.length ? { scopeTargets: [...normalized.scope.targets] } : {}),
 		};
@@ -7288,6 +7631,14 @@ export class NativeSubagentRunner {
 			};
 		}
 
+		// One mutable policy box per child session. A fresh run installs it; a resumed run re-points
+		// the box the original run's wrappers already read, so a reused `AgentSession` dispatches
+		// against current hooks, authority, and budgets instead of inheriting the original run's
+		// closures. Declared before the terminal cleanup below, which publishes the same box with
+		// the retained child so a later resume re-points the very box those wrappers hold.
+		const policyBox: SubagentExecutionPolicyBox = options.resume?.policyBox ?? {
+			current: { eligibleTools: new Set<string>(), strictEligibility: false },
+		};
 		let childSession: NativeSubagentSession["session"] | undefined;
 		let observedOutputBytes = 0;
 		let control: "cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted" | undefined;
@@ -7301,6 +7652,7 @@ export class NativeSubagentRunner {
 		let cleanupPromise: Promise<void> | undefined;
 		let unsubscribeChild: (() => void) | undefined;
 		let releaseLiveSession: (() => void) | undefined;
+		let retainedChildTools: readonly string[] = [];
 		let liveControl: IceAgentViewLiveSessionControl | undefined;
 		let childToolFailed = false;
 		let reportOnly = false;
@@ -7368,6 +7720,7 @@ export class NativeSubagentRunner {
 						model: modelLabel(options.model ?? childSession.model),
 						authority: options.unsafeHostExec === true ? "yolo" : "safe",
 						status: terminalStatus,
+						retentionState: isReusableTerminalStatus(terminalStatus) ? "reusable" : "history-only",
 						startedAt,
 						finishedAt: Date.now(),
 						presentation,
@@ -7388,7 +7741,32 @@ export class NativeSubagentRunner {
 						// Terminal usage reconciliation is best effort; observed message usage remains charged.
 						tokenBudgetLedger?.settle();
 					}
-					await shutdownChildSession(childSession);
+					// Completed executions retain the exact session for reuse; other terminal states are released.
+					// The resume claim ends here; the retention below republishes exactly one handle.
+					if (options.resume) this.activeResumeClaims.delete(options.resume.resumedFromRunId);
+					// Strict completed-only retention: only a verified completion is retained. A failed
+					// or cancelled terminal child is released rather than kept as a non-reusable handle,
+					// so the retained registry never holds an entry that resumeRuntime must reject.
+					const keepRetained = isReusableTerminalStatus(terminalStatus);
+					if (keepRetained) {
+						await this.retainTerminalChild({
+							runId,
+							parentSessionId: normalized.parentSessionId,
+							role: profile.name,
+							terminalStatus: terminalStatus ?? "completed",
+							finishedAt: Date.now(),
+							resumeCount: options.resume?.resumeCount ?? 0,
+							session: childSession,
+							tools: retainedChildTools,
+							request: normalized,
+							model: options.model,
+							unsafeHostExec: options.unsafeHostExec === true,
+							policyBox,
+						});
+					} else {
+						this.dropRetainedSession(childSession);
+						await shutdownChildSession(childSession);
+					}
 				}
 			})();
 			return cleanupPromise;
@@ -7599,69 +7977,82 @@ export class NativeSubagentRunner {
 				normalized.selectedMcpTools ?? [],
 				options.unsafeHostExec === true,
 			);
-			const startupPromise = createNativeSubagentSession(
-				{
-					request: normalized,
-					parentActiveTools,
-					model: options.model,
-					modelRuntime: options.modelRuntime,
-					agentDir: this.agentDir,
-					unsafeHostExec: options.unsafeHostExec,
-					mcpDispatch: mcpRuntime.dispatch,
-					parentMcpTools: mcpRuntime.parentMcpTools,
-					mcpToolAccess: mcpRuntime.mcpToolAccess,
-					hookRuntime: options.hookRuntime ? { ...options.hookRuntime, attempt: options.attempt } : undefined,
-					beforeTool: async (toolName, toolCallId, params, signal) => {
-						if (tokenBudgetLedger && tokenBudgetLedger.phase !== "work") {
-							emitTokenBudgetEvent("tool_denied");
-							if (!tokenDiagnostics.some((entry) => entry.code === "token_budget_exhausted"))
-								tokenDiagnostics.push({
-									code: "token_budget_exhausted",
-									message: "Child tool denied after the token work budget was exhausted.",
-								});
-							throw new SubagentError(
-								"token_budget_exhausted",
-								"Child tool denied after the token work budget was exhausted.",
-							);
-						}
-						if (reportOnly)
-							throw new SubagentError("capability_denied", "Report finalization cannot execute tools.");
-						if (options.isAuthorityStillValid && !(await options.isAuthorityStillValid())) {
-							authorityRevoked = true;
-							throw new SubagentError(
-								"capability_denied",
-								"Current parent settings or trust no longer authorize this child tool dispatch.",
-							);
-						}
-						await dispatchSubagentHookDecision(
-							options.hookRuntime ? { ...options.hookRuntime, attempt: options.attempt } : undefined,
-							"subagent.beforeTool",
-							{ toolName, toolCallId, params },
-							signal,
+			policyBox.current = {
+				beforeTool: async (toolName, toolCallId, params, signal) => {
+					if (tokenBudgetLedger && tokenBudgetLedger.phase !== "work") {
+						emitTokenBudgetEvent("tool_denied");
+						if (!tokenDiagnostics.some((entry) => entry.code === "token_budget_exhausted"))
+							tokenDiagnostics.push({
+								code: "token_budget_exhausted",
+								message: "Child tool denied after the token work budget was exhausted.",
+							});
+						throw new SubagentError(
+							"token_budget_exhausted",
+							"Child tool denied after the token work budget was exhausted.",
 						);
-						if (signal?.aborted || (options.isAuthorityStillValid && !(await options.isAuthorityStillValid()))) {
-							authorityRevoked = true;
-							throw new SubagentError(
-								"capability_denied",
-								"Authority changed while awaiting a tool policy hook.",
-							);
-						}
-					},
-					reserveToolCall,
-					settleToolCall: (executed, toolCallId) => settleToolReservation(executed, toolCallId),
-					tokenBudgetLedger,
-					reportOnly: () => reportOnly,
-					shouldStopAfterTurn: async () => {
-						if (tokenBudgetLedger?.phase === "exhausted") return true;
-						if (options.isAuthorityStillValid && !(await options.isAuthorityStillValid())) {
-							authorityRevoked = true;
-							return true;
-						}
-						return observedTurns >= maxTurns;
-					},
+					}
+					if (reportOnly)
+						throw new SubagentError("capability_denied", "Report finalization cannot execute tools.");
+					if (options.isAuthorityStillValid && !(await options.isAuthorityStillValid())) {
+						authorityRevoked = true;
+						throw new SubagentError(
+							"capability_denied",
+							"Current parent settings or trust no longer authorize this child tool dispatch.",
+						);
+					}
+					await dispatchSubagentHookDecision(
+						options.hookRuntime ? { ...options.hookRuntime, attempt: options.attempt } : undefined,
+						"subagent.beforeTool",
+						{ toolName, toolCallId, params },
+						signal,
+					);
+					if (signal?.aborted || (options.isAuthorityStillValid && !(await options.isAuthorityStillValid()))) {
+						authorityRevoked = true;
+						throw new SubagentError("capability_denied", "Authority changed while awaiting a tool policy hook.");
+					}
 				},
-				this.createSession,
-			);
+				reserveToolCall,
+				settleToolCall: (executed, toolCallId) => settleToolReservation(executed, toolCallId),
+				tokenBudgetLedger,
+				reportOnly: () => reportOnly,
+				shouldStopAfterTurn: async () => {
+					if (tokenBudgetLedger?.phase === "exhausted") return true;
+					if (options.isAuthorityStillValid && !(await options.isAuthorityStillValid())) {
+						authorityRevoked = true;
+						return true;
+					}
+					return observedTurns >= maxTurns;
+				},
+				// A resumed child re-checks every wrapped tool against current parent authority; a fresh
+				// child relies on the eligible set applied when its definitions were built.
+				eligibleTools: options.resume?.eligibleTools ?? policyBox.current.eligibleTools,
+				strictEligibility: options.resume !== undefined,
+			};
+			const startupPromise = options.resume
+				? Promise.resolve<NativeSubagentSession>({
+						session: options.resume.session,
+						profile,
+						tools: [...options.resume.tools],
+						prompt: normalized.task,
+					})
+				: createNativeSubagentSession(
+						{
+							request: normalized,
+							parentActiveTools,
+							model: options.model,
+							modelRuntime: options.modelRuntime,
+							agentDir: this.agentDir,
+							unsafeHostExec: options.unsafeHostExec,
+							mcpDispatch: mcpRuntime.dispatch,
+							parentMcpTools: mcpRuntime.parentMcpTools,
+							mcpToolAccess: mcpRuntime.mcpToolAccess,
+							hookRuntime: options.hookRuntime
+								? { ...options.hookRuntime, attempt: options.attempt }
+								: undefined,
+							policyBox,
+						},
+						this.createSession,
+					);
 			const startup = await awaitSubagentStartup(startupPromise, normalized.timeoutMs, options.signal);
 			if (startup.kind !== "completed") {
 				if (startup.kind === "error") throw startup.error;
@@ -7690,6 +8081,7 @@ export class NativeSubagentRunner {
 			}
 			const created = startup.value;
 			childSession = created.session;
+			retainedChildTools = created.tools;
 			if (tokenBudgetLedger && childSession.model) {
 				tokenBudgetLedger.setHardCapMode(
 					SUBAGENT_HARD_CAP_APIS.has(childSession.model.api) ? "enforced" : "aggregate-soft",
@@ -10362,6 +10754,8 @@ const manageSubagentParameters = Type.Object(
 			Type.Literal("extend"),
 			Type.Literal("follow_up"),
 			Type.Literal("stop"),
+			Type.Literal("resume"),
+			Type.Literal("delete"),
 		]),
 		additionalMs: Type.Optional(Type.Integer({ minimum: 1_000, maximum: SUBAGENT_PROFILE_LIMITS.maxTimeoutMs })),
 		requestId: Type.Optional(
@@ -10373,7 +10767,7 @@ const manageSubagentParameters = Type.Object(
 	{
 		additionalProperties: false,
 		description:
-			"Inspect, extend, follow up, or stop the same retained ICE subagent. Follow-up requires a stable requestId and is rejected while a user has takeover control.",
+			"Inspect, extend, follow up, resume, or delete the same retained ICE subagent. Follow-up requires a stable requestId and is rejected while a user has takeover control. Resume continues a retained completed child in its original session and authority; delete forgets a retained terminal child idempotently.",
 	},
 );
 
@@ -10517,7 +10911,9 @@ type SubagentJobTool = ToolDefinition<typeof subagentJobParameters, { inspection
 type ManageSubagentTool = ToolDefinition<
 	typeof manageSubagentParameters,
 	| {
-			action: "inspect" | "extend" | "follow_up" | "stop";
+			action: "inspect" | "extend" | "follow_up" | "stop" | "resume" | "delete";
+			resumedFromRunId?: string;
+			deleted?: { runId: string; deleted: boolean };
 			runId: string;
 			attention?: SubagentRuntimeAttention;
 			result?: SubagentResult;
@@ -12997,7 +13393,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 		name: "manage_subagent",
 		label: "manage_subagent",
 		description:
-			"Inspect, extend, follow up, or stop the same retained ICE child. Follow-up queues bounded untrusted task data through Ice steering, requires a stable requestId, and is rejected while a user has takeover control. Extend preserves run ID, child session, model, profile, scope, tool authority, and output budget; historical and terminal children cannot be revived.",
+			"Inspect, extend, follow up, or stop the same retained ICE child. Follow-up queues bounded untrusted task data through Ice steering, requires a stable requestId, and is rejected while a user has takeover control. Extend preserves run ID, child session, model, profile, scope, tool authority, and output budget; a retained completed child may be resumed in its original session and authority, or deleted explicitly.",
 		promptSnippet: "Inspect or manage a retained subagent timeout",
 		parameters: manageSubagentParameters,
 		renderCall: (args, theme, context) => renderObservatoryCall("manage_subagent", args, theme, context),
@@ -13097,6 +13493,56 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 							...(attention ? { attention } : {}),
 						},
 						isError: result.status !== "completed" && result.status !== "needs_time",
+					};
+				}
+				if (params.action === "resume") {
+					if (!params.message) {
+						throw new SubagentError("malformed_result", "resume requires a bounded message.");
+					}
+					const settingsManager = getParentSettingsManager(ctx);
+					const resumed = await runner.resumeRuntime(
+						params.runId,
+						parentSessionId,
+						params.message,
+						[...ice.getActiveTools()],
+						{
+							modelRuntime: ctx.modelRegistry.getRuntime(),
+							signal: _signal,
+							createHookRuntimeFor: (request) =>
+								createSubagentHookRuntime(ctx, settingsManager, request, options, undefined, appendHookJournal),
+							isAuthorityStillValidFor: (request, hookRuntime) =>
+								isCurrentSubagentAuthorityValid(ctx, settingsManager, request, hookRuntime),
+						},
+					);
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Resumed retained subagent ${params.runId} as ${resumed.runId}. Final status: ${resumed.status}.\n${resumed.summary}`,
+							},
+						],
+						details: {
+							action: "resume" as const,
+							runId: params.runId,
+							resumedFromRunId: params.runId,
+							result: redactSubagentResult(resumed),
+						},
+						isError: resumed.status !== "completed" && resumed.status !== "needs_time",
+					};
+				}
+				if (params.action === "delete") {
+					const deleted = await runner.deleteRetainedChild(params.runId, parentSessionId);
+					return {
+						content: [
+							{
+								type: "text",
+								text: deleted.deleted
+									? `Deleted retained subagent ${params.runId}.`
+									: `Retained subagent ${params.runId} was already forgotten; nothing to delete.`,
+							},
+						],
+						details: { action: "delete" as const, runId: params.runId, deleted },
+						isError: false,
 					};
 				}
 				const result = await runner.stopRuntime(params.runId, parentSessionId);

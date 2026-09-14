@@ -16,6 +16,7 @@ import {
 	registerFauxProvider,
 	unregisterApiProviders,
 } from "@zykairotis/ice-ai/compat";
+import { Value } from "typebox/value";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -617,6 +618,24 @@ describe("ICE subagent contracts", () => {
 			expect(schema.properties).not.toHaveProperty(field);
 		}
 		expect(manage?.description).toMatch(/preserves run ID.*model.*profile.*scope.*tool authority.*output budget/i);
+	});
+
+	it("validates the manage_subagent contract as a closed schema that rejects widening", async () => {
+		const harness = await createAsyncToolHarness();
+		const schema = harness.tools.get("manage_subagent")!.parameters;
+		expect(schema).toMatchObject({ additionalProperties: false });
+		// Every declared lifecycle action validates, including the reuse/delete additions.
+		for (const action of ["inspect", "extend", "follow_up", "stop", "resume", "delete"]) {
+			expect(Value.Check(schema, { runId: "run-1", action })).toBe(true);
+		}
+		// An action outside the closed union is rejected outright.
+		expect(Value.Check(schema, { runId: "run-1", action: "recreate" })).toBe(false);
+		// Widening fields are undeclared, and the closed object rejects them at the boundary.
+		for (const field of ["model", "profile", "scope", "tools"]) {
+			expect(Value.Check(schema, { runId: "run-1", action: "resume", [field]: {} })).toBe(false);
+		}
+		expect(Value.Check(schema, { runId: "run-1", action: "resume", message: "continue" })).toBe(true);
+		expect(Value.Check(schema, { runId: "run-1", action: "delete" })).toBe(true);
 	});
 
 	it("shares one directories-only scope schema across delegated tools", async () => {
