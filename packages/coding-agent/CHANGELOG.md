@@ -144,6 +144,7 @@
 
 ### Changed
 
+- Improved interactive subagent footer observability with bounded active/reusable-retained counts, selected-child status, the last three sanitized tool/path activities, runtime timing, attention indicators, and narrow-terminal fallbacks sourced from the agent-view bridge.
 - Changed clipboard and Gondolin integrations to the published `@zykairotis/ice-*` fork packages, including cross-platform binary packaging, example setup, and generated install metadata.
 - Changed ICE RPC and interactive settings projections to show deny-first effective values; empty role allowlists are neutral preferences, while malformed settings block new delegation.
 - Removed former specialist aliases, including `scout`; use self delegation or an actual Markdown agent name.

@@ -84,6 +84,7 @@ export interface IceAgentViewDescriptor {
 	readonly taskId?: string;
 	readonly session?: AgentSession;
 	readonly live: boolean;
+	readonly retentionState?: "reusable" | "history-only";
 	readonly readOnly: boolean;
 	readonly interactionMode?: IceAgentViewInteractionMode;
 	readonly controlState?: IceAgentViewControlState;
@@ -125,6 +126,7 @@ export interface IceAgentViewSnapshotInput {
 	readonly role: string;
 	readonly model?: string;
 	readonly status: string;
+	readonly retentionState?: "reusable" | "history-only";
 	readonly authority?: IceAgentViewAuthority;
 	readonly startedAt?: number;
 	readonly finishedAt: number;
@@ -508,6 +510,7 @@ export class IceAgentViewBridge {
 				runId: input.runId,
 				taskId: input.taskId,
 				live: false,
+				retentionState: input.retentionState ?? "history-only",
 				readOnly: true,
 				interactionMode: "mirror" as const,
 				authority: input.authority,
