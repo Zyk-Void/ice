@@ -496,6 +496,14 @@ export class IceAgentViewBridge {
 		this.publish();
 	}
 
+	/** Stage 4: drop a retained historical snapshot so a deleted child cannot be resurrected. */
+	removeHistoricalSnapshot(runId: string): boolean {
+		const removed = this.historical.delete(runId);
+		this.interactionModes.delete(runId);
+		if (removed) this.publish();
+		return removed;
+	}
+
 	registerHistoricalSnapshot(input: IceAgentViewSnapshotInput): void {
 		const id = input.runId;
 		const clonedMessages = cloneBoundedMessages(input.messages);
