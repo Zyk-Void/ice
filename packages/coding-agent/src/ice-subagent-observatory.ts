@@ -8,6 +8,7 @@ import type {
 	TerminalSubagentJobStatus,
 } from "./ice-subagent-jobs.ts";
 import { JOB_COMPLETION_MESSAGE_TYPE } from "./ice-subagent-jobs.ts";
+import type { SubagentRetryState } from "./ice-subagent-timeout-supervisor.ts";
 import type {
 	SubagentBatchTaskLifecycleEvent,
 	SubagentEvent,
@@ -63,6 +64,8 @@ export type ObservatoryPhase =
 	| "queued"
 	| "starting"
 	| "compacting"
+	| "retrying"
+	| "wrapping_up"
 	| "needs_time"
 	| "completed"
 	| "failed"
@@ -112,6 +115,7 @@ export interface SubagentProgressSnapshot {
 	readonly currentPath?: string;
 	readonly attempt?: 1 | 2;
 	readonly attemptHistory: readonly ObservatoryAttemptHistory[];
+	readonly retry?: SubagentRetryState;
 	readonly usage?: SubagentUsage;
 	readonly budget?: SubagentTokenBudgetSummary;
 	readonly batchCounts?: ObservatoryBatchCounts;
@@ -143,6 +147,7 @@ export interface ObservatoryRuntimeInput {
 	readonly currentPath?: string;
 	readonly usage?: SubagentUsage;
 	readonly budget?: SubagentTokenBudgetSummary;
+	readonly retry?: SubagentRetryState;
 }
 
 export interface ObservatoryWorkflowInput {
@@ -164,6 +169,7 @@ export interface ObservatoryWorkflowInput {
 	readonly attempt?: 1 | 2;
 	readonly usage?: SubagentUsage;
 	readonly budget?: SubagentTokenBudgetSummary;
+	readonly retry?: SubagentRetryState;
 	readonly batchCounts?: ObservatoryBatchCounts;
 	readonly evidenceCount?: number;
 	readonly changedFileCount?: number;
@@ -761,6 +767,10 @@ function phaseForRuntimeEvent(event: SubagentEvent, previous: SubagentProgressSn
 				.find((activity) => activity.phase !== "compacting");
 			return previousActivity?.phase ?? "running";
 		}
+		case "subagent_retry":
+			return "retrying";
+		case "subagent_wrap_up":
+			return "wrapping_up";
 		case "subagent_token_budget":
 			return "running";
 		case "subagent_needs_time":
@@ -803,6 +813,7 @@ function createSnapshot(input: {
 	batchCounts?: ObservatoryBatchCounts;
 	attemptHistory?: readonly ObservatoryAttemptHistory[];
 	activity?: readonly ObservatoryActivity[];
+	retry?: SubagentRetryState;
 	evidenceCount?: number;
 	changedFileCount?: number;
 	artifactReady?: boolean;
@@ -832,6 +843,7 @@ function createSnapshot(input: {
 		...(input.currentPath ? { currentPath: input.currentPath } : {}),
 		...(input.attempt ? { attempt: input.attempt } : {}),
 		attemptHistory: Object.freeze((input.attemptHistory ?? []).slice(-OBSERVATORY_ATTEMPT_LIMIT)),
+		...(input.retry ? { retry: Object.freeze({ ...input.retry }) } : {}),
 		...(input.usage ? { usage: input.usage } : {}),
 		...(boundedTokenBudget(input.budget) ? { budget: boundedTokenBudget(input.budget) } : {}),
 		...(input.batchCounts ? { batchCounts: Object.freeze({ ...input.batchCounts }) } : {}),
@@ -1087,6 +1099,7 @@ export function reduceObservatoryEvent(state: ObservatoryState, input: Observato
 		currentPath: currentPath ?? existing?.currentPath,
 		usage: input.usage ?? existing?.usage,
 		budget: boundedTokenBudget(input.budget) ?? existing?.budget,
+		retry: input.event.retry ?? existing?.retry,
 		attemptHistory,
 		activity: activityFor(existing, phase, input.event.toolName, currentPath),
 	});
@@ -1138,6 +1151,7 @@ export function reduceWorkflowProgress(state: ObservatoryState, input: Observato
 		currentPath: currentPath ?? existing?.currentPath,
 		usage: input.usage ?? existing?.usage,
 		budget: boundedTokenBudget(input.budget) ?? existing?.budget,
+		retry: input.retry ?? existing?.retry,
 		batchCounts: input.batchCounts ?? existing?.batchCounts,
 		attemptHistory,
 		activity: activityFor(existing, input.phase, existing?.currentTool, currentPath),

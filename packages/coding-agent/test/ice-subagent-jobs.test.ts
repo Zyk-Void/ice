@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	JOB_ENTRY_TYPE,
@@ -8,14 +11,21 @@ import {
 	type SubagentJobRunResult,
 } from "../src/ice-subagent-jobs.ts";
 import type { IceHookDispatchRecord } from "../src/ice-subagent-settings.ts";
-import type { ReviewFinding, SubagentResult, SubagentVerification } from "../src/ice-subagents.ts";
+import {
+	type ReviewFinding,
+	type SubagentResult,
+	type SubagentVerification,
+	writeSubagentReportArtifact,
+} from "../src/ice-subagents.ts";
 
+const TEST_REPORT_ARTIFACT_ROOT = "/tmp/ice-subagent-report-artifacts";
 const registries: SubagentJobRegistry[] = [];
 
 interface TestRegistryOptions {
 	maxActiveJobs?: number;
 	maxQueuedJobs?: number;
 	maxAggregateOutputBytes?: number;
+	reportArtifactRoot?: string;
 }
 
 function createRegistry(
@@ -27,6 +37,7 @@ function createRegistry(
 		ownerSessionId: "owner-a",
 		persist,
 		notify,
+		reportArtifactRoot: TEST_REPORT_ARTIFACT_ROOT,
 		...options,
 	} as ConstructorParameters<typeof SubagentJobRegistry>[0]);
 	registries.push(registry);
@@ -821,6 +832,35 @@ describe("durable subagent jobs", () => {
 		expect(tombstoneInspection.result).toBeUndefined();
 	});
 
+	it("removes a spilled artifact when its durable full result expires from retention", async () => {
+		const artifactRoot = mkdtempSync(join(tmpdir(), "ice-subagent-job-artifacts-"));
+		try {
+			const artifact = writeSubagentReportArtifact({
+				runId: "retained-artifact",
+				content: "oversized child output",
+				artifactRoot,
+			});
+			expect(artifact).toBeDefined();
+			expect(existsSync(artifact!.path)).toBe(true);
+			const registry = createRegistry(undefined, undefined, { reportArtifactRoot: artifactRoot });
+			const first = completedRun();
+			launch(registry, async () => ({
+				...first,
+				result: { ...first.result, runId: artifact!.id, reportArtifact: artifact },
+			}));
+			await flush();
+			for (let index = 0; index < 32; index++) {
+				launch(registry, async () => completedRun());
+				await flush();
+			}
+
+			expect(existsSync(artifact!.path)).toBe(false);
+			expect(registry.list().filter((inspection) => inspection.tombstone)).toHaveLength(1);
+		} finally {
+			rmSync(artifactRoot, { recursive: true, force: true });
+		}
+	});
+
 	it("shuts down active work as interrupted and leaves no active controller", async () => {
 		let settle!: (value: SubagentJobRunResult) => void;
 		const snapshots: PersistedSubagentJobSnapshot[] = [];
@@ -1426,15 +1466,27 @@ describe("durable job identity and artifact parity", () => {
 	});
 
 	it("preserves the runtime work artifact when a durable job fails the report protocol", async () => {
+		const snapshots: PersistedSubagentJobSnapshot[] = [];
 		const registry = createRegistry(
-			() => {},
+			(snapshot) => snapshots.push(snapshot),
 			() => {},
 		);
 		const protocolFailure: SubagentJobRunResult = {
 			result: {
 				...completedRun().result,
+				runId: "run-protocol",
 				status: "verification_failed",
 				evidence: undefined,
+				reportArtifact: {
+					schemaVersion: 1,
+					id: "run-protocol",
+					path: `${TEST_REPORT_ARTIFACT_ROOT}/run-protocol/report.json`,
+					bytes: 12,
+					originalBytes: 42,
+					sha256: "a".repeat(64),
+					contentType: "application/json",
+					truncated: true,
+				},
 				workArtifact: {
 					schemaVersion: 1,
 					runId: "run-protocol",
@@ -1467,11 +1519,35 @@ describe("durable job identity and artifact parity", () => {
 		const inspection = registry.inspect(accepted.jobId);
 		expect(inspection.job.status).toBe("verification_failed");
 		expect(inspection.result?.workArtifact).toBeDefined();
+		expect(inspection.result?.reportArtifact).toMatchObject({
+			id: "run-protocol",
+			contentType: "application/json",
+			bytes: 12,
+			originalBytes: 42,
+			truncated: true,
+		});
 		expect(inspection.result?.workArtifact?.reportProtocol).toMatchObject({ status: "malformed" });
 		expect(inspection.result?.workArtifact?.touchedPaths).toEqual(["src/app.ts"]);
 		// Candidate evidence stays bounded and never becomes verified evidence.
 		expect(inspection.result?.workArtifact?.candidateEvidencePaths).toEqual(["src/generated.ts"]);
 		expect(inspection.result?.evidence).toBeUndefined();
+
+		const trusted = snapshots.at(-1)!;
+		const outsideRoot = structuredClone(trusted);
+		outsideRoot.sequence += 1;
+		outsideRoot.result!.reportArtifact!.path = "/tmp/report.json";
+		const mismatchedPath = structuredClone(trusted);
+		mismatchedPath.sequence += 2;
+		mismatchedPath.result!.reportArtifact!.path = `${TEST_REPORT_ARTIFACT_ROOT}/another-run/report.json`;
+		const restored = createRegistry();
+		restored.restore(
+			[outsideRoot, mismatchedPath].map((snapshot) => ({
+				type: "custom",
+				customType: JOB_ENTRY_TYPE,
+				data: snapshot,
+			})),
+		);
+		expect(restored.list()).toHaveLength(0);
 	});
 
 	it("keeps expired terminal history inspectable as a bounded tombstone after restart", async () => {

@@ -1,6 +1,6 @@
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import type { AgentSession } from "./core/agent-session.ts";
-import type { SubagentRuntimeAttention } from "./ice-subagent-timeout-supervisor.ts";
+import type { SubagentRetryState, SubagentRuntimeAttention } from "./ice-subagent-timeout-supervisor.ts";
 import { redactCredentialText } from "./utils/redact.ts";
 
 export type IceAgentViewKind = "parent" | "subagent" | "historical-subagent";
@@ -54,6 +54,8 @@ export interface IceAgentViewPresentation {
 	readonly reportMode?: "plain_final_turn" | "structured_report";
 	/** Bounded, redacted runtime state for a live child awaiting a time decision. */
 	readonly runtimeAttention?: SubagentRuntimeAttention;
+	/** Bounded provider retry lifecycle state; observational only. */
+	readonly retry?: SubagentRetryState;
 	readonly finalResult?: IceAgentViewFinalResult;
 }
 
@@ -268,7 +270,11 @@ function normalizeRuntimeAttention(input: unknown): SubagentRuntimeAttention | u
 	const phase = input.phase;
 	if (
 		(state !== "running" && state !== "awaiting_extension" && state !== "terminal") ||
-		(phase !== "startup" && phase !== "working" && phase !== "controlled_wait" && phase !== "finalization")
+		(phase !== "startup" &&
+			phase !== "working" &&
+			phase !== "wrapping_up" &&
+			phase !== "controlled_wait" &&
+			phase !== "finalization")
 	) {
 		return undefined;
 	}
@@ -425,6 +431,29 @@ export function normalizeIceAgentViewPresentation(
 			? truncatePresentationText(input.timeoutContinuationMessageMarker, MAX_PRESENTATION_LABEL_BYTES)
 			: undefined;
 	const runtimeAttention = normalizeRuntimeAttention(input.runtimeAttention);
+	const retryInput = isRecord(input.retry) ? input.retry : undefined;
+	const retryState = retryInput?.state;
+	const retryAttempt = retryInput ? boundedRuntimeNumber(retryInput.attempt, 64) : undefined;
+	const retryMaxAttempts = retryInput ? boundedRuntimeNumber(retryInput.maxAttempts, 64) : undefined;
+	const retryDelayMs = retryInput ? boundedRuntimeNumber(retryInput.delayMs, 10 * 60 * 1_000) : undefined;
+	const retryDiagnostic =
+		retryInput && typeof retryInput.diagnostic === "string"
+			? truncatePresentationText(retryInput.diagnostic, MAX_PRESENTATION_TEXT_BYTES)
+			: undefined;
+	const retry: SubagentRetryState | undefined =
+		(retryState === "scheduled" || retryState === "recovered" || retryState === "failed") &&
+		retryAttempt !== undefined &&
+		retryMaxAttempts !== undefined &&
+		retryAttempt > 0 &&
+		retryMaxAttempts > 0
+			? {
+					state: retryState,
+					attempt: retryAttempt,
+					maxAttempts: retryMaxAttempts,
+					...(retryDelayMs !== undefined ? { delayMs: retryDelayMs } : {}),
+					...(retryDiagnostic ? { diagnostic: retryDiagnostic } : {}),
+				}
+			: undefined;
 	const finalResultInput = isRecord(input.finalResult) ? input.finalResult : undefined;
 	const finalStatus =
 		finalResultInput && typeof finalResultInput.status === "string"
@@ -472,6 +501,7 @@ export function normalizeIceAgentViewPresentation(
 		...(typeof input.finalizationStarted === "boolean" ? { finalizationStarted: input.finalizationStarted } : {}),
 		...(reportMode ? { reportMode } : {}),
 		...(runtimeAttention ? { runtimeAttention } : {}),
+		...(retry ? { retry } : {}),
 		...(finalResult ? { finalResult } : {}),
 	};
 	return Object.keys(normalized).length > 0 ? (deepFreezeSnapshot(normalized) as IceAgentViewPresentation) : undefined;
