@@ -3,6 +3,7 @@ import { rmdirSync, unlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { getAgentDir } from "./config.ts";
 import { matchesEntryType } from "./core/legacy-compat/identity.ts";
+import { isIceDelegableAdapterId } from "./ice-subagent-capabilities.ts";
 import { SUBAGENT_CONCURRENCY_LIMITS, type SubagentConcurrencyAdmission } from "./ice-subagent-concurrency.ts";
 import type { IceModelCandidateSkip, IceSubagentRouteSnapshot } from "./ice-subagent-routing.ts";
 import type { IceHookDispatchRecord } from "./ice-subagent-settings.ts";
@@ -47,7 +48,8 @@ export type SubagentJobStatus =
 export type TerminalSubagentJobStatus = Exclude<SubagentJobStatus, "created" | "queued" | "running" | "needs_time">;
 
 export interface SubagentJobContract {
-	capabilities?: readonly { name: string; origin: string; fingerprint: string }[];
+	/** Adapter identity is optional only for legacy persisted contracts. */
+	capabilities?: readonly { adapterId?: string; name: string; origin: string; fingerprint: string }[];
 	resourcesHash?: string;
 	route?: IceSubagentRouteSnapshot;
 	thinking: string;
@@ -719,6 +721,8 @@ function validJobRecord(value: unknown): value is SubagentJobRecord {
 				contract.capabilities.some(
 					(item) =>
 						!isRecord(item) ||
+						(item.adapterId !== undefined &&
+							(!isIceDelegableAdapterId(item.adapterId) || Buffer.byteLength(item.adapterId) > 128)) ||
 						typeof item.name !== "string" ||
 						item.name.length > 64 ||
 						typeof item.origin !== "string" ||

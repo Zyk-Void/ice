@@ -156,6 +156,16 @@ function parseServiceTiers(value: unknown): string[] | undefined {
 
 export const CX_MAX_CONTEXT_TOKENS = 272000;
 
+// Atria's gateway currently reports this model with a stale 128K context and no
+// output limit. The public Atria API documents a 256K context and a 65,536-token
+// maximum output for Atria-Dawn-Preview.
+export const ATRIA_DAWN_PREVIEW_CONTEXT_TOKENS = 256000;
+export const ATRIA_DAWN_PREVIEW_MAX_OUTPUT_TOKENS = 65536;
+
+function isAtriaDawnPreviewModel(id: string): boolean {
+	return /(?:^|\/)atria-dawn-preview$/iu.test(id);
+}
+
 export function isCxModel(id: string): boolean {
 	return /^cx\//i.test(id);
 }
@@ -182,8 +192,14 @@ function mapOneEndpointModel(entry: EndpointModel, ids: Set<string>) {
 	if (rawMaxTokens === undefined) {
 		throw new Error(`${entry.id}: invalid maxOutput`);
 	}
-	const contextWindow = isCxModel(entry.id) ? Math.min(rawContextWindow, CX_MAX_CONTEXT_TOKENS) : rawContextWindow;
-	const maxTokens = Math.min(rawMaxTokens, contextWindow);
+	const contextWindow = isAtriaDawnPreviewModel(entry.id)
+		? ATRIA_DAWN_PREVIEW_CONTEXT_TOKENS
+		: isCxModel(entry.id)
+			? Math.min(rawContextWindow, CX_MAX_CONTEXT_TOKENS)
+			: rawContextWindow;
+	const maxTokens = isAtriaDawnPreviewModel(entry.id)
+		? Math.min(rawMaxTokens, ATRIA_DAWN_PREVIEW_MAX_OUTPUT_TOKENS)
+		: Math.min(rawMaxTokens, contextWindow);
 	const thinkingFormat = parseThinkingFormat(capabilities.thinkingFormat);
 	const serviceTiers = parseServiceTiers(capabilities.serviceTiers);
 	const fastCapable =

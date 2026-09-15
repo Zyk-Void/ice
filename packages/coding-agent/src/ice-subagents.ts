@@ -104,6 +104,7 @@ import {
 	getIceDelegableTools,
 	type IceResolvedDelegableTool,
 	isIceChildToolName,
+	isIceDelegableAdapterId,
 	isIceParentManagementTool,
 	normalizeIceToolSchema,
 	resolveIceDelegableTools,
@@ -505,6 +506,8 @@ export interface SubagentProfile {
 	requestedModel?: string;
 	/** Effective fallback model from the file agent; parent model is the final candidate. */
 	fallbackModel?: string;
+	/** Explicit parent-owned adapter IDs requested by this profile; default none. */
+	adapterIds?: readonly string[];
 	/** Selected MCP tools (server/tool), validated at admission; default none. */
 	mcpTools?: readonly string[];
 	/** Self-delegation marker; file agents omit this. */
@@ -551,6 +554,10 @@ export interface SubagentProfileSummary {
 	effectiveModel?: string;
 	modelCandidateSkips?: readonly IceModelCandidateSkip[];
 	effectiveMcpTools?: readonly string[];
+	/** Adapter IDs requested by the profile; they are not authority by themselves. */
+	requestedAdapters?: readonly string[];
+	/** Adapter IDs admitted from the current parent registration/policy snapshot. */
+	effectiveAdapters?: readonly string[];
 	/** Compatibility alias for older consumers. */
 	tools: readonly string[];
 	availability: SubagentProfileAvailability;
@@ -984,6 +991,8 @@ export interface NormalizedSubagentRequest
 	requestedModel?: string;
 	fallbackModel?: string;
 	selectedMcpTools?: readonly string[];
+	/** Profile-selected parent adapter IDs; never serialized as executable authority. */
+	selectedAdapterIds?: readonly string[];
 	mcpAuthorizations?: readonly IceSubagentMcpToolAuthorization[];
 	mcpAuthorityStillValid?: () => boolean;
 	/** In-process adapters are never serialized; durable jobs store fingerprints only. */
@@ -1211,6 +1220,8 @@ export interface SubagentLaunchProvenance {
 	modelCandidates?: readonly string[];
 	modelCandidateSkips?: readonly IceModelCandidateSkip[];
 	mcpTools?: readonly string[];
+	/** Explicit profile adapter selectors captured at launch. */
+	adapterIds?: readonly string[];
 	scopeRoots: string[];
 	scopeTargets: string[];
 	execution: {
@@ -1245,6 +1256,8 @@ export interface SubagentLaunchPreflightTask {
 		skipped?: readonly IceModelCandidateSkip[];
 	};
 	mcpTools?: readonly string[];
+	/** Explicit profile adapter selectors, if any. */
+	adapterIds?: readonly string[];
 	scopeRoots: string[];
 	scopeTargets: string[];
 	tools: string[];
@@ -1970,6 +1983,18 @@ function parseSelectedMcpTools(value: unknown): readonly string[] | undefined {
 	return Object.freeze([...new Set(normalized)]);
 }
 
+function parseRoleAdapterIds(value: unknown, sourcePath: string): readonly string[] | undefined {
+	if (value === undefined) return undefined;
+	const adapters = parseRoleList(value, "adapters");
+	if (adapters.some((adapterId) => !isIceDelegableAdapterId(adapterId) || Buffer.byteLength(adapterId) > 128)) {
+		throw new SubagentError(
+			"malformed_result",
+			`Configurable role adapters must use explicit parent adapter IDs in ${sourcePath}.`,
+		);
+	}
+	return Object.freeze([...new Set(adapters)]);
+}
+
 function parseRoleTools(value: unknown): string[] {
 	const tools = parseRoleList(value, "tools");
 	if (value === undefined) return [...SUBAGENT_REQUESTED_TOOL_NAMES];
@@ -2142,6 +2167,7 @@ function loadProfilesFromDirectory(
 				"name",
 				"description",
 				"tools",
+				"adapters",
 				"tags",
 				"model",
 				"fallbackModel",
@@ -2209,6 +2235,7 @@ function loadProfilesFromDirectory(
 				}
 			}
 			const mcpTools = parseSelectedMcpTools(frontmatter.mcp ?? frontmatter.mcpTools ?? frontmatter.mcp_tools);
+			const adapterIds = parseRoleAdapterIds(frontmatter.adapters, sourcePath);
 			const requestedTools = parseRoleTools(frontmatter.tools);
 			const roleTags = parseRoleTags(frontmatter.tags);
 			const temperature = parseStrictProfileNumber(
@@ -2268,6 +2295,7 @@ function loadProfilesFromDirectory(
 				),
 				...(requestedModel ? { requestedModel } : {}),
 				...(fallbackModel ? { fallbackModel } : {}),
+				...(adapterIds ? { adapterIds } : {}),
 				...(mcpTools ? { mcpTools } : {}),
 				modelPolicy: "inherit-parent",
 				...(diagnostics.length > 0 ? { diagnostics: Object.freeze([...diagnostics]) } : {}),
@@ -3870,24 +3898,39 @@ function profileSummary(
 		unsafeHostExec,
 	});
 	const diagnostics = [...(profile.diagnostics ?? []), ...extraDiagnostics].slice(0, 8);
+	const requestedAdapters = profile.adapterIds ?? [];
+	const effectiveAdapters: string[] = [];
 	for (const tool of options.delegableTools ?? []) {
+		const directToolRequested = profile.requestedTools.includes(tool.name);
+		const adapterRequested = requestedAdapters.includes(tool.adapterId);
 		if (
-			profile.requestedTools.includes(tool.name) &&
+			(directToolRequested || adapterRequested) &&
 			parentActiveTools.includes(tool.name) &&
 			tool.isCurrent() &&
 			(tool.access === "read-only" || (tool.access === "mutation" && unsafeHostExec))
-		)
-			(effectiveTools as string[]).push(tool.name);
+		) {
+			if (!(effectiveTools as string[]).includes(tool.name)) (effectiveTools as string[]).push(tool.name);
+			if (adapterRequested && !effectiveAdapters.includes(tool.adapterId)) effectiveAdapters.push(tool.adapterId);
+		}
 	}
+	const missingAdapters = requestedAdapters.filter((adapterId) => !effectiveAdapters.includes(adapterId));
 	const toolClass = effectiveTools.length === 0 ? "none" : unsafeHostExec ? "host" : "read-only";
-	const eligibilityNote = availabilityOverride ?? profileAvailability(profile, effectiveTools, unsafeHostExec);
+	const baseAvailability = profileAvailability(profile, effectiveTools, unsafeHostExec);
+	const eligibilityNote =
+		availabilityOverride ??
+		(missingAdapters.length > 0 && baseAvailability === "available" ? "limited" : baseAvailability);
 	const profileDiagnostics = [
 		...diagnostics,
 		`effective tool class for this invocation: ${toolClass}`,
 		...(eligibilityNote === "requires_yolo"
 			? ["profile requests host/mutation tools; requires explicit trusted YOLO authorization"]
 			: []),
-		...(eligibilityNote === "limited" ? ["parent policy grants only a subset of the profile requested tools"] : []),
+		...(eligibilityNote === "limited"
+			? ["parent policy grants only a subset of the profile requested tools or adapters"]
+			: []),
+		...(missingAdapters.length > 0
+			? [`parent policy does not currently grant adapter IDs: ${missingAdapters.join(", ")}`]
+			: []),
 	].slice(0, 10);
 	return {
 		name: profile.name,
@@ -3914,8 +3957,10 @@ function profileSummary(
 		unsafeHostExec: profile.unsafeHostExec === true,
 		requestedTools: profile.requestedTools,
 		effectiveTools,
+		...(requestedAdapters.length > 0 ? { requestedAdapters } : {}),
+		...(effectiveAdapters.length > 0 ? { effectiveAdapters: Object.freeze([...effectiveAdapters]) } : {}),
 		tools: profile.tools,
-		availability: availabilityOverride ?? profileAvailability(profile, effectiveTools, unsafeHostExec),
+		availability: eligibilityNote,
 		...(diagnostics.length > 0 ? { diagnostics: Object.freeze(diagnostics) } : {}),
 		...(profile.requestedModel ? { requestedModel: profile.requestedModel } : {}),
 		...(profile.fallbackModel ? { fallbackModel: profile.fallbackModel } : {}),
@@ -4904,6 +4949,7 @@ export function normalizeSubagentRequest(
 	}
 	const selectedMcpTools =
 		request.execution?.tools?.length === 0 ? undefined : isSelf ? request.self?.mcp : profile.mcpTools;
+	const selectedAdapterIds = request.execution?.tools?.length === 0 ? undefined : profile.adapterIds;
 	if (request.self?.inheritSkills !== undefined && typeof request.self.inheritSkills !== "boolean") {
 		throw new SubagentError("malformed_result", "inheritSkills must be boolean.");
 	}
@@ -5046,6 +5092,7 @@ export function normalizeSubagentRequest(
 		available: options.delegableTools ?? [],
 		parentActiveTools: options.parentActiveTools ?? [],
 		requested: (requestedTools ?? profile.requestedTools).filter((tool) => profile.requestedTools.includes(tool)),
+		requestedAdapterIds: selectedAdapterIds,
 		denied: iceContract.deniedTools,
 		allowMutation: options.unsafeHostExec === true && projectTrusted,
 	});
@@ -5076,6 +5123,7 @@ export function normalizeSubagentRequest(
 		...(request.execution?.model !== undefined ? { requestedModel: request.execution.model } : {}),
 		...(profile.fallbackModel ? { fallbackModel: profile.fallbackModel } : {}),
 		...(selectedMcpTools ? { selectedMcpTools: Object.freeze([...selectedMcpTools]) } : {}),
+		...(selectedAdapterIds ? { selectedAdapterIds: Object.freeze([...selectedAdapterIds]) } : {}),
 		task: request.task.trim(),
 		scope: targets.length > 0 ? { roots, targets } : { roots },
 		cwd: resolvedCwd,
@@ -5300,13 +5348,15 @@ export function deriveSubagentPromptCacheKey(
 			fork: request.forkContext.messages,
 		},
 		selectedMcpTools: [...(request.selectedMcpTools ?? [])],
+		selectedAdapterIds: [...(request.selectedAdapterIds ?? [])],
 		mcpAuthorizations: (request.mcpAuthorizations ?? []).map(({ selector, access, parameters, description }) => ({
 			selector,
 			access,
 			parameters: parameters ?? null,
 			description: description ?? null,
 		})),
-		delegatedTools: (request.delegatedTools ?? []).map(({ name, origin, access, fingerprint }) => ({
+		delegatedTools: (request.delegatedTools ?? []).map(({ adapterId, name, origin, access, fingerprint }) => ({
+			adapterId,
 			name,
 			origin,
 			access,
@@ -7559,6 +7609,8 @@ export interface NativeSubagentRunOptions {
 	isAuthorityStillValid?: () => boolean | Promise<boolean>;
 	batchId?: string;
 	taskId?: string;
+	/** Internal sibling execution (for batches/reviews) has no public lifecycle handle or retention. */
+	management?: "public" | "internal";
 	attempt?: 1 | 2;
 	signal?: AbortSignal;
 	onEvent?: (event: SubagentEvent) => void;
@@ -8252,6 +8304,8 @@ export class NativeSubagentRunner {
 		options: NativeSubagentRunOptions = {},
 	): Promise<SubagentResult> {
 		const runId = normalized.runId;
+		const publicManagementEnabled = this.runtimeManagementEnabled && options.management !== "internal";
+		const agentViewEnabled = options.management !== "internal";
 		const attemptDeadline = Date.now() + normalized.timeoutMs;
 		const profile = normalized.profile;
 		const startedAt = Date.now();
@@ -8365,7 +8419,7 @@ export class NativeSubagentRunner {
 				unsubscribeChild?.();
 				unsubscribeChild = undefined;
 				liveControl?.markTerminal();
-				if (childSession && terminalStatus) {
+				if (agentViewEnabled && childSession && terminalStatus) {
 					presentation = presentation
 						? normalizeIceAgentViewPresentation({ ...presentation, compacting: false })
 						: presentation;
@@ -8396,7 +8450,7 @@ export class NativeSubagentRunner {
 					// completions are reusable; failed, cancelled, and timed-out children are history-only.
 					// The resume claim ends here; retention republishes exactly one handle.
 					if (options.resume) this.activeResumeClaims.delete(options.resume.resumedFromRunId);
-					const keepRetained = terminalStatus !== undefined;
+					const keepRetained = options.management !== "internal" && terminalStatus !== undefined;
 					if (keepRetained) {
 						await this.retainTerminalChild({
 							runId,
@@ -8833,7 +8887,7 @@ export class NativeSubagentRunner {
 			let resumeAfterExtension: (() => Promise<SubagentResult>) | undefined;
 			let stopAfterSupervisor: ((reason: SubagentSupervisorStopReason) => Promise<SubagentResult>) | undefined;
 			const baseLiveControl = liveControl;
-			if (this.runtimeManagementEnabled) {
+			if (publicManagementEnabled) {
 				supervisor = new SubagentRunSupervisor<SubagentResult>({
 					runId,
 					childSessionId: childSession.sessionId,
@@ -8900,17 +8954,19 @@ export class NativeSubagentRunner {
 						}
 					: undefined;
 			}
-			releaseLiveSession = this.liveSessionRegistry?.register({
-				runId,
-				role: profile.name,
-				color: profile.color,
-				taskId: options.taskId,
-				model: modelLabel(options.model ?? childSession.model),
-				authority: options.unsafeHostExec === true ? "yolo" : "safe",
-				presentation,
-				session: childSession,
-				control: liveControl,
-			});
+			releaseLiveSession = agentViewEnabled
+				? this.liveSessionRegistry?.register({
+						runId,
+						role: profile.name,
+						color: profile.color,
+						taskId: options.taskId,
+						model: modelLabel(options.model ?? childSession.model),
+						authority: options.unsafeHostExec === true ? "yolo" : "safe",
+						presentation,
+						session: childSession,
+						control: liveControl,
+					})
+				: undefined;
 			emit("subagent_started", "running");
 			dispatchSubagentHookObservation(
 				options.hookRuntime!,
@@ -9141,7 +9197,9 @@ export class NativeSubagentRunner {
 				await flushSubagentHookObservations(options.hookRuntime);
 				// Retain before the terminal transition wakes any pending management
 				// wait, so a waiter never observes terminal state without a result.
-				const firstPublication = this.noteManagedTerminalResult(runId, normalized.parentSessionId, controlled);
+				const firstPublication = publicManagementEnabled
+					? this.noteManagedTerminalResult(runId, normalized.parentSessionId, controlled)
+					: false;
 				supervisor?.finish(controlled, controlled.status);
 				await cleanupTerminalSession();
 				const decorated = decorateSubagentResult(controlled);
@@ -9881,7 +9939,7 @@ export class NativeSubagentRunner {
 		} finally {
 			if (timeout) globalThis.clearTimeout(timeout);
 			await observeTerminalHook();
-			if (settledTerminalResult) {
+			if (settledTerminalResult && publicManagementEnabled) {
 				// Publish before supervisor teardown so a concurrent management wait
 				// never observes terminal state without a retained result.
 				await this.settleManagedRun(
@@ -10097,6 +10155,7 @@ export function createSubagentLaunchProvenance(
 		...(request.modelCandidates ? { modelCandidates: [...request.modelCandidates] } : {}),
 		...(request.modelCandidateSkips ? { modelCandidateSkips: [...request.modelCandidateSkips] } : {}),
 		...(request.selectedMcpTools ? { mcpTools: [...request.selectedMcpTools] } : {}),
+		...(request.selectedAdapterIds ? { adapterIds: [...request.selectedAdapterIds] } : {}),
 		scopeRoots: [...request.scope.roots],
 		scopeTargets: [...(request.scope.targets ?? [])],
 		execution: {
@@ -10226,6 +10285,7 @@ export function buildSubagentLaunchPreflight(
 				...(task.request.modelCandidateSkips ? { skipped: [...task.request.modelCandidateSkips] } : {}),
 			},
 			...(task.request.selectedMcpTools ? { mcpTools: [...task.request.selectedMcpTools] } : {}),
+			...(task.request.selectedAdapterIds ? { adapterIds: [...task.request.selectedAdapterIds] } : {}),
 			scopeRoots: [...task.request.scope.roots],
 			scopeTargets: [...(task.request.scope.targets ?? [])],
 			tools,
@@ -10625,6 +10685,7 @@ export async function runResolvedSubagentBatch(
 								signal: controller.signal,
 								isAuthorityStillValid: () => options.isAuthorityStillValid?.(request, task.hookRuntime) ?? true,
 								batchId,
+								management: "internal",
 								attempt,
 								hookRuntime: task.hookRuntime,
 								onEvent: (event) => options.onEvent?.({ ...event, taskId: task.id }),
@@ -11176,7 +11237,7 @@ const manageSubagentParameters = Type.Object(
 	{
 		additionalProperties: false,
 		description:
-			"Inspect, peek, wait, extend, follow up, detach, stop, resume, or delete the same ICE subagent through one phase-aware lifecycle. Peek returns the latest bounded snapshot immediately; wait blocks the parent tool call for at most waitMs until a terminal or attention state. Detach retains the same live child under management so the parent can continue other work; it never spends the extension reserve. Follow-up requires a stable requestId and is rejected while a user has takeover control. Resume continues a retained completed child in its original session and authority; delete forgets a retained reusable session idempotently. Managed terminal observations outlive reusable sessions for peek/wait. Resume is valid only for retained completed children; delete is owner-scoped and idempotent.",
+			"Inspect, peek, wait, extend, follow up, detach, stop, resume, or delete the same ICE subagent through one phase-aware lifecycle. Use the foreground runId returned by delegate: details.managed.runId for a live background launch, or details.result.runId for a retained terminal result. Do not pass a durable jobId, resultRef such as job:<id>, batchId, or taskId. Peek returns the latest bounded snapshot immediately; wait blocks the parent tool call for at most waitMs until a terminal or attention state. Detach retains the same live child under management so the parent can continue other work; it never spends the extension reserve. Follow-up requires a stable requestId and is rejected while a user has takeover control. Resume continues a retained completed child in its original session and authority; delete forgets a retained reusable session idempotently. Managed terminal observations outlive reusable sessions for peek/wait. Resume is valid only for retained completed children; delete is owner-scoped and idempotent.",
 	},
 );
 
@@ -13878,7 +13939,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 		name: "manage_subagent",
 		label: "manage_subagent",
 		description:
-			"Inspect, peek, wait for, extend, follow up, detach, stop, resume, or delete the same ICE child through one phase-aware lifecycle. Peek returns the latest bounded snapshot immediately. Wait blocks this tool call for at most waitMs until a terminal or attention state; a wait expiry reports the current state and never marks the child timed_out. Detach retains the same live child under management so the parent can continue other work. Follow-up queues bounded untrusted task data through Ice steering, requires a stable requestId, and is rejected while a user has takeover control. Extend preserves run ID, child session, model, profile, scope, tool authority, and output budget. Resume continues a retained completed child in its original session and authority; delete forgets a retained reusable session idempotently, while managed terminal observations stay peekable.",
+			"Inspect, peek, wait for, extend, follow up, detach, stop, resume, or delete the same ICE child through one phase-aware lifecycle. Use the foreground runId returned by delegate: details.managed.runId for a live background launch, or details.result.runId for a retained terminal result. Do not pass a durable jobId, resultRef such as job:<id>, batchId, or taskId. Peek returns the latest bounded snapshot immediately. Wait blocks this tool call for at most waitMs until a terminal or attention state; a wait expiry reports the current state and never marks the child timed_out. Detach retains the same live child under management so the parent can continue other work. Follow-up queues bounded untrusted task data through Ice steering, requires a stable requestId, and is rejected while a user has takeover control. Extend preserves run ID, child session, model, profile, scope, tool authority, and output budget. Resume continues a retained completed child in its original session and authority; delete forgets a retained reusable session idempotently, while managed terminal observations stay peekable.",
 		promptSnippet: "Peek, wait for, resume, delete, or manage a retained subagent timeout",
 		parameters: manageSubagentParameters,
 		renderCall: (args, theme, context) => renderObservatoryCall("manage_subagent", args, theme, context),
@@ -14109,7 +14170,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					isError: false,
 				};
 			} catch (error) {
-				const message = redactCredentialText(error instanceof Error ? error.message : String(error));
+				const message = formatManagedIdentifierError(error, params.runId);
 				return {
 					content: [{ type: "text", text: `Subagent management rejected: ${message}` }],
 					details: formatSubagentToolError(error),
@@ -14428,7 +14489,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	const delegateAsync: DelegateAsyncTool = {
 		name: "delegate_async",
 		label: "delegate_async",
-		description: `${SUBAGENT_SCOPE_TOOL_GUIDANCE} ${SUBAGENT_INTERNAL_REPORT_GUIDANCE} Accept one durable asynchronous ICE child for the current session using the current parent model captured at acceptance time. The parent-owned scheduler admits bounded active work or FIFO queued work, reserves bounded output, owns cancellation, persists state, and returns acceptance metadata without awaiting the child. Safe mode clamps the selected profile to requested read-only capabilities. Explicit --sub-yolo permits only profile-requested built-in capabilities that are also active in the trusted parent; it does not grant every parent tool. Trusted ambient resources may load, but model-visible authority remains the explicit child allowlist and recursive delegation is not authorized.`,
+		description: `${SUBAGENT_SCOPE_TOOL_GUIDANCE} ${SUBAGENT_INTERNAL_REPORT_GUIDANCE} Accept one durable asynchronous ICE child for the current session using the current parent model captured at acceptance time. The returned details.accepted.jobId is the bare identifier for inspect_subagent_job or cancel_subagent_job; details.accepted.resultRef (job:<id>) is display/reference metadata, not a jobId. Do not use a batchId, taskId, or foreground runId with the durable-job tools. The parent-owned scheduler admits bounded active work or FIFO queued work, reserves bounded output, owns cancellation, persists state, and returns acceptance metadata without awaiting the child. Safe mode clamps the selected profile to requested read-only capabilities. Explicit --sub-yolo permits only profile-requested built-in capabilities that are also active in the trusted parent; it does not grant every parent tool. Trusted ambient resources may load, but model-visible authority remains the explicit child allowlist and recursive delegation is not authorized.`,
 		promptSnippet: "Launch one durable asynchronous subagent",
 		parameters: delegateAsyncParameters,
 		execute: async (_toolCallId, params, signal, _onUpdate, ctx) => {
@@ -14537,7 +14598,8 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					contract: {
 						route: acceptedRoute,
 						capabilities: [
-							...(normalized.delegatedTools ?? []).map(({ name, origin, fingerprint }) => ({
+							...(normalized.delegatedTools ?? []).map(({ adapterId, name, origin, fingerprint }) => ({
+								adapterId,
 								name,
 								origin,
 								fingerprint,
@@ -14741,7 +14803,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					content: [
 						{
 							type: "text",
-							text: `Background subagent job ${accepted.jobId} accepted. Result ref: ${accepted.resultRef}.`,
+							text: `Background subagent job ${accepted.jobId} accepted. Use this bare jobId with inspect_subagent_job or cancel_subagent_job. Result ref for display only: ${accepted.resultRef}.`,
 						},
 					],
 					details: { accepted, launch },
@@ -14760,7 +14822,8 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	const inspectSubagentJob: SubagentJobTool = {
 		name: "inspect_subagent_job",
 		label: "inspect_subagent_job",
-		description: "Inspect one owner-scoped durable subagent job and its bounded result projection.",
+		description:
+			"Inspect one owner-scoped durable subagent job and its bounded result projection. Pass only the bare jobId returned as details.accepted.jobId by delegate_async; do not pass resultRef values such as job:<id>, a foreground runId, batchId, or taskId.",
 		promptSnippet: "Inspect a durable subagent job",
 		parameters: subagentJobParameters,
 		execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
@@ -14783,7 +14846,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					isError: false,
 				};
 			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
+				const message = formatDurableJobIdentifierError(error, params.jobId);
 				return {
 					content: [{ type: "text", text: `Subagent job inspection rejected: ${message}` }],
 					details: undefined,
@@ -14795,7 +14858,8 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	const cancelSubagentJob: SubagentJobTool = {
 		name: "cancel_subagent_job",
 		label: "cancel_subagent_job",
-		description: "Cancel one owner-scoped durable subagent job and wait for its worker to settle.",
+		description:
+			"Cancel one owner-scoped durable subagent job and wait for its worker to settle. Pass only the bare jobId returned as details.accepted.jobId by delegate_async; do not pass resultRef values such as job:<id>, a foreground runId, batchId, or taskId.",
 		promptSnippet: "Cancel a durable subagent job",
 		parameters: subagentJobParameters,
 		execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
@@ -14809,7 +14873,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					isError: false,
 				};
 			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
+				const message = formatDurableJobIdentifierError(error, params.jobId);
 				return {
 					content: [{ type: "text", text: `Subagent job cancellation rejected: ${message}` }],
 					details: undefined,
@@ -14821,7 +14885,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	const delegateBatch: DelegateBatchTool = {
 		name: "delegate_batch",
 		label: "delegate_batch",
-		description: `${SUBAGENT_SCOPE_TOOL_GUIDANCE} ${SUBAGENT_INTERNAL_REPORT_GUIDANCE} Run up to eight independently scoped sibling ICE children through the same atomic executor using the current parent model. Each child uses a fresh session and a parent-owned bounded complete-report output budget. Safe mode clamps each selected profile to requested read-only capabilities. Explicit --sub-yolo permits only each profile's requested built-in capabilities that are also active in the trusted parent; it does not grant every parent tool. Trusted ambient resources may load in YOLO, but model-visible authority remains each explicit child allowlist and recursive delegation is not authorized. The parent synthesizes the independent evidence.`,
+		description: `${SUBAGENT_SCOPE_TOOL_GUIDANCE} ${SUBAGENT_INTERNAL_REPORT_GUIDANCE} Run up to eight independently scoped sibling ICE children through the same atomic executor using the current parent model. Each child uses a fresh session and a parent-owned bounded complete-report output budget. The result identifies the batch with batchId and each item with taskId; those values are report identifiers only, not a durable jobId or a manageable foreground runId. Do not pass a batchId or taskId to inspect_subagent_job or manage_subagent. Safe mode clamps each selected profile to requested read-only capabilities. Explicit --sub-yolo permits only each profile's requested built-in capabilities that are also active in the trusted parent; it does not grant every parent tool. Trusted ambient resources may load in YOLO, but model-visible authority remains each explicit child allowlist and recursive delegation is not authorized. The parent synthesizes the independent evidence.`,
 		promptSnippet: "Delegate bounded parallel profile-aware subagents",
 		parameters: delegateBatchParameters,
 		renderCall: (args, theme, context) => renderObservatoryCall("delegate_batch", args, theme, context),

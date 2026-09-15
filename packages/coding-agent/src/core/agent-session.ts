@@ -617,9 +617,26 @@ export class AgentSession {
 
 	// Track last assistant message for auto-compaction check
 	private _lastAssistantMessage: AssistantMessage | undefined = undefined;
+	/**
+	 * A failed assistant response is retry-safe only before any tool effect may
+	 * have been committed for that response. Reset at each assistant message and
+	 * mark on the first tool lifecycle event so uncertain effects fail closed.
+	 */
+	private _assistantToolEffectMayHaveCommitted = false;
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = async (event: AgentEvent): Promise<void> => {
+		if (event.type === "agent_start" || (event.type === "message_start" && event.message.role === "assistant")) {
+			this._assistantToolEffectMayHaveCommitted = false;
+		} else if (
+			event.type === "tool_execution_start" ||
+			event.type === "tool_execution_update" ||
+			event.type === "tool_execution_end" ||
+			(event.type === "message_start" && event.message.role === "toolResult")
+		) {
+			this._assistantToolEffectMayHaveCommitted = true;
+		}
+
 		// When a user message starts, check if it's from either queue and remove it BEFORE emitting
 		// This ensures the UI sees the updated queue state
 		if (event.type === "message_start" && event.message.role === "user") {
@@ -2762,6 +2779,10 @@ export class AgentSession {
 	private _isRetryableError(message: AssistantMessage): boolean {
 		// Context overflow is handled by compaction, not retry.
 		if (isContextOverflow(message, this.model?.contextWindow ?? 0)) return false;
+		// A partial/failed tool call is not safe to replay: the provider or transport
+		// may have committed an effect even though the assistant turn did not finish.
+		if (message.content.some((block) => block.type === "toolCall")) return false;
+		if (this._assistantToolEffectMayHaveCommitted) return false;
 		return isRetryableAssistantError(message);
 	}
 

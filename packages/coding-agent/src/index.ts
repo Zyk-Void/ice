@@ -332,6 +332,7 @@ export {
 	type IceCapabilitySnapshot,
 	type IceChildDispatchContext,
 	type IceDelegableTool,
+	isIceDelegableAdapterId,
 	registerIceDelegableTool,
 } from "./ice-subagent-capabilities.ts";
 export { type IceHookHandler, registerIceSubagentHook } from "./ice-subagent-settings.ts";
