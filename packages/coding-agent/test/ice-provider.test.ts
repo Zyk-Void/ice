@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { modelAwareReserveTokens } from "../src/core/compaction/compaction.ts";
 import {
+	ATRIA_DAWN_PREVIEW_CONTEXT_TOKENS,
+	ATRIA_DAWN_PREVIEW_MAX_OUTPUT_TOKENS,
 	CX_MAX_CONTEXT_TOKENS,
 	DEFAULT_BASE_URL,
 	isCxModel,
@@ -280,6 +282,23 @@ describe("ice provider model mapping", () => {
 			reasoning: true,
 		});
 		expect(models[1]).toMatchObject({ contextWindow: 200000, maxTokens: 200000, input: ["text"] });
+	});
+
+	it("corrects the incomplete Atria Dawn metadata from OmniRoute", () => {
+		const [model] = mapEndpointModels({
+			data: [
+				{
+					id: "Atri/Atria-Dawn-Preview",
+					context_length: 128000,
+					capabilities: { reasoning: true },
+				},
+			],
+		});
+
+		expect(model).toMatchObject({
+			contextWindow: ATRIA_DAWN_PREVIEW_CONTEXT_TOKENS,
+			maxTokens: ATRIA_DAWN_PREVIEW_MAX_OUTPUT_TOKENS,
+		});
 	});
 
 	it("caps all cx/ models to a maximum context window of 272000 tokens", () => {

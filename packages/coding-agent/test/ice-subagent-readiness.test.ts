@@ -239,6 +239,7 @@ describe("production file/self delegation acceptance", () => {
 		const execute = vi.fn(async () => ({ fact: true }));
 		cleanup.push(
 			registerIceDelegableTool(h.events, {
+				adapterId: "fixture/lookup",
 				name: "lookup",
 				origin: "fixture/lookup",
 				access: "read-only",

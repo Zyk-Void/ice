@@ -15,6 +15,7 @@ import {
 	registerFauxProvider,
 	unregisterApiProviders,
 } from "@zykairotis/ice-ai/compat";
+import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
@@ -29,6 +30,7 @@ import { createAgentSession } from "../src/core/sdk.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { importRufloAgentPack, mapAgentPackTools, unsupportedAgentPackFields } from "../src/ice-agent-packs.ts";
 import { IceAgentViewBridge } from "../src/ice-agent-view-bridge.ts";
+import { getIceDelegableTools, registerIceDelegableTool } from "../src/ice-subagent-capabilities.ts";
 import { JOB_COMPLETION_MESSAGE_TYPE, JOB_ENTRY_TYPE, SubagentJobRegistry } from "../src/ice-subagent-jobs.ts";
 import { getProgressSnapshot } from "../src/ice-subagent-observatory.ts";
 import { ICE_HOOK_JOURNAL_ENTRY_TYPE, type IceHookHandler } from "../src/ice-subagent-settings.ts";
@@ -652,6 +654,235 @@ describe("ICE subagent contracts", () => {
 		expect(manage?.description).toMatch(/phase-aware/i);
 		expect(manage?.description).toMatch(/detach retains the same live child/i);
 		expect(manage?.description).toMatch(/resume continues a retained completed child/i);
+		expect(manage?.description).toMatch(/details\.managed\.runId/i);
+		expect(manage?.description).toMatch(/do not pass.*jobId.*resultRef.*batchId.*taskId/i);
+		expect(harness.tools.get("inspect_subagent_job")?.description).toMatch(/details\.accepted\.jobId/i);
+		expect(harness.tools.get("inspect_subagent_job")?.description).toMatch(/resultRef.*batchId.*taskId/i);
+		expect(harness.tools.get("cancel_subagent_job")?.description).toMatch(/bare jobId/i);
+	});
+
+	it("explains wrong identifier domains without weakening lifecycle rejection", async () => {
+		const harness = await createAsyncToolHarness();
+		const manage = harness.tools.get("manage_subagent")!;
+		const inspect = harness.tools.get("inspect_subagent_job")!;
+		const managed = (await manage.execute(
+			"wrong-run-domain",
+			{ runId: "job:durable-1", action: "peek" } as never,
+			undefined,
+			undefined,
+			harness.context,
+		)) as { content?: Array<{ text?: string }>; isError?: boolean };
+		expect(managed.isError).toBe(true);
+		expect(managed.content?.[0]?.text).toMatch(/resultRef.*remove the `job:` prefix.*inspect_subagent_job/i);
+		expect(managed.content?.[0]?.text).toMatch(/foreground runId.*batchId.*taskId/i);
+
+		const inspected = (await inspect.execute(
+			"wrong-job-domain",
+			{ jobId: "job:durable-1" } as never,
+			undefined,
+			undefined,
+			harness.context,
+		)) as { content?: Array<{ text?: string }>; isError?: boolean };
+		expect(inspected.isError).toBe(true);
+		expect(inspected.content?.[0]?.text).toMatch(/resultRef.*not a jobId.*bare.*details\.accepted\.jobId/i);
+		expect(inspected.content?.[0]?.text).toMatch(/foreground runId.*batchId.*taskId/i);
+	});
+
+	it("uses the correct foreground runId and durable jobId domains across real launches", async () => {
+		const harness = await createAsyncToolHarness();
+		const delegate = harness.tools.get("delegate")!;
+		const manage = harness.tools.get("manage_subagent")!;
+		const delegateAsync = harness.tools.get("delegate_async")!;
+		const inspectJob = harness.tools.get("inspect_subagent_job")!;
+		const childRequest = {
+			role: "self",
+			self: {
+				instructions: "Inspect the approved scope and return a short answer.",
+				capabilities: ["read", "grep", "find", "ls"],
+			},
+			task: "Inspect the source tree.",
+			scope: { roots: ["src"] },
+		};
+		try {
+			harness.faux.setResponses([fauxAssistantMessage("Managed child completed.")]);
+			const managed = await delegate.execute(
+				"managed-launch",
+				{ ...childRequest, background: true },
+				undefined,
+				undefined,
+				harness.context,
+			);
+			expect(managed).toMatchObject({ isError: false, details: { managed: { runId: expect.any(String) } } });
+			const runId = managed.details.managed.runId as string;
+			const peeked = await manage.execute(
+				"managed-peek",
+				{ runId, action: "peek" },
+				undefined,
+				undefined,
+				harness.context,
+			);
+			expect(peeked).toMatchObject({ isError: false, details: { action: "peek", runId } });
+			await vi.waitFor(
+				async () => {
+					const terminal = await manage.execute(
+						"managed-terminal-peek",
+						{ runId, action: "peek" },
+						undefined,
+						undefined,
+						harness.context,
+					);
+					expect(terminal).toMatchObject({
+						isError: false,
+						details: { observation: { childState: "completed", result: { status: "completed" } } },
+					});
+				},
+				{ timeout: 5_000, interval: 10 },
+			);
+
+			harness.faux.setResponses([fauxAssistantMessage("Managed child resumed.")]);
+			const resumed = await manage.execute(
+				"managed-resume",
+				{ runId, action: "resume", message: "Continue with one short answer." },
+				undefined,
+				undefined,
+				harness.context,
+			);
+			expect(resumed).toMatchObject({
+				isError: false,
+				details: { action: "resume", runId, resumedFromRunId: runId, result: { runId: expect.any(String) } },
+			});
+			const resumedRunId = resumed.details.result.runId as string;
+			expect(resumedRunId).not.toBe(runId);
+			await vi.waitFor(
+				async () => {
+					const terminal = await manage.execute(
+						"resumed-terminal-peek",
+						{ runId: resumedRunId, action: "peek" },
+						undefined,
+						undefined,
+						harness.context,
+					);
+					expect(terminal).toMatchObject({
+						isError: false,
+						details: { observation: { childState: "completed", result: { status: "completed" } } },
+					});
+				},
+				{ timeout: 5_000, interval: 10 },
+			);
+			const deleted = await manage.execute(
+				"managed-delete",
+				{ runId: resumedRunId, action: "delete" },
+				undefined,
+				undefined,
+				harness.context,
+			);
+			expect(deleted).toMatchObject({ isError: false, details: { action: "delete", runId: resumedRunId } });
+
+			harness.faux.setResponses([fauxAssistantMessage("Durable child completed.")]);
+			const accepted = await delegateAsync.execute(
+				"durable-launch",
+				childRequest,
+				undefined,
+				undefined,
+				harness.context,
+			);
+			expect(accepted).toMatchObject({ isError: false, details: { accepted: { jobId: expect.any(String) } } });
+			const jobId = accepted.details.accepted.jobId as string;
+			const resultRef = accepted.details.accepted.resultRef as string;
+			expect(resultRef).toBe(`job:${jobId}`);
+			await vi.waitFor(
+				async () => {
+					const inspection = await inspectJob.execute(
+						"durable-inspect",
+						{ jobId },
+						undefined,
+						undefined,
+						harness.context,
+					);
+					expect(inspection).toMatchObject({
+						isError: false,
+						details: { inspection: { job: { jobId, status: "completed" } } },
+					});
+				},
+				{ timeout: 5_000, interval: 10 },
+			);
+			const wrongForeground = await manage.execute(
+				"durable-as-foreground",
+				{ runId: jobId, action: "peek" },
+				undefined,
+				undefined,
+				harness.context,
+			);
+			expect(wrongForeground).toMatchObject({ isError: true });
+			expect(wrongForeground.content[0].text).toMatch(/foreground runId.*durable jobId/i);
+			const wrongDurable = await inspectJob.execute(
+				"foreground-as-durable",
+				{ jobId: runId },
+				undefined,
+				undefined,
+				harness.context,
+			);
+			expect(wrongDurable).toMatchObject({ isError: true });
+			expect(wrongDurable.content[0].text).toMatch(/bare durable jobId.*foreground runId/i);
+
+			harness.faux.setResponses([
+				fauxAssistantMessage('{"summary":"Batch child completed.","evidence":{"paths":["src"]},"findings":[]}'),
+			]);
+			const batch = await harness.tools.get("delegate_batch")!.execute(
+				"batch-launch",
+				{
+					tasks: [
+						{
+							id: "batch-task",
+							role: "self",
+							self: {
+								instructions: "Inspect the approved scope and return structured evidence.",
+								capabilities: ["read", "grep", "find", "ls"],
+							},
+							task: "Inspect the source tree.",
+							scope: { roots: ["src"] },
+						},
+					],
+				},
+				undefined,
+				undefined,
+				harness.context,
+			);
+			expect(batch).toMatchObject({ isError: false, details: { result: { batchId: expect.any(String) } } });
+			const batchResult = batch.details.result as {
+				batchId: string;
+				items: Array<{ taskId: string; result: { runId: string } }>;
+			};
+			expect(batchResult.items[0]).toMatchObject({ taskId: "batch-task", result: { runId: expect.any(String) } });
+			const batchId = batchResult.batchId;
+			const taskId = batchResult.items[0]!.taskId;
+			const batchRunId = batchResult.items[0]!.result.runId;
+			for (const runId of [batchId, taskId, batchRunId]) {
+				const rejected = await manage.execute(
+					"batch-as-foreground",
+					{ runId, action: "peek" },
+					undefined,
+					undefined,
+					harness.context,
+				);
+				expect(rejected).toMatchObject({ isError: true });
+				expect(rejected.content[0].text).toMatch(/foreground runId.*batchId.*taskId/i);
+			}
+			for (const candidateJobId of [batchId, taskId, `job:${jobId}`]) {
+				const rejected = await inspectJob.execute(
+					"batch-as-job",
+					{ jobId: candidateJobId },
+					undefined,
+					undefined,
+					harness.context,
+				);
+				expect(rejected).toMatchObject({ isError: true });
+				expect(rejected.content[0].text).toMatch(/bare durable jobId.*batchId.*taskId/i);
+			}
+		} finally {
+			await harness.handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, harness.context);
+			harness.faux.unregister();
+		}
 	});
 
 	it("routes manage_subagent actions through owner-scoped validation with phase gates", async () => {
@@ -1743,6 +1974,104 @@ describe("ICE subagent contracts", () => {
 			/Unknown subagent profile/,
 		);
 		expect(() => resolveSubagentProfile("explore", { cwd, agentDir })).toThrowError(/Unknown subagent profile/);
+	});
+
+	it("keeps profile adapter selectors explicit, parent-owned, and separate from tools", async () => {
+		const cwd = await createWorkspace();
+		const agentDir = await mkdtemp(join(tmpdir(), "ice-subagents-adapter-profile-agent-"));
+		tempDirs.push(agentDir);
+		await mkdir(join(agentDir, "agents"), { recursive: true });
+		await writeFile(
+			join(agentDir, "agents", "adapter-user.md"),
+			"---\nname: adapter-user\ndescription: Adapter profile\ntools: read\nadapters: [fixture/search]\n---\nUse the parent adapter when it is admitted.\n",
+		);
+		const profile = resolveSubagentProfileResolution("adapter-user", { cwd, agentDir });
+		expect(profile).toMatchObject({ requestedTools: ["read"], adapterIds: ["fixture/search"] });
+
+		const owner = {};
+		registerIceDelegableTool(owner, {
+			adapterId: "fixture/search",
+			name: "lookup",
+			origin: "fixture/lookup",
+			access: "read-only",
+			childSafe: true,
+			description: "Look up a bounded fixture fact.",
+			parameters: Type.Object({}, { additionalProperties: false }),
+			execute: vi.fn(async () => ({ ok: true })),
+		});
+		const available = getIceDelegableTools(owner);
+		const withoutAdapter = listSubagentProfiles({ cwd, agentDir });
+		const withoutAdapterEntry = withoutAdapter.find((entry) => entry.name === "adapter-user");
+		expect(withoutAdapterEntry).toMatchObject({
+			requestedAdapters: ["fixture/search"],
+			availability: "limited",
+		});
+		expect(withoutAdapterEntry?.effectiveAdapters).toBeUndefined();
+		const withAdapter = listSubagentProfiles({
+			cwd,
+			agentDir,
+			parentActiveTools: ["read", "lookup"],
+			delegableTools: available,
+		});
+		expect(withAdapter.find((entry) => entry.name === "adapter-user")).toMatchObject({
+			requestedAdapters: ["fixture/search"],
+			effectiveAdapters: ["fixture/search"],
+			effectiveTools: ["read", "lookup"],
+			availability: "available",
+		});
+
+		const normalized = normalizeSubagentRequest(
+			{
+				parentSessionId: "parent-1",
+				role: "adapter-user",
+				task: "Inspect the approved scope.",
+				scope: { roots: ["src"] },
+				cwd,
+			},
+			cwd,
+			{ agentDir, parentActiveTools: ["read", "lookup"], delegableTools: available },
+		);
+		expect(normalized.profile.requestedTools).toEqual(["read"]);
+		expect(normalized.selectedAdapterIds).toEqual(["fixture/search"]);
+		expect(normalized.delegatedTools?.map((tool) => tool.name)).toEqual(["lookup"]);
+
+		const toolFree = normalizeSubagentRequest(
+			{
+				parentSessionId: "parent-1",
+				role: "adapter-user",
+				task: "Inspect supplied context.",
+				scope: { roots: ["src"] },
+				cwd,
+				execution: { tools: [] },
+			},
+			cwd,
+			{ agentDir, parentActiveTools: ["read", "lookup"], delegableTools: available },
+		);
+		expect(toolFree.selectedAdapterIds).toBeUndefined();
+		expect(toolFree.delegatedTools).toEqual([]);
+
+		await writeFile(
+			join(agentDir, "agents", "adapter-bad.md"),
+			"---\nname: adapter-bad\ndescription: Bad adapter selector\ntools: read\nadapters: [bad adapter id]\n---\nReject this metadata.\n",
+		);
+		expect(() => resolveSubagentProfileResolution("adapter-bad", { cwd, agentDir })).toThrowError(/adapter IDs/i);
+		await writeFile(
+			join(agentDir, "agents", "adapter-unknown.md"),
+			"---\nname: adapter-unknown\ndescription: Missing adapter\ntools: read\nadapters: [fixture/missing]\n---\nReject missing authority.\n",
+		);
+		expect(() =>
+			normalizeSubagentRequest(
+				{
+					parentSessionId: "parent-1",
+					role: "adapter-unknown",
+					task: "Inspect.",
+					scope: { roots: ["src"] },
+					cwd,
+				},
+				cwd,
+				{ agentDir, parentActiveTools: ["read"], delegableTools: available },
+			),
+		).toThrowError(/no child-safe parent registration/i);
 	});
 
 	it("resolves explicit file agents; unknown alias spellings fail with discovery hints", async () => {
@@ -5921,6 +6250,54 @@ describe("ICE subagent contracts", () => {
 			reportMode: "structured_report",
 		});
 		expect(result.usage).toMatchObject({ inputTokens: 3, outputTokens: 4, cost: 0.01 });
+	});
+
+	it("does not expose internal batch children as live or retained views", async () => {
+		const cwd = await createWorkspace();
+		const childMessages: AgentMessage[] = [];
+		const fakeSession = {
+			sessionId: "child-internal-batch",
+			model: {} as Model<Api>,
+			messages: childMessages,
+			extensionRunner: createNoopExtensionRunner(),
+			subscribe: vi.fn(() => vi.fn()),
+			prompt: vi.fn(async () => {
+				childMessages.push({
+					role: "assistant",
+					content: '{"summary":"batch complete","evidence":{"paths":["src"]},"payload":{}}',
+					stopReason: "stop",
+				} as unknown as AgentMessage);
+			}),
+			abort: vi.fn(async () => {}),
+			dispose: vi.fn(),
+			getSessionStats: vi.fn(() => ({
+				tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+				cost: 0,
+			})),
+		} as unknown as CreateAgentSessionResult["session"];
+		const bridge = new IceAgentViewBridge();
+		const liveSessions = new SubagentLiveSessionRegistry();
+		const runner = new NativeSubagentRunner({
+			createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
+			agentViewBridge: bridge,
+			liveSessionRegistry: liveSessions,
+			supervisorRegistry: new SubagentRunSupervisorRegistry<SubagentResult>(),
+		});
+		const normalized = normalizeSubagentRequest(
+			{ ...request(cwd), outputSchema: { type: "object", additionalProperties: false } },
+			cwd,
+		);
+
+		const result = await runner.runResolved(normalized, ["delegate", "read"], {
+			management: "internal",
+			batchId: "batch-internal",
+			taskId: "task-internal",
+		});
+
+		expect(result.status).toBe("completed");
+		expect(liveSessions.list()).toEqual([]);
+		expect(bridge.getView(normalized.runId)).toBeUndefined();
+		expect(runner.listRetainedChildren(normalized.parentSessionId)).toEqual([]);
 	});
 
 	it("fails closed when parent delegation is not active", async () => {

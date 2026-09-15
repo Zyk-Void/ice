@@ -252,6 +252,36 @@ describe("durable subagent jobs", () => {
 		expect(restored.inspect(accepted.jobId).job.contract).toMatchObject({ temperature: 0.2, topP: 0.8 });
 	});
 
+	it("validates persisted adapter identity while accepting legacy capability records", () => {
+		const legacy = persistedSnapshot("legacy-adapter", "completed");
+		legacy.job.contract = {
+			thinking: "medium",
+			timeoutMs: 1_000,
+			maxOutputBytes: 24 * 1024,
+			tools: [],
+			capabilities: [
+				{
+					name: "lookup",
+					origin: "fixture/lookup",
+					fingerprint: "a".repeat(64),
+				},
+			],
+		};
+		const invalid = structuredClone(legacy);
+		invalid.job.jobId = "invalid-adapter";
+		invalid.job.resultRef = "job:invalid-adapter";
+		invalid.job.contract!.capabilities![0]!.adapterId = "bad adapter id";
+		invalid.result!.jobId = "invalid-adapter";
+		invalid.sequence = 2;
+
+		const registry = createRegistry();
+		registry.restore(
+			[legacy, invalid].map((snapshot) => ({ type: "custom", customType: JOB_ENTRY_TYPE, data: snapshot })),
+		);
+		expect(registry.inspect("legacy-adapter").job.contract?.capabilities?.[0]).not.toHaveProperty("adapterId");
+		expect(() => registry.inspect("invalid-adapter")).toThrowError(/not found/i);
+	});
+
 	it("persists bounded usage telemetry without aggregate token authority", async () => {
 		const snapshots: PersistedSubagentJobSnapshot[] = [];
 		const registry = createRegistry((snapshot) => snapshots.push(snapshot));

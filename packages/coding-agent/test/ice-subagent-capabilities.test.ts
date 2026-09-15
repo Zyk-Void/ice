@@ -37,6 +37,7 @@ function workspace() {
 }
 function definition(overrides: Partial<IceDelegableTool> = {}): IceDelegableTool {
 	return {
+		adapterId: "test/lookup",
 		name: "lookup",
 		origin: "test/lookup",
 		access: "read-only",
@@ -66,6 +67,32 @@ describe("parent-owned delegable capabilities", () => {
 		expect(getIceDelegableTools({})).toEqual([]);
 		expect(() => select({}, ["lookup"])).toThrow(/no child-safe/);
 		expect(() => registerIceDelegableTool(owner, definition())).toThrow(/Duplicate/);
+	});
+	it("selects profile adapter IDs independently from model-visible tool names", () => {
+		const owner = {};
+		registerIceDelegableTool(owner, definition({ adapterId: "fixture/search", name: "lookup" }));
+		registerIceDelegableTool(owner, definition({ adapterId: "fixture/search", name: "lookup_extra" }));
+		const selected = resolveIceDelegableTools({
+			available: getIceDelegableTools(owner),
+			parentActiveTools: ["lookup", "lookup_extra"],
+			requested: [],
+			requestedAdapterIds: ["fixture/search"],
+			allowMutation: false,
+		});
+		expect(selected.map((tool) => tool.name)).toEqual(["lookup", "lookup_extra"]);
+		expect(selected.every((tool) => tool.adapterId === "fixture/search")).toBe(true);
+		expect(() =>
+			resolveIceDelegableTools({
+				available: getIceDelegableTools(owner),
+				parentActiveTools: ["lookup", "lookup_extra"],
+				requested: [],
+				requestedAdapterIds: ["fixture/missing"],
+				allowMutation: false,
+			}),
+		).toThrow(/no child-safe parent registration/);
+	});
+	it("requires explicit adapter identity instead of deriving it from origin", () => {
+		expect(() => registerIceDelegableTool({}, definition({ adapterId: "invalid adapter id" }))).toThrow(/adapter ID/);
 	});
 	it("rejects built-in replacements, recursion, management, invalid schemas, and missing scope guarantees", () => {
 		for (const name of ["read", "delegate", "manage_subagent", "delegate_async", "shutdown"]) {

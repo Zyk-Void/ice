@@ -71,6 +71,7 @@ describe("AgentSession retry", () => {
 	async function createSession(options?: {
 		failCount?: number;
 		maxRetries?: number;
+		errorMessage?: string;
 		delayAssistantMessageEndMs?: number;
 	}) {
 		const failCount = options?.failCount ?? 1;
@@ -89,7 +90,7 @@ describe("AgentSession retry", () => {
 					if (callCount <= failCount) {
 						const msg = createAssistantMessage("", {
 							stopReason: "error",
-							errorMessage: "overloaded_error",
+							errorMessage: options?.errorMessage ?? "overloaded_error",
 						});
 						stream.push({ type: "start", partial: msg });
 						stream.push({ type: "error", reason: "error", error: msg });
@@ -172,6 +173,136 @@ describe("AgentSession retry", () => {
 
 		expect(created.getCallCount()).toBe(2);
 		expect(created.session.isRetrying).toBe(false);
+	});
+
+	it("recovers an OpenAI Responses early EOF through the same AgentSession", async () => {
+		const created = await createSession({
+			failCount: 1,
+			errorMessage: "OpenAI Responses stream ended before a terminal response event",
+		});
+		const events: string[] = [];
+		created.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") events.push(`start:${event.attempt}`);
+			if (event.type === "auto_retry_end") events.push(`end:success=${event.success}`);
+		});
+
+		await created.session.prompt("Test");
+
+		expect(created.getCallCount()).toBe(2);
+		expect(events).toEqual(["start:1", "end:success=true"]);
+		expect(created.session.messages.filter((message) => message.role === "assistant")).toHaveLength(1);
+		expect(created.session.messages.at(-1)).toMatchObject({ role: "assistant", stopReason: "stop" });
+	});
+
+	it("does not retry early EOF after an incomplete assistant tool call", async () => {
+		let callCount = 0;
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const agent = new Agent({
+			getApiKey: () => "test-key",
+			initialState: { model, systemPrompt: "Test", tools: [] },
+			streamFn: () => {
+				callCount++;
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const msg: AssistantMessage = {
+						...createAssistantMessage("Starting a side effect.", {
+							stopReason: "error",
+							errorMessage: "OpenAI Responses stream ended before a terminal response event",
+						}),
+						content: [{ type: "toolCall", id: "call-uncertain", name: "dangerous", arguments: {} }],
+					};
+					stream.push({ type: "start", partial: msg });
+					stream.push({ type: "error", reason: "error", error: msg });
+				});
+				return stream;
+			},
+		});
+		const sessionManager = SessionManager.inMemory();
+		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+		const modelRegistry = await createModelRegistry(authStorage, tempDir);
+		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
+		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } });
+		session = new AgentSession({
+			agent,
+			sessionManager,
+			settingsManager,
+			cwd: tempDir,
+			modelRuntime: getModelRuntime(modelRegistry),
+			resourceLoader: createTestResourceLoader(),
+		});
+
+		await session.prompt("Test");
+
+		expect(callCount).toBe(1);
+		expect(session.messages.at(-1)).toMatchObject({ role: "assistant", stopReason: "error" });
+	});
+
+	it("retries early EOF after a completed tool turn without replaying the tool effect", async () => {
+		let callCount = 0;
+		let toolCallCount = 0;
+		const echoTool: AgentTool = {
+			name: "echo",
+			label: "Echo",
+			description: "Record one bounded tool effect.",
+			parameters: Type.Object({ text: Type.String() }),
+			execute: async () => {
+				toolCallCount++;
+				return { content: [{ type: "text", text: "recorded" }], details: undefined };
+			},
+		};
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const agent = new Agent({
+			getApiKey: () => "test-key",
+			initialState: { model, systemPrompt: "Test", tools: [] },
+			streamFn: () => {
+				callCount++;
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					if (callCount === 1) {
+						const msg: AssistantMessage = {
+							...createAssistantMessage("Use the tool.", { stopReason: "toolUse" }),
+							content: [{ type: "toolCall", id: "call-once", name: "echo", arguments: { text: "once" } }],
+						};
+						stream.push({ type: "start", partial: msg });
+						stream.push({ type: "done", reason: "toolUse", message: msg });
+					} else if (callCount === 2) {
+						const msg = createAssistantMessage("", {
+							stopReason: "error",
+							errorMessage: "OpenAI Responses stream ended before a terminal response event",
+						});
+						stream.push({ type: "start", partial: msg });
+						stream.push({ type: "error", reason: "error", error: msg });
+					} else {
+						const msg = createAssistantMessage("Recovered without replaying the tool.");
+						stream.push({ type: "start", partial: msg });
+						stream.push({ type: "done", reason: "stop", message: msg });
+					}
+				});
+				return stream;
+			},
+		});
+		const sessionManager = SessionManager.inMemory();
+		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+		const modelRegistry = await createModelRegistry(authStorage, tempDir);
+		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
+		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 2, baseDelayMs: 1 } });
+		session = new AgentSession({
+			agent,
+			sessionManager,
+			settingsManager,
+			cwd: tempDir,
+			modelRuntime: getModelRuntime(modelRegistry),
+			resourceLoader: createTestResourceLoader(),
+			baseToolsOverride: { echo: echoTool },
+		});
+
+		await session.prompt("Test");
+
+		expect(callCount).toBe(3);
+		expect(toolCallCount).toBe(1);
+		expect(session.messages.at(-1)).toMatchObject({ role: "assistant", stopReason: "stop" });
 	});
 
 	it("retries provider network_error failures", async () => {

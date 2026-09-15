@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import type { Api, Model } from "@zykairotis/ice-ai/compat";
-import { Text } from "@zykairotis/ice-tui";
+import { Markdown, Text } from "@zykairotis/ice-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession, AgentSessionEvent } from "../src/core/agent-session.ts";
 import type { CreateAgentSessionResult } from "../src/core/sdk.ts";
@@ -17,7 +17,7 @@ import {
 	verifySubagentResult,
 } from "../src/ice-subagents.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const tempDirs: string[] = [];
 
@@ -939,11 +939,14 @@ describe("ICE agent-view integration", () => {
 		);
 	});
 
-	it("does not repeat a plain final answer in the terminal result card", () => {
+	it("renders the plain final answer in the terminal result card", () => {
 		initTheme("dark");
 		const chatContainer = { addChild: vi.fn() };
 		const mode = Object.create(InteractiveMode.prototype) as InteractiveMode & Record<string, unknown>;
-		Object.assign(mode, { chatContainer });
+		Object.assign(mode, {
+			chatContainer,
+			getMarkdownThemeWithSettings: () => getMarkdownTheme(),
+		});
 		const internal = mode as unknown as {
 			addSubagentFinalResult: (view: NonNullable<ReturnType<IceAgentViewBridge["getView"]>>) => void;
 		};
@@ -959,18 +962,24 @@ describe("ICE agent-view integration", () => {
 				finalResult: {
 					status: "completed",
 					verified: true,
-					summary: "This plain answer should only be rendered by the transcript.",
+					summary: "The answer is **rendered for the user**, not hidden in the transcript.",
 				},
 			},
 		});
 
-		expect(chatContainer.addChild).toHaveBeenCalledTimes(2);
-		const finalCard = chatContainer.addChild.mock.calls[1]?.[0] as Text | undefined;
+		expect(chatContainer.addChild).toHaveBeenCalledTimes(4);
+		const finalAnswer = chatContainer.addChild.mock.calls[1]?.[0] as Markdown | undefined;
+		expect(finalAnswer).toBeInstanceOf(Markdown);
+		if (!finalAnswer) throw new Error("Expected the rendered plain final answer");
+		const renderedAnswer = finalAnswer.render(200).join("\n");
+		expect(renderedAnswer).toContain("rendered for the user");
+
+		const finalCard = chatContainer.addChild.mock.calls[3]?.[0] as Text | undefined;
 		expect(finalCard).toBeInstanceOf(Text);
 		if (!finalCard) throw new Error("Expected the terminal result card");
-		const rendered = finalCard.render(200).join("\n");
-		expect(rendered).toContain("Completed · plain final answer");
-		expect(rendered).not.toContain("This plain answer should only be rendered by the transcript.");
+		const renderedCard = finalCard.render(200).join("\n");
+		expect(renderedCard).toContain("Completed");
+		expect(renderedCard).not.toContain("Completed · plain final answer");
 	});
 
 	it("keeps a taken-over child alive after its initial turn for idle follow-ups, then finalizes on release", async () => {
