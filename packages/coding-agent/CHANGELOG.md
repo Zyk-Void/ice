@@ -7,6 +7,8 @@
 ### Added
 
 - Added bounded file-agent profile preferences for `temperature`, `top-p`, `color`, and discovery-only `hidden`, with central policy resolution, requested/effective listing metadata, and provider-compatibility diagnostics.
+- Added explicit profile-level `adapters` selectors for parent-owned child-safe extension registrations. Adapter IDs are validated, default-disabled, and admitted independently from model-visible built-in tool names and MCP `server/tool` selectors; `origin` remains provenance only.
+- Added narrowly gated AgentSession recovery for an OpenAI Responses stream ending before its terminal response event. Recovery removes only the failed assistant turn and is disabled when partial tool calls or any possible tool effect makes replay uncertain.
 
 ### Breaking Changes
 
@@ -176,11 +178,14 @@
 ### Fixed
 
 - Fixed retained `needs_time` jobs releasing shared admission permits before explicit resume; live children now retain capacity until terminal or cancellation, and cancelled retained jobs preserve their run identity in durable results.
+- Fixed early-EOF retry safety so provider stream truncation can recover within the existing AgentSession retry budget without replaying committed or uncertain tool effects; other runtime failures remain terminal.
+- Fixed terminal subagent views hiding plain final answers behind a lifecycle label; completed plain answers now render as Markdown content with a simple `Completed` status.
 - Fixed concurrent `delegate_write` calls under the core parallel tool default by marking writer delegation sequential.
 - Fixed hook intent waits bypassing cancellation/deadlines and dispatching handlers after cancellation; wired optional profile/call hook selections into production launches and reject unsupported profile metadata.
 - Fixed hook selector inputs so role/call selections filter optional hooks while required hooks remain mandatory; bounded `beforeLaunch` context additions are now redacted, merged into the normalized parent context packet, and revalidated before child admission.
 - Fixed hook approval waits so parent cancellation and per-hook deadlines fail closed without leaving a gated launch pending.
 - Fixed OmniRoute `cx/` models omitting `xhigh` and `max` thinking when the endpoint leaves `thinkingFormat` unset.
+- Fixed OmniRoute's incomplete Atria-Dawn-Preview metadata from advertising an invalid 128K output allowance; the catalog now uses Atria's documented 256K context and 65,536-token output limit.
 - Fixed `--sub-yolo` children being told to `read` loaded skills, then failing on the advertised `SKILL.md` path. Child `read`/`grep`/`find`/`ls` now follow skill-directory symlink aliases when the canonical directory is an exact loaded-skill read root, including explicitly inherited parent skills, without widening repository or mutation scope. Missing in-scope skill files still fail as `ENOENT`.
 - Fixed Blackhole `tailBehavior` being stored but never applied, which left Ice's full `keepRecentTokens` tail after compact.
 - Fixed `ice list`, `ice update`, `ice install`, and `ice config` being treated as chat prompts because the launcher prepends `--ice-mode build`.
