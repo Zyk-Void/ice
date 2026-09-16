@@ -177,7 +177,7 @@
 
 ### Fixed
 
-- Fixed upstream Pi extension loading. Extension runtime imports from `@earendil-works/pi-*` now resolve to their already-bundled `@zykairotis/ice-*` equivalents, and `package.json` manifests fall back to the legacy `pi` field when `ice` is absent, so unchanged upstream Pi extensions load after discovery.
+- Fixed historical Pi extension loading. Approved `@earendil-works/pi-*` and `@mariozechner/pi-*` extension imports now resolve to their already-bundled `@zykairotis/ice-*` equivalents through one exact-match compatibility table and exact virtual-module mapping shared by source, Node/Jiti, and Bun; historical keys stay out of Jiti's prefix-based path-alias map so unapproved Pi-like subpaths remain unresolved. `package.json` manifests accept the legacy `pi` field as a fallback only: `ice` still wins by presence, an explicit `ice: null` does not downgrade to `pi`, and ICE and legacy resources are never merged.
 - Fixed retained `needs_time` jobs releasing shared admission permits before explicit resume; live children now retain capacity until terminal or cancellation, and cancelled retained jobs preserve their run identity in durable results.
 - Fixed early-EOF retry safety so provider stream truncation can recover within the existing AgentSession retry budget without replaying committed or uncertain tool effects; other runtime failures remain terminal.
 - Fixed terminal subagent views hiding plain final answers behind a lifecycle label; completed plain answers now render as Markdown content with a simple `Completed` status.

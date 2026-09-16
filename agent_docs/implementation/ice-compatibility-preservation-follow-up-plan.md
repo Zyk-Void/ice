@@ -6,6 +6,22 @@
 **Status:** Proposed follow-up after ICE identity cutover  
 **Goal:** Preserve behavior relied on by existing Pi / Pi-Void users, extensions, configuration, sessions, environment variables, RPC clients, and resource packages **without turning ICE back into a dual-branded product**.
 
+> **Implementation status (2026-09-16, `subagent-improvements-mock-test`): C02 and C03 are implemented and verified through source, built Node/Jiti, and compiled Bun boundaries.**
+> The approved alias inventory lives in one data-only table,
+> `packages/coding-agent/src/core/legacy-compat/extension-aliases.ts` (14 exact specifiers across both historical
+> families). Historical imports are installed as exact virtual-module keys shared by source, built Node/Jiti,
+> and Bun; Jiti's canonical built-path `alias` map intentionally excludes historical keys because fresh built
+> verification proved that Jiti treats alias keys as prefixes and would otherwise rewrite unapproved subpaths.
+> `package.json#pi` is accepted as a fallback only: `ice` still wins by presence, an explicit `ice: null` does
+> not downgrade, and ICE and legacy resources are never merged. `readCompatibleManifest()` exposes
+> `ice | legacy-pi` provenance while `readIceManifest()` keeps its existing signature for current consumers.
+> Deterministic source fixtures, fresh built-Node smoke, and a compiled Bun executable smoke cover both approved
+> families and unknown-subpath rejection. The installed-package test remains optional smoke only. Bounded
+> legacy-manifest diagnostics are intentionally deferred: the manifest read sites sit in the package-resolution
+> layer, which has no bounded or deduplicated diagnostic channel, and adding one would mean a new subsystem
+> rather than reuse of an existing seam.
+> **Every other section of this plan remains proposed, not implemented.** This note is scoped to C02/C03 only.
+
 ---
 
 ## 0. Executive decision
