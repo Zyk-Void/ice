@@ -161,6 +161,7 @@
 
 ### Changed
 
+- Changed delegation guidance so the parent loop keeps simple single tasks: `delegate` and `delegate_async` now carry explicit `promptGuidelines` and a description policy that reserves delegation for two or more children, and `delegate_batch`/`review_batch` state that a lone task is done directly instead of being wrapped in a one-item batch.
 - Improved interactive subagent footer observability with bounded active/reusable-retained counts, selected-child status, the last three sanitized tool/path activities, runtime timing, attention indicators, and narrow-terminal fallbacks sourced from the agent-view bridge.
 - Rewrote the `manage_subagent` description and parameter schema. Terminal completed children are no longer unconditionally unrevivable: the previous "historical and terminal children cannot be revived" invariant is replaced by explicit resume/delete lifecycle actions, and `action` now accepts `resume` and `delete` alongside `inspect`, `extend`, `follow_up`, and `stop`.
 - Changed terminal managed-child retention so every started terminal session remains owner-scoped history until explicit deletion. Only completed children can be resumed; failed, cancelled, timed-out, and other non-completed terminal entries are history-only, and `detach` is rejected after terminalization.

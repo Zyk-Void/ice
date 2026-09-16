@@ -616,6 +616,29 @@ describe("ICE subagent contracts", () => {
 		}
 	});
 
+	it("steers the parent away from single-child delegation of simple tasks", async () => {
+		const harness = await createAsyncToolHarness();
+		for (const toolName of ["delegate", "delegate_async"] as const) {
+			const tool = harness.tools.get(toolName)!;
+			expect(tool.description).toMatch(/never delegate a simple single task/i);
+			expect(tool.description).toMatch(/at least two children/i);
+			const guidelines = (tool.promptGuidelines ?? []).join("\n");
+			expect(guidelines).toMatch(/simple single task/i);
+			expect(guidelines).toMatch(/two or more children/i);
+			expect(tool.description).not.toMatch(/user explicitly asks/i);
+			expect(guidelines).not.toMatch(/user explicitly asks/i);
+		}
+		const batchExpectations = [
+			["delegate_batch", /never wrap a single task in a batch/i, /two or more independent sibling tasks/i],
+			["review_batch", /never run a single-reviewer batch/i, /two or more independent review dimensions/i],
+		] as const;
+		for (const [toolName, descriptionPattern, guidelinePattern] of batchExpectations) {
+			const tool = harness.tools.get(toolName)!;
+			expect(tool.description).toMatch(descriptionPattern);
+			expect((tool.promptGuidelines ?? []).join("\n")).toMatch(guidelinePattern);
+		}
+	});
+
 	it("keeps manage_subagent as a control-only schema that cannot widen a retained child", async () => {
 		const harness = await createAsyncToolHarness();
 		const manage = harness.tools.get("manage_subagent");

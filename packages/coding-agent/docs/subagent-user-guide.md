@@ -15,6 +15,8 @@ Ice remains the only reasoning/tool loop. These controls belong to `ice`; ordina
 | `inspect_subagent_job`, `cancel_subagent_job` | Inspect/cancel owned background jobs |
 | `delegate_write` | Separate build-only isolated writer workflow |
 
+Delegation is for fan-out: use these tools only when the work splits into two or more children. Do a simple single task directly in the parent loop instead of delegating it, and never wrap a lone task in a one-item batch.
+
 Background jobs are not restart-resumable live sessions. Restart preserves inspectable terminal/interrupted state and never automatically relaunches ambiguous work. Foreground follow-up reuses the native child, requires an owner-bound run ID and stable request ID, and rejects user-takeover conflicts. An eligible completed foreground child is also retained as a live reusable session (bounded to 8 per runner, oldest terminal child evicted and released) so `resume` can continue it in place and `delete` can release it; `resume` mints a new run id with `resumedFromRunId` provenance, re-validates profile/resources/trust/tool authority fail-closed at the resume boundary, re-points the reused session's tool, stream, and turn-stop wrappers at the resumed run's hooks, authority callback, and bounded execution controls, and cannot widen the original model, profile, scope, or tools.
 
 ## Self-delegation: no file required
