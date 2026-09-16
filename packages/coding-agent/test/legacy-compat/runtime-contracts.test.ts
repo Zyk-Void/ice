@@ -59,10 +59,10 @@ describe("legacy runtime contracts", () => {
 		});
 	});
 
-	it("reads only ice package manifests", () => {
+	it("reads ice package manifests and falls back to the legacy pi field", () => {
 		const root = fixture();
 		const file = put(root, "package.json", JSON.stringify({ pi: { extensions: ["old.ts"] } }));
-		expect(readIceManifest(file)).toBeNull();
+		expect(readIceManifest(file)?.extensions).toEqual(["old.ts"]);
 		writeFileSync(file, JSON.stringify({ ice: { extensions: ["new.ts"] }, pi: { extensions: ["old.ts"] } }));
 		expect(readIceManifest(file)?.extensions).toEqual(["new.ts"]);
 		writeFileSync(file, JSON.stringify({ ice: null, pi: { extensions: ["old.ts"] } }));

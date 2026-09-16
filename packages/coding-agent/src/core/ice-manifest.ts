@@ -19,7 +19,9 @@ export function readIceManifest(packageJsonPath: string): IceManifest | null {
 		if (!isObject(pkg)) {
 			return null;
 		}
-		const resourceManifest = pkg.ice;
+		// `ice` wins when present (even null/invalid: intentional, no fallback).
+		// Fall back to the legacy `pi` field only when `ice` is absent entirely.
+		const resourceManifest = "ice" in pkg ? pkg.ice : pkg.pi;
 		if (!isObject(resourceManifest)) return null;
 
 		const manifest: IceManifest = {};
