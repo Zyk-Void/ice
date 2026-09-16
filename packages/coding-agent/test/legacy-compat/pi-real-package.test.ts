@@ -8,10 +8,15 @@ import { discoverAndLoadExtensions } from "../../src/core/extensions/loader.ts";
 const PACKAGE_NAMES = ["pi-web-access", "pi-multi-skills", "pi-mcp-adapter"];
 
 /**
- * Installed pi packages exercise the full legacy-compat path: the pi manifest
- * fallback finds their entrypoint and the upstream pi specifier aliases let
- * their `@earendil-works/*` imports resolve. Skipped when the packages are not
- * installed in the agent npm cache.
+ * Optional integration smoke over three real packages in the agent npm cache,
+ * exercising the `package.json#pi` fallback and the approved historical import
+ * aliases together.
+ *
+ * This is not the compatibility gate. Correctness must not depend on local
+ * cache contents, because a clean CI environment skips every case here; the
+ * deterministic repository fixtures in `extension-imports.test.ts`,
+ * `pi-manifest-aliases.test.ts`, and `runtime-contracts.test.ts` are the gate.
+ * Each case skips rather than fails when its package is absent.
  */
 const cacheRoot = join(getAgentDir(), "npm", "node_modules");
 
