@@ -97,6 +97,32 @@ describe("RPC settings bridge", () => {
 		expect(field(snapshot, "terminal.showImages").hostOnly).toBe(true);
 	});
 
+	it("projects effective shared subagent concurrency policy through RPC settings", async () => {
+		const manager = SettingsManager.inMemory({
+			ice: { subagents: { concurrency: { default: 6, max: 7 } } },
+		});
+		manager.setIceSettingsValue("project", {
+			subagents: { concurrency: { default: 2, max: 3 } },
+		} as never);
+		await manager.flush();
+
+		const snapshot = createRpcSettingsSnapshot(createContext(manager));
+		expect(field(snapshot, "ice.subagents.concurrency.default")).toMatchObject({
+			value: 6,
+			effectiveValue: 2,
+			projectOverride: true,
+			effectiveSource: "project",
+			kind: "number",
+			constraints: { min: 1, max: 8, integer: true },
+		});
+		expect(field(snapshot, "ice.subagents.concurrency.max")).toMatchObject({
+			value: 7,
+			effectiveValue: 3,
+			projectOverride: true,
+			effectiveSource: "project",
+		});
+	});
+
 	it("reports project precedence and persists global and project values across fresh managers", async () => {
 		const root = createTempDirectory();
 		const cwd = join(root, "project");
@@ -136,7 +162,7 @@ describe("RPC settings bridge", () => {
 	});
 
 	it("attributes malformed global and project ICE policies to their actual source", async () => {
-		const invalidIce = { subagents: { defaults: { maxTurns: "not-a-number" } } } as never;
+		const invalidIce = { subagents: { defaults: { maxOutputBytes: "not-a-number" } } } as never;
 		const globalInvalid = SettingsManager.inMemory({ ice: invalidIce });
 		const globalSnapshot = createRpcSettingsSnapshot(createContext(globalInvalid));
 		expect(globalSnapshot.diagnostics).toContainEqual({
@@ -306,7 +332,7 @@ describe("RPC settings bridge", () => {
 		).rejects.toMatchObject({ code: "persistence_failed", scope: "global" });
 	});
 
-	it("labels the subagent result byte cap and the work-token limit as separate authorities", () => {
+	it("labels the subagent result byte cap as an output authority", () => {
 		const settingsManager = SettingsManager.inMemory();
 		const snapshot = createRpcSettingsSnapshot(
 			createContext(settingsManager, { getExtensionSettings: () => [createExtensionSettings()] }),
@@ -315,10 +341,5 @@ describe("RPC settings bridge", () => {
 		const bytes = field(snapshot, "ice.subagents.defaults.maxOutputBytes");
 		expect(bytes.label).toBe("Subagent result size cap");
 		expect(bytes.description).toMatch(/not model tokens or cost/i);
-
-		const tokens = field(snapshot, "ice.subagents.defaults.maxTotalTokens");
-		expect(tokens.label).toMatch(/token budget/i);
-		expect(tokens.description).toMatch(/input \+ output \+ cache-write/i);
-		expect(tokens.description).toMatch(/may overshoot/i);
 	});
 });

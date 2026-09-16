@@ -15,6 +15,7 @@ describe("subagent outcome telemetry", () => {
 			finalStatus: "completed",
 			reportProtocolStatus: "valid",
 			verificationPassed: true,
+			usage: { inputTokens: 10, outputTokens: 4, cacheReadTokens: 2, cacheWriteTokens: 1, cost: 0.25 },
 		});
 		expect(record).toMatchObject({
 			schemaVersion: 1,
@@ -65,6 +66,36 @@ describe("subagent outcome telemetry", () => {
 		expect(summary.byProfile[0]).toMatchObject({ profile: "worker", runs: 2, verifiedCompleted: 1 });
 	});
 
+	it("separates plain acceptance from structured verification metrics", () => {
+		const store = new SubagentTelemetryStore();
+		store.record({
+			runId: "plain",
+			profile: "explore",
+			mode: "foreground",
+			finalStatus: "completed",
+			reportProtocolStatus: "plain",
+			verificationPassed: false,
+		});
+		store.record({
+			runId: "structured",
+			profile: "review",
+			mode: "review",
+			finalStatus: "completed",
+			reportProtocolStatus: "valid",
+			verificationPassed: true,
+		});
+
+		const summary = store.summary();
+		expect(summary.completed).toBe(2);
+		expect(summary.verifiedCompleted).toBe(1);
+		expect(summary.firstPassVerified).toBe(1);
+		expect(summary.verificationFailures).toBe(0);
+		expect(summary.byProfile).toEqual([
+			{ profile: "explore", runs: 1, verifiedCompleted: 0 },
+			{ profile: "review", runs: 1, verifiedCompleted: 1 },
+		]);
+	});
+
 	it("replaces a re-recorded run and keeps bounded retention", () => {
 		const store = new SubagentTelemetryStore();
 		store.record({ runId: "run", profile: "explore", mode: "foreground", finalStatus: "needs_time" });
@@ -74,9 +105,17 @@ describe("subagent outcome telemetry", () => {
 			mode: "foreground",
 			finalStatus: "completed",
 			verificationPassed: true,
+			usage: { inputTokens: 10, outputTokens: 4, cacheReadTokens: 2, cacheWriteTokens: 1, cost: 0.25 },
 		});
 		expect(store.list()).toHaveLength(1);
 		expect(store.list()[0]?.finalStatus).toBe("completed");
+		expect(store.list()[0]?.usage).toEqual({
+			inputTokens: 10,
+			outputTokens: 4,
+			cacheReadTokens: 2,
+			cacheWriteTokens: 1,
+			cost: 0.25,
+		});
 		for (let index = 0; index < SUBAGENT_TELEMETRY_LIMIT + 10; index++) {
 			store.record({ runId: `bulk-${index}`, profile: "worker", mode: "batch", finalStatus: "completed" });
 		}

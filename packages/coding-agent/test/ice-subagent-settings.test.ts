@@ -42,9 +42,10 @@ function normalizeSubagentRequest(
 }
 
 describe("ICE subagent control settings", () => {
-	it("rejects unknown settings keys and out-of-range budgets", () => {
+	it("rejects unknown settings keys and removed execution limits", () => {
 		expect(() => parseIceSubagentSettings({ unknownKey: true })).toThrowError(/unknown/i);
-		expect(() => parseIceSubagentSettings({ defaults: { maxTurns: 999999 } })).toThrowError(/maxTurns/i);
+		expect(() => parseIceSubagentSettings({ defaults: { maxTurns: 1 } })).toThrowError(/removed|maxTurns/i);
+		expect(() => parseIceSubagentSettings({ defaults: { maxToolCalls: 1 } })).toThrowError(/removed|maxToolCalls/i);
 		expect(() => parseIceSubagentSettings({ defaults: { maxTotalTokens: 1_023 } })).toThrowError(/maxTotalTokens/i);
 		expect(() => parseIceSubagentSettings({ restrictions: { maxTotalTokens: 1_000_001 } })).toThrowError(
 			/maxTotalTokens/i,
@@ -52,95 +53,104 @@ describe("ICE subagent control settings", () => {
 		expect(() => parseIceSubagentSettings({ restrictions: { denyTools: ["invalid tool identifier"] } })).toThrowError(
 			/denyTools|unknown/i,
 		);
+		expect(() => parseIceSubagentSettings({ defaults: { temperature: Number.NaN } })).toThrowError(/temperature/i);
+		expect(() => parseIceSubagentSettings({ defaults: { temperature: 2.1 } })).toThrowError(/temperature/i);
+		expect(() => parseIceSubagentSettings({ defaults: { topP: -0.1 } })).toThrowError(/topP/i);
+		expect(() => parseIceSubagentSettings({ defaults: { topP: 1.1 } })).toThrowError(/topP/i);
 	});
 
 	it("parses bounded preferences and role overrides", () => {
 		const parsed = parseIceSubagentSettings({
 			enabled: true,
-			defaults: { thinking: "medium", timeoutMs: 60_000, maxTurns: 12, maxTotalTokens: 65_536 },
+			defaults: { thinking: "medium", timeoutMs: 60_000, maxOutputBytes: 8_192 },
 			allowedRoles: ["explore"],
-			roleDefaults: { explore: { thinking: "low", maxTurns: 8 } },
-			restrictions: { maxTurns: 16, maxTotalTokens: 32_768, denyRoles: ["bulk"] },
+			roleDefaults: { explore: { thinking: "low", maxOutputBytes: 4_096 } },
+			restrictions: { maxTimeoutMs: 90_000, denyRoles: ["bulk"] },
 		});
 		expect(parsed.defaults.thinking).toBe("medium");
-		expect(parsed.roleDefaults.explore?.maxTurns).toBe(8);
-		expect(parsed.restrictions.maxTurns).toBe(16);
-		expect(parsed.restrictions.maxTotalTokens).toBe(32_768);
+		expect(parsed.roleDefaults.explore?.maxOutputBytes).toBe(4_096);
+		expect(parsed.restrictions.maxTimeoutMs).toBe(90_000);
 		expect(parsed.restrictions.denyRoles).toEqual(["bulk"]);
+		const sampling = parseIceSubagentSettings({ defaults: { temperature: 0.4, topP: 0.8 } });
+		expect(sampling.defaults).toMatchObject({ temperature: 0.4, topP: 0.8 });
 	});
 
 	it("resolves global/project/role/call layers with deny-first restrictions", () => {
 		const contract = resolveIceSubagentContract({
 			role: "explore",
 			global: parseIceSubagentSettings({
-				defaults: { maxTurns: 24, timeoutMs: 120_000 },
-				restrictions: { maxTurns: 16, denyRoles: ["bulk"] },
+				defaults: { timeoutMs: 120_000 },
+				restrictions: { maxTimeoutMs: 16_000, denyRoles: ["bulk"] },
 			}),
 			project: parseIceSubagentSettings({
-				defaults: { maxTurns: 12 },
-				roleDefaults: { explore: { maxTurns: 10 } },
+				defaults: { timeoutMs: 12_000 },
+				roleDefaults: { explore: { timeoutMs: 10_000 } },
 			}),
-			call: { maxTurns: 14 },
+			call: { timeoutMs: 14_000 },
 		});
-		// Explicit call value wins within the deny-first ceiling of 16.
-		expect(contract.maxTurns.value).toBe(14);
-		expect(contract.maxTurns.source).toBe("call");
-		expect(contract.values.maxTotalTokens).toBeUndefined();
-		const capped = resolveIceSubagentContract({
-			role: "explore",
-			global: parseIceSubagentSettings({ restrictions: { maxTurns: 6, maxTotalTokens: 32_768 } }),
-			call: { maxTurns: 14, maxTotalTokens: 65_536 },
-		});
-		expect(capped.maxTurns.value).toBe(6);
-		expect(capped.maxTotalTokens.value).toBe(32_768);
-		expect(capped.values.maxTotalTokens).toBe(32_768);
-		expect(capped.restrictionsApplied).toContain("maxTotalTokens");
-		expect(capped.diagnostics.join(" ")).toMatch(/clamped to enforced cap/);
+		// Explicit call value wins within the deny-first ceiling of 16 seconds.
+		expect(contract.timeoutMs.value).toBe(14_000);
+		expect(contract.timeoutMs.source).toBe("call");
+		expect(contract.values.timeoutMs).toBe(14_000);
 		const deniedRole = resolveIceSubagentContract({
 			role: "bulk",
 			global: parseIceSubagentSettings({ restrictions: { denyRoles: ["bulk"] } }),
 		});
 		expect(deniedRole.denied?.code).toBe("role_denied");
 		expect(deniedRole.denied?.message).toMatch(/denied by ice/i);
+		const sampling = resolveIceSubagentContract({
+			role: "explore",
+			global: parseIceSubagentSettings({
+				defaults: { temperature: 0.2, topP: 0.4 },
+				roleDefaults: { explore: { temperature: 0.3 } },
+			}),
+			project: parseIceSubagentSettings({
+				defaults: { temperature: 0.9, topP: 0.9 },
+				roleDefaults: { explore: { temperature: 0.8, topP: 0.7 } },
+			}),
+			call: { temperature: 0.6 },
+		});
+		expect(sampling.temperature).toMatchObject({ value: 0.6, source: "call" });
+		expect(sampling.topP).toMatchObject({ value: 0.4, source: "global" });
+		expect(sampling.values).toMatchObject({ temperature: 0.6, topP: 0.4 });
 	});
 
 	it("keeps legacy project-first precedence only with an explicit opt-out", () => {
 		const contract = resolveIceSubagentContract({
 			role: "explore",
 			globalFirst: false,
-			global: parseIceSubagentSettings({ defaults: { maxTurns: 24 } }),
-			project: parseIceSubagentSettings({ defaults: { maxTurns: 12 } }),
+			global: parseIceSubagentSettings({ defaults: { timeoutMs: 24_000 } }),
+			project: parseIceSubagentSettings({ defaults: { timeoutMs: 12_000 } }),
 		});
-		expect(contract.maxTurns.value).toBe(12);
-		expect(contract.maxTurns.source).toBe("project");
+		expect(contract.timeoutMs.value).toBe(12_000);
+		expect(contract.timeoutMs.source).toBe("project");
 	});
 
 	it("resolves explicit global values first (ice default)", () => {
 		const contract = resolveIceSubagentContract({
 			role: "explore",
 			global: parseIceSubagentSettings({
-				defaults: { maxTurns: 24 },
-				roleDefaults: { explore: { maxTurns: 20 } },
+				roleDefaults: { explore: { timeoutMs: 20_000 } },
 			}),
 			project: parseIceSubagentSettings({
-				defaults: { maxTurns: 12 },
-				roleDefaults: { explore: { maxTurns: 10 } },
+				defaults: { timeoutMs: 12_000 },
+				roleDefaults: { explore: { timeoutMs: 10_000 } },
 			}),
 		});
-		expect(contract.maxTurns.value).toBe(20);
-		expect(contract.maxTurns.source).toBe("global-role");
+		expect(contract.timeoutMs.value).toBe(20_000);
+		expect(contract.timeoutMs.source).toBe("global-role");
 		const fallback = resolveIceSubagentContract({
 			role: "explore",
 			global: parseIceSubagentSettings(undefined),
-			project: parseIceSubagentSettings({ defaults: { maxTurns: 12 } }),
+			project: parseIceSubagentSettings({ defaults: { timeoutMs: 12_000 } }),
 		});
-		expect(fallback.maxTurns.value).toBe(12);
-		expect(fallback.maxTurns.source).toBe("project");
+		expect(fallback.timeoutMs.value).toBe(12_000);
+		expect(fallback.timeoutMs.source).toBe("project");
 	});
 
 	it("keeps unknown-role calls untouched when no allowlist is configured", () => {
 		const contract = resolveIceSubagentContract({ role: "explore" });
-		expect(contract.maxTurns.value).toBeGreaterThan(0);
+		expect(contract.values.timeoutMs).toBeGreaterThan(0);
 		expect(contract.diagnostics).toEqual([]);
 	});
 
@@ -203,13 +213,13 @@ describe("ICE subagent control settings", () => {
 		const manager = SettingsManager.inMemory();
 		expect(manager.getIceSettingsValue("global")).toBeUndefined();
 		manager.setIceSettingsValue("global", {
-			subagents: { defaults: { maxTurns: 9 } },
+			subagents: { defaults: { timeoutMs: 9 } },
 		} as never);
 		expect(manager.getIceSettingsValue("global")?.subagents).toMatchObject({
-			defaults: { maxTurns: 9 },
+			defaults: { timeoutMs: 9 },
 		});
-		expect(parseIceSettings({ subagents: { defaults: { maxTurns: 9 } } }).subagents.defaults.maxTurns).toBe(9);
-		expect(() => parseIceSettings({ subagents: { defaults: { maxTurns: -1 } } })).toThrowError(/maxTurns/i);
+		expect(parseIceSettings({ subagents: { defaults: { timeoutMs: 9 } } }).subagents.defaults.timeoutMs).toBe(9);
+		expect(() => parseIceSettings({ subagents: { defaults: { maxTurns: 1 } } })).toThrowError(/removed|maxTurns/i);
 	});
 
 	it("applies persisted defaults and restrictions to the normalized launch contract", async () => {
@@ -219,8 +229,8 @@ describe("ICE subagent control settings", () => {
 			const settingsManager = SettingsManager.inMemory({
 				ice: {
 					subagents: {
-						defaults: { maxTurns: 8, maxToolCalls: 7 },
-						restrictions: { maxTurns: 5, denyTools: ["grep"] },
+						defaults: { timeoutMs: 8, maxOutputBytes: 8_192 },
+						restrictions: { maxTimeoutMs: 5, denyTools: ["grep"] },
 					},
 				},
 			});
@@ -230,17 +240,18 @@ describe("ICE subagent control settings", () => {
 					role: "explore",
 					task: "Inspect the source.",
 					scope: { roots: ["src"] },
-					execution: { maxTurns: 8, tools: ["read", "grep"] },
+					timeoutMs: 8,
+					execution: { maxOutputBytes: 8_192, tools: ["read", "grep"] },
 					cwd,
 				},
 				cwd,
 				{ projectTrusted: true, settingsManager },
 			);
-			expect(normalized.execution.maxTurns).toBe(5);
-			expect(normalized.execution.maxToolCalls).toBe(7);
+			expect(normalized.timeoutMs).toBe(5);
+			expect(normalized.execution.maxOutputBytes).toBe(8_192);
 			expect(normalized.execution.tools).toEqual(["read", "grep"]);
 			expect(normalized.deniedTools).toEqual(["grep"]);
-			expect(normalized.iceContract.sources.maxTurns).toBe("enforced");
+			expect(normalized.iceContract.sources.timeoutMs).toBe("enforced");
 		} finally {
 			await rm(cwd, { recursive: true, force: true });
 		}

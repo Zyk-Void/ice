@@ -163,6 +163,58 @@ describe("subagent observatory reducer", () => {
 		});
 	});
 
+	it("projects child compaction and resumes the prior activity phase", () => {
+		let state = createObservatoryState();
+		state = apply(state, runtimeEvent("subagent_started", "running", { nowMs: 1_100 }));
+		state = apply(
+			state,
+			runtimeEvent("subagent_tool_start", "running", {
+				nowMs: 1_200,
+				event: { toolName: "read" },
+			}),
+		);
+		state = apply(
+			state,
+			runtimeEvent("subagent_compaction_start", "running", {
+				nowMs: 1_300,
+				event: { compactionReason: "threshold", compactionStatus: "started" },
+			}),
+		);
+		expect(state.active[0]).toMatchObject({ phase: "compacting", status: "running", terminal: false });
+		state = apply(
+			state,
+			runtimeEvent("subagent_compaction_end", "running", {
+				nowMs: 1_400,
+				event: {
+					compactionReason: "threshold",
+					compactionStatus: "completed",
+					compactionWillRetry: true,
+				},
+			}),
+		);
+		expect(state.active[0]).toMatchObject({ phase: "tool_activity", status: "running", terminal: false });
+		expect(state.active[0]?.activity.map((activity) => activity.phase)).toEqual([
+			"running",
+			"tool_activity",
+			"compacting",
+			"tool_activity",
+		]);
+	});
+
+	it("propagates bounded profile colors and rejects invalid runtime values", () => {
+		let state = createObservatoryState();
+		state = apply(state, runtimeEvent("subagent_started", "running", { event: { color: "success" } }));
+		expect(state.active[0]?.color).toBe("success");
+
+		state = apply(
+			state,
+			runtimeEvent("subagent_progress", "running", {
+				event: { color: "not-a-theme-token" as unknown as SubagentEvent["color"] },
+			}),
+		);
+		expect(state.active[0]?.color).toBe("success");
+	});
+
 	it("keeps batch children independent", () => {
 		let state = createObservatoryState();
 		state = apply(
@@ -457,35 +509,12 @@ describe("subagent observatory reducer", () => {
 		expect(text).not.toContain("api_key");
 	});
 
-	it("renders token meters separately and marks estimated accounting", () => {
-		const text = formatProgressSnapshot(
-			snapshotFor("token-meter", {
-				budget: {
-					maxTotalTokens: 20_000,
-					workPhaseLimit: 18_000,
-					reportReserveTokens: 2_000,
-					chargedTokens: 12,
-					remainingTokens: 19_988,
-					inputTokens: 5,
-					outputTokens: 6,
-					cacheReadTokens: 9,
-					cacheWriteTokens: 1,
-					overshootTokens: 0,
-					accounting: "estimated",
-					exhausted: false,
-					hardCap: "aggregate-soft",
-				},
-			}),
-		);
-		expect(text).toContain("tokens 12/20000 ~");
-		expect(text).toContain("cache-read 9");
-	});
-
 	it("projects durable jobs as bounded metadata without result bodies", () => {
 		const source = durableInspectionFor("job-secret", "completed");
 		const projected = projectDurableSubagentJob({
 			...source,
 			job: { ...source.job, role: "explore\nrow", model: "faux\tmodel", resultRef: "job:job-secret\nrow" },
+			budget: { ...source.budget!, ownerActiveJobs: 2, ownerQueuedJobs: 3, ownerActiveJobsCap: 4 },
 		});
 		expect(projected).toMatchObject({
 			jobId: "job-secret",
@@ -493,6 +522,9 @@ describe("subagent observatory reducer", () => {
 			role: "explore row",
 			model: "faux model",
 			plannedOutputBytes: 24 * 1024,
+			ownerActiveJobs: 2,
+			ownerQueuedJobs: 3,
+			ownerActiveJobsCap: 4,
 			resultRef: "job:job-secret row",
 		});
 		expect(JSON.stringify(projected)).not.toContain("task=secret transcript");

@@ -12,8 +12,7 @@ export interface UnifiedConfig {
 	compactionEngine: CompactionEngine;
 	midRunCompaction: MidRunCompaction;
 	tailBehavior: TailBehavior;
-	compactAfterTokens: number;
-	compactAfterPercent?: number;
+	compactAfterPercent: number;
 	memory: boolean;
 }
 
@@ -22,7 +21,7 @@ export const DEFAULTS: UnifiedConfig = {
 	compactionEngine: "blackhole",
 	midRunCompaction: "off",
 	tailBehavior: "minimal",
-	compactAfterTokens: 81_000,
+	compactAfterPercent: 85,
 	memory: false,
 };
 
@@ -39,10 +38,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function enumValue<T extends string>(value: unknown, values: readonly T[], fallback: T): T {
 	return typeof value === "string" && values.includes(value as T) ? (value as T) : fallback;
-}
-
-function positiveInteger(value: unknown, fallback: number): number {
-	return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
 function validPercent(value: unknown): value is number {
@@ -78,7 +73,7 @@ export function loadConfig(warn?: (message: string) => void): UnifiedConfig {
 		compactionEngine: enumValue(raw.compactionEngine, ["blackhole", "ice-default"], DEFAULTS.compactionEngine),
 		midRunCompaction: enumValue(raw.midRunCompaction, ["resume", "pause", "off"], DEFAULTS.midRunCompaction),
 		tailBehavior: enumValue(raw.tailBehavior, ["ice-default", "minimal"], DEFAULTS.tailBehavior),
-		compactAfterTokens: positiveInteger(raw.compactAfterTokens, DEFAULTS.compactAfterTokens),
+		compactAfterPercent: DEFAULTS.compactAfterPercent,
 		memory: raw.memory === true,
 	};
 
@@ -103,14 +98,6 @@ export function loadConfig(warn?: (message: string) => void): UnifiedConfig {
 		);
 	}
 
-	const absoluteFromEnv = parseEnvNumber(
-		"ICE_BLACKHOLE_COMPACT_AFTER_TOKENS",
-		process.env.ICE_BLACKHOLE_COMPACT_AFTER_TOKENS,
-		warn,
-	);
-	if (absoluteFromEnv !== undefined)
-		merged.compactAfterTokens = positiveInteger(absoluteFromEnv, merged.compactAfterTokens);
-
 	const percentFromEnv = parseEnvNumber(
 		"ICE_BLACKHOLE_COMPACT_AFTER_PERCENT",
 		process.env.ICE_BLACKHOLE_COMPACT_AFTER_PERCENT,
@@ -127,13 +114,7 @@ export function loadConfig(warn?: (message: string) => void): UnifiedConfig {
 		}
 	}
 
-	if (
-		merged.compactAfterPercent !== undefined &&
-		(absoluteFromEnv !== undefined || raw.compactAfterTokens !== undefined)
-	) {
-		warn?.("blackhole: compactAfterPercent and compactAfterTokens are mutually exclusive; using compactAfterTokens");
-		delete merged.compactAfterPercent;
-	}
+	// Legacy numeric configs (compactAfterTokens) are ignored; the percent threshold applies.
 
 	return merged;
 }
@@ -143,7 +124,6 @@ export function resolveCompactAfterTokens(
 	contextWindow: number | undefined,
 	warn?: (message: string) => void,
 ): number | undefined {
-	if (config.compactAfterPercent === undefined) return config.compactAfterTokens;
 	if (contextWindow === undefined || !Number.isFinite(contextWindow) || contextWindow <= 0) {
 		warn?.(
 			"blackhole: percentage threshold requires a positive active model context window; skipping automatic compaction",
@@ -156,15 +136,9 @@ export function resolveCompactAfterTokens(
 export function saveConfig(patch: Partial<UnifiedConfig>): UnifiedConfig {
 	const current = loadConfig();
 	const next = { ...current, ...patch };
-	const raw: Record<string, unknown> = { ...next };
-	if (next.compactAfterPercent !== undefined) {
-		delete raw.compactAfterTokens;
-	} else {
-		delete raw.compactAfterPercent;
-	}
 	const path = configPath();
 	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-	writeFileSync(path, `${JSON.stringify(raw, null, 2)}\n`, { mode: 0o600 });
+	writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
 	chmodSync(path, 0o600);
 	return loadConfig();
 }

@@ -11,7 +11,7 @@ import { extractGoals } from "../extract/goals.ts";
 import { dedupPreferencesAgainstGoals, extractPreferences } from "../extract/preferences.ts";
 import type { SectionData } from "../sections.ts";
 import type { NormalizedBlock } from "../types.ts";
-import { buildBriefSections, stringifyBrief } from "./brief.ts";
+import { buildBriefSections, stringifyBrief, toolOneLiner } from "./brief.ts";
 import { clipSentence, firstLine, nonEmptyLines } from "./content.ts";
 
 export interface BuildSectionsInput {
@@ -20,6 +20,34 @@ export interface BuildSectionsInput {
 
 const BLOCKER_RE =
 	/\b(fail(ed|s|ure|ing)?|broken|cannot|can't|won't work|does not work|doesn't work|still (broken|failing|wrong)|blocked|blocker|not (fixed|resolved|working)|crash(es|ed|ing)?)\b/i;
+
+const MAX_RECENT_ACTIONS = 10;
+
+/**
+ * Last assistant tool actions in chronological order, so the post-compaction
+ * model immediately sees what was just done without scanning the transcript.
+ * A failed result marks the most recent unmatched call with the same tool name.
+ */
+const extractRecentActions = (blocks: NormalizedBlock[]): string[] => {
+	const actions: Array<{ line: string; error: boolean }> = [];
+	for (const b of blocks) {
+		if (b.kind === "tool_call") {
+			if (!b.name || b.name.trim() === "") continue;
+			actions.push({ line: toolOneLiner(b.name, b.args).replace(/^\* /, ""), error: false });
+			continue;
+		}
+		if (b.kind === "tool_result" && b.isError) {
+			for (let i = actions.length - 1; i >= 0; i--) {
+				const tool = actions[i].line.match(/^(\S+)/)?.[1];
+				if (tool === b.name) {
+					actions[i].error = true;
+					break;
+				}
+			}
+		}
+	}
+	return actions.slice(-MAX_RECENT_ACTIONS).map((a) => (a.error ? `${a.line} [error]` : a.line));
+};
 
 const extractOutstandingContext = (blocks: NormalizedBlock[]): string[] => {
 	const items: string[] = [];
@@ -72,6 +100,7 @@ export const buildSections = (input: BuildSectionsInput): SectionData => {
 	const sessionGoal = extractGoals(blocks);
 	const userPreferences = dedupPreferencesAgainstGoals(extractPreferences(blocks), sessionGoal);
 	return {
+		recentActions: extractRecentActions(blocks),
 		sessionGoal,
 		outstandingContext: extractOutstandingContext(blocks),
 		filesAndChanges: formatFileActivity(blocks),

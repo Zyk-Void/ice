@@ -2147,6 +2147,7 @@ export class InteractiveMode {
 			[
 				presentation.handoffMessageIndex,
 				presentation.finalizationMessageIndex,
+				presentation.wrapUpMessageIndex,
 				presentation.finalReportMessageIndex,
 			].includes(index)
 		) {
@@ -2158,7 +2159,8 @@ export class InteractiveMode {
 				(presentation.handoffMessageMarker && text.includes(presentation.handoffMessageMarker)) ||
 				(presentation.finalizationMessageMarker && text.includes(presentation.finalizationMessageMarker)) ||
 				(presentation.timeoutContinuationMessageMarker &&
-					text.includes(presentation.timeoutContinuationMessageMarker))
+					text.includes(presentation.timeoutContinuationMessageMarker)) ||
+				(presentation.wrapUpMessageMarker && text.includes(presentation.wrapUpMessageMarker))
 			) {
 				return true;
 			}
@@ -2197,27 +2199,35 @@ export class InteractiveMode {
 	private addSubagentFinalResult(view: IceAgentViewDescriptor): void {
 		const result = view.presentation?.finalResult;
 		if (!result) return;
+		const plainFinalTurn = view.presentation?.reportMode === "plain_final_turn";
 		const statusLabel =
-			result.status === "completed" && result.verified === true
-				? "Completed · verified"
-				: result.status === "completed"
-					? "Completed · verification pending"
-					: `${result.status.replaceAll("_", " ").replace(/^(.)/, (character) => character.toUpperCase())}`;
+			plainFinalTurn && result.status === "completed"
+				? "Completed"
+				: result.status === "completed" && result.verified === true
+					? "Completed · verified"
+					: result.status === "completed"
+						? "Completed · verification pending"
+						: `${result.status.replaceAll("_", " ").replace(/^(.)/, (character) => character.toUpperCase())}`;
 		const color =
 			result.status === "completed" && result.verified === true
 				? "success"
 				: result.status === "failed" || result.status === "verification_failed"
 					? "error"
 					: "warning";
+		const summary = result.summary?.trim();
 		const lines = [statusLabel];
-		if (result.summary?.trim()) lines.push(result.summary.trim());
+		if (!plainFinalTurn && summary) lines.push(summary);
 		if (result.evidencePaths?.length) {
 			lines.push(`Evidence: ${result.evidencePaths.length} path${result.evidencePaths.length === 1 ? "" : "s"}`);
 		}
-		if (result.diagnostic?.trim() && result.diagnostic.trim() !== result.summary?.trim()) {
+		if (result.diagnostic?.trim() && result.diagnostic.trim() !== summary) {
 			lines.push(`Diagnostic: ${result.diagnostic.trim()}`);
 		}
 		this.chatContainer.addChild(new Spacer(1));
+		if (plainFinalTurn && summary) {
+			this.chatContainer.addChild(new Markdown(summary, 1, 0, this.getMarkdownThemeWithSettings()));
+			this.chatContainer.addChild(new Spacer(1));
+		}
 		this.chatContainer.addChild(new Text(theme.fg(color, lines.join("\n")), 1, 0));
 	}
 

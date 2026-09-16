@@ -88,30 +88,70 @@ export interface CogneeClient {
 interface RequestSignal {
 	signal: AbortSignal;
 	timedOut: () => boolean;
+	throwIfAborted: () => void;
 	cleanup: () => void;
 }
 
 function createRequestSignal(timeoutMs: number, parentSignal?: AbortSignal): RequestSignal {
 	const controller = new AbortController();
+	const budgetMs = Math.max(1, timeoutMs);
+	const deadline = Date.now() + budgetMs;
 	let didTimeout = false;
-	const timeout = setTimeout(
-		() => {
-			didTimeout = true;
-			controller.abort();
-		},
-		Math.max(1, timeoutMs),
-	);
+	const onTimeout = () => {
+		if (controller.signal.aborted) return;
+		didTimeout = true;
+		controller.abort();
+	};
+	const timeout = setTimeout(onTimeout, budgetMs);
 	const onAbort = () => controller.abort(parentSignal?.reason);
-	parentSignal?.addEventListener("abort", onAbort, { once: true });
+	if (parentSignal?.aborted) onAbort();
+	else parentSignal?.addEventListener("abort", onAbort, { once: true });
 
 	return {
 		signal: controller.signal,
-		timedOut: () => didTimeout,
+		timedOut: () => {
+			if (Date.now() >= deadline) onTimeout();
+			return didTimeout;
+		},
+		throwIfAborted: () => {
+			if (Date.now() >= deadline) onTimeout();
+			controller.signal.throwIfAborted();
+		},
 		cleanup: () => {
 			clearTimeout(timeout);
 			parentSignal?.removeEventListener("abort", onAbort);
 		},
 	};
+}
+
+async function withRequestSignal<T>(operation: () => Promise<T>, requestSignal: RequestSignal): Promise<T> {
+	requestSignal.throwIfAborted();
+	const { signal } = requestSignal;
+	let onAbort = () => {};
+	const aborted = new Promise<never>((_resolve, reject) => {
+		onAbort = () => reject(signal.reason);
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
+	try {
+		return await Promise.race([
+			Promise.resolve().then(() => {
+				requestSignal.throwIfAborted();
+				return operation();
+			}),
+			aborted,
+		]);
+	} finally {
+		signal.removeEventListener("abort", onAbort);
+	}
+}
+
+function cancelBody(body: ReadableStream<Uint8Array> | ReadableStreamDefaultReader<Uint8Array> | null): void {
+	try {
+		// Cancellation can stall or reject; neither may delay or replace the request result.
+		void body?.cancel().catch(() => {});
+	} catch {
+		// A closed or already locked stream may also reject cancellation synchronously.
+	}
 }
 
 function buildUrl(baseUrl: string, path: string): string {
@@ -136,25 +176,60 @@ function classifyStatus(status: number): CogneeErrorKind {
 	return "malformed";
 }
 
-const MAX_RECALL_RESPONSE_CHARS = 128 * 1024;
+const MAX_RECALL_RESPONSE_BYTES = 128 * 1024;
 
-function responseLimit(response: Response, maxChars: number): void {
-	const contentLength = Number(response.headers.get("content-length"));
-	if (Number.isFinite(contentLength) && contentLength > maxChars) {
+function responseLimit(response: Response, maxBytes: number): number | undefined {
+	const header = response.headers.get("content-length");
+	if (header === null) return undefined;
+	const contentLength = Number(header);
+	if (!/^\d+$/.test(header) || !Number.isSafeInteger(contentLength)) {
+		throw new CogneeError("malformed", "Cognee returned an invalid Content-Length");
+	}
+	if (contentLength > maxBytes) {
 		throw new CogneeError("response_too_large", "Cognee response exceeded the configured limit");
 	}
+	return contentLength;
 }
 
-async function readJson(response: Response, transportMaxChars: number): Promise<unknown> {
-	responseLimit(response, transportMaxChars);
-	const text = await response.text();
-	if (text.length > transportMaxChars) {
-		throw new CogneeError("response_too_large", "Cognee response exceeded the configured limit");
-	}
+async function readJson(response: Response, transportMaxBytes: number, requestSignal: RequestSignal): Promise<unknown> {
+	const contentLength = responseLimit(response, transportMaxBytes);
+	const reader = response.body?.getReader();
+	const decoder = new TextDecoder();
+	let complete = false;
+	let bytes = 0;
+	let text = "";
 	try {
-		return JSON.parse(text) as unknown;
-	} catch {
-		throw new CogneeError("malformed", "Cognee returned malformed JSON");
+		if (reader) {
+			while (true) {
+				const { done, value } = await withRequestSignal(() => reader.read(), requestSignal);
+				if (done) {
+					complete = true;
+					break;
+				}
+				bytes += value.byteLength;
+				if (bytes > transportMaxBytes) {
+					throw new CogneeError("response_too_large", "Cognee response exceeded the configured limit");
+				}
+				text += decoder.decode(value, { stream: true });
+			}
+		}
+		const encoding = response.headers.get("content-encoding");
+		// Fetch decodes compressed bodies, but Content-Length describes the encoded bytes.
+		if (contentLength !== undefined && (!encoding || encoding === "identity") && bytes !== contentLength) {
+			throw new CogneeError("malformed", "Cognee response did not match Content-Length");
+		}
+		text += decoder.decode();
+		requestSignal.throwIfAborted();
+		try {
+			return JSON.parse(text) as unknown;
+		} catch {
+			throw new CogneeError("malformed", "Cognee returned malformed JSON");
+		}
+	} finally {
+		if (reader) {
+			if (!complete) cancelBody(reader);
+			reader.releaseLock();
+		}
 	}
 }
 
@@ -185,23 +260,37 @@ function normalizeRecall(payload: unknown): RecallResult[] {
 	});
 }
 
-async function request(
+async function request<T>(
 	fetchImpl: typeof fetch,
 	url: string,
 	init: RequestInit,
 	config: CogneeClientConfig,
 	parentSignal: AbortSignal | undefined,
-	timeoutMs?: number,
-): Promise<Response> {
+	timeoutMs: number | undefined,
+	handleResponse: (response: Response, signal: RequestSignal) => Promise<T>,
+): Promise<T> {
 	const requestSignal = createRequestSignal(timeoutMs ?? config.recallBudgetMs, parentSignal);
+	let response: Response | undefined;
 	try {
-		return await fetchImpl(url, { ...init, signal: requestSignal.signal });
-	} catch {
+		requestSignal.throwIfAborted();
+		response = await withRequestSignal(async () => {
+			const result = await fetchImpl(url, { ...init, signal: requestSignal.signal });
+			// A fetch implementation may ignore abort and deliver headers after the deadline.
+			if (requestSignal.signal.aborted) cancelBody(result.body);
+			return result;
+		}, requestSignal);
+		requestSignal.throwIfAborted();
+		const result = await handleResponse(response, requestSignal);
+		requestSignal.throwIfAborted();
+		return result;
+	} catch (error) {
 		if (requestSignal.timedOut()) throw new CogneeError("timeout", "Cognee request timed out");
-		if (parentSignal?.aborted) throw new CogneeError("aborted", "Cognee request was aborted");
+		if (requestSignal.signal.aborted) throw new CogneeError("aborted", "Cognee request was aborted");
+		if (error instanceof CogneeError) throw error;
 		throw new CogneeError("unreachable", "Cognee service is unreachable");
 	} finally {
 		requestSignal.cleanup();
+		if (response && !response.bodyUsed) cancelBody(response.body);
 	}
 }
 
@@ -220,7 +309,7 @@ export function createCogneeClient(
 	return {
 		async recall(query, options = {}) {
 			const scope = options.scope && options.scope.length > 0 ? options.scope : ["session", "trace", "graph"];
-			const response = await request(
+			const payload = await request(
 				fetchImpl,
 				buildUrl(config.baseUrl, "/api/v1/recall"),
 				{
@@ -238,12 +327,12 @@ export function createCogneeClient(
 				config,
 				options.signal,
 				options.timeoutMs,
+				async (response, signal) => {
+					await assertOk(response, "recall");
+					return readJson(response, MAX_RECALL_RESPONSE_BYTES, signal);
+				},
 			);
-			await assertOk(response, "recall");
-			const results = normalizeRecall(await readJson(response, MAX_RECALL_RESPONSE_CHARS)).slice(
-				0,
-				options.topK ?? 5,
-			);
+			const results = normalizeRecall(payload).slice(0, options.topK ?? 5);
 			let remaining = config.maxResponseChars;
 			return results.flatMap((result) => {
 				if (remaining <= 0) return [];
@@ -260,19 +349,19 @@ export function createCogneeClient(
 			form.set("run_in_background", "true");
 			if (input.sessionId) form.set("session_id", input.sessionId);
 			form.set("data", new Blob([input.text], { type: "text/plain" }), "ice-cognee.txt");
-			const response = await request(
+			await request(
 				fetchImpl,
 				buildUrl(config.baseUrl, "/api/v1/remember"),
 				{ method: "POST", headers: headers(config.apiKey), body: form },
 				config,
 				options.signal,
 				options.timeoutMs ?? Math.max(config.recallBudgetMs, 30_000),
+				(response) => assertOk(response, "remember"),
 			);
-			await assertOk(response, "remember");
 		},
 
 		async rememberEntry(input, options = {}) {
-			const response = await request(
+			return request(
 				fetchImpl,
 				buildUrl(config.baseUrl, "/api/v1/remember/entry"),
 				{
@@ -287,18 +376,28 @@ export function createCogneeClient(
 				config,
 				options.signal,
 				options.timeoutMs ?? 30_000,
+				async (response, signal) => {
+					await assertOk(response, "remember/entry");
+					try {
+						const payload = (await readJson(response, config.maxResponseChars, signal)) as {
+							entry_id?: unknown;
+						} | null;
+						return typeof payload?.entry_id === "string" ? { entryId: payload.entry_id } : {};
+					} catch (error) {
+						if (
+							error instanceof CogneeError &&
+							(error.kind === "malformed" || error.kind === "response_too_large")
+						) {
+							return {};
+						}
+						throw error;
+					}
+				},
 			);
-			await assertOk(response, "remember/entry");
-			try {
-				const payload = (await readJson(response, config.maxResponseChars)) as { entry_id?: unknown };
-				return typeof payload.entry_id === "string" ? { entryId: payload.entry_id } : {};
-			} catch {
-				return {};
-			}
 		},
 
 		async improve(input = {}, options = {}) {
-			const response = await request(
+			await request(
 				fetchImpl,
 				buildUrl(config.baseUrl, "/api/v1/improve"),
 				{
@@ -314,8 +413,8 @@ export function createCogneeClient(
 				config,
 				options.signal,
 				options.timeoutMs ?? 120_000,
+				(response) => assertOk(response, "improve"),
 			);
-			await assertOk(response, "improve");
 		},
 
 		async registerAgent(input, options = {}) {
@@ -327,7 +426,7 @@ export function createCogneeClient(
 			};
 			if (input.sessionId) body.session_id = input.sessionId;
 			if (input.datasetNames && input.datasetNames.length > 0) body.dataset_names = input.datasetNames;
-			const response = await request(
+			await request(
 				fetchImpl,
 				buildUrl(config.baseUrl, "/api/v1/agents/register"),
 				{
@@ -338,13 +437,15 @@ export function createCogneeClient(
 				config,
 				options.signal,
 				options.timeoutMs ?? 15_000,
+				async (response) => {
+					if (response.status === 404) return;
+					await assertOk(response, "agents/register");
+				},
 			);
-			if (response.status === 404) return;
-			await assertOk(response, "agents/register");
 		},
 
 		async unregisterAgent(input, options = {}) {
-			const response = await request(
+			await request(
 				fetchImpl,
 				buildUrl(config.baseUrl, "/api/v1/agents/unregister"),
 				{
@@ -355,9 +456,11 @@ export function createCogneeClient(
 				config,
 				options.signal,
 				options.timeoutMs ?? 15_000,
+				async (response) => {
+					if (response.status === 404) return;
+					await assertOk(response, "agents/unregister");
+				},
 			);
-			if (response.status === 404) return;
-			await assertOk(response, "agents/unregister");
 		},
 	};
 }

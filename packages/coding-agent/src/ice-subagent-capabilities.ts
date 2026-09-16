@@ -15,8 +15,11 @@ export interface IceChildDispatchContext {
 }
 
 export interface IceDelegableTool {
+	/** Stable parent-owned identity used by profile-level adapter selection. */
+	adapterId: string;
 	/** Stable model-visible identifier; must already be active in the parent. */
 	name: string;
+	/** Provenance label; it is never used as an authority selector. */
 	origin: string;
 	access: IceCapabilityAccess;
 	/** Host assertion that dispatch honors scope, cancellation, and independent child state. */
@@ -29,6 +32,7 @@ export interface IceDelegableTool {
 }
 
 export interface IceCapabilitySnapshot {
+	readonly adapterId: string;
 	readonly name: string;
 	readonly origin: string;
 	readonly access: IceCapabilityAccess;
@@ -74,6 +78,11 @@ export function isIceChildToolName(value: unknown): value is string {
 	return typeof value === "string" && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(value);
 }
 
+/** Adapter IDs are explicit parent-owned selectors, not values derived from origin. */
+export function isIceDelegableAdapterId(value: unknown): value is string {
+	return typeof value === "string" && /^[A-Za-z][A-Za-z0-9_.:/-]{0,127}$/.test(value);
+}
+
 export function isIceParentManagementTool(name: string): boolean {
 	return MANAGEMENT_TOOLS.has(name.toLowerCase());
 }
@@ -114,6 +123,7 @@ export function normalizeIceToolSchema(schema: TSchema): TSchema {
 }
 
 function checkedDefinition(input: IceDelegableTool): IceDelegableTool {
+	if (!isIceDelegableAdapterId(input.adapterId)) throw new Error("Invalid delegated adapter ID.");
 	if (!isIceChildToolName(input.name) || isIceParentManagementTool(input.name)) {
 		throw new Error("Parent delegation/control tools cannot be delegated.");
 	}
@@ -140,12 +150,14 @@ function checkedDefinition(input: IceDelegableTool): IceDelegableTool {
 
 export function snapshotIceCapability(definition: IceDelegableTool): IceCapabilitySnapshot {
 	return Object.freeze({
+		adapterId: definition.adapterId,
 		name: definition.name,
 		origin: definition.origin,
 		access: definition.access,
 		fingerprint: createHash("sha256")
 			.update(
 				JSON.stringify({
+					adapterId: definition.adapterId,
 					name: definition.name,
 					origin: definition.origin,
 					access: definition.access,
@@ -191,7 +203,10 @@ export function getIceDelegableTools(owner: object): readonly IceResolvedDelegab
 export function resolveIceDelegableTools(options: {
 	available: readonly IceResolvedDelegableTool[];
 	parentActiveTools: readonly string[];
+	/** Direct model-visible tool requests, used by self-delegation and legacy callers. */
 	requested: readonly string[];
+	/** Independent profile-level parent adapter selectors. */
+	requestedAdapterIds?: readonly string[];
 	denied?: readonly string[];
 	allowMutation: boolean;
 }): readonly IceResolvedDelegableTool[] {
@@ -199,18 +214,31 @@ export function resolveIceDelegableTools(options: {
 	const denied = new Set((options.denied ?? []).map((name) => name.toLowerCase()));
 	const byName = new Map(options.available.map((tool) => [tool.name, tool]));
 	const selected: IceResolvedDelegableTool[] = [];
+	const selectedNames = new Set<string>();
+	const select = (tool: IceResolvedDelegableTool, requestedName: string): void => {
+		if (denied.has(tool.name.toLowerCase())) return;
+		if (!active.has(tool.name) || !tool.isCurrent())
+			throw new Error(`Delegated tool ${requestedName} is no longer authorized by the parent.`);
+		if (tool.access === "unknown")
+			throw new Error(`Delegated tool ${requestedName} has unknown access classification.`);
+		if (tool.access === "mutation" && !options.allowMutation) return;
+		if (selectedNames.has(tool.name)) return;
+		selectedNames.add(tool.name);
+		selected.push(tool);
+	};
 	for (const name of new Set(options.requested)) {
 		if ((ICE_BUILTIN_CHILD_TOOLS as readonly string[]).includes(name)) continue;
 		if (!isIceChildToolName(name) || isIceParentManagementTool(name))
 			throw new Error("Child requested a privileged or invalid tool.");
 		const tool = byName.get(name);
 		if (!tool) throw new Error(`Tool ${name} has no child-safe parent adapter.`);
-		if (denied.has(name.toLowerCase())) continue;
-		if (!active.has(name) || !tool.isCurrent())
-			throw new Error(`Delegated tool ${name} is no longer authorized by the parent.`);
-		if (tool.access === "unknown") throw new Error(`Delegated tool ${name} has unknown access classification.`);
-		if (tool.access === "mutation" && !options.allowMutation) continue;
-		selected.push(tool);
+		select(tool, name);
+	}
+	for (const adapterId of new Set(options.requestedAdapterIds ?? [])) {
+		if (!isIceDelegableAdapterId(adapterId)) throw new Error("Invalid delegated adapter ID.");
+		const tools = options.available.filter((tool) => tool.adapterId === adapterId);
+		if (tools.length === 0) throw new Error(`Adapter ${adapterId} has no child-safe parent registration.`);
+		for (const tool of tools) select(tool, adapterId);
 	}
 	return Object.freeze(selected);
 }

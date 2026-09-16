@@ -105,10 +105,12 @@ describe("ice-only resource precedence and no ambient child installs", () => {
 		const contract = resolveIceSubagentContract({
 			role: "self",
 			projectTrusted: true,
-			globalSettings: { ice: { subagents: { defaults: { maxTurns: 10 }, restrictions: { maxTurns: 8 } } } },
-			projectSettings: { ice: { subagents: { roleDefaults: { self: { maxTurns: 4 } } } } },
+			globalSettings: {
+				ice: { subagents: { defaults: { timeoutMs: 10_000 }, restrictions: { maxTimeoutMs: 8_000 } } },
+			},
+			projectSettings: { ice: { subagents: { roleDefaults: { self: { timeoutMs: 4_000 } } } } },
 		});
-		expect(contract.values.maxTurns).toBe(8);
+		expect(contract.values.timeoutMs).toBe(8_000);
 	});
 	it("global hook definitions win collisions, retaining required status", () => {
 		const hook = { id: "gate", event: "subagent.beforeLaunch", kind: "in-process" };

@@ -239,6 +239,7 @@ describe("production file/self delegation acceptance", () => {
 		const execute = vi.fn(async () => ({ fact: true }));
 		cleanup.push(
 			registerIceDelegableTool(h.events, {
+				adapterId: "fixture/lookup",
 				name: "lookup",
 				origin: "fixture/lookup",
 				access: "read-only",
@@ -313,7 +314,9 @@ describe("production file/self delegation acceptance", () => {
 		});
 		const first = await h.call("delegate_async", h.request);
 		await h.call("delegate_async", h.request);
-		await vi.waitFor(() => expect(releases).toHaveLength(2));
+		await h.call("delegate_async", h.request);
+		await h.call("delegate_async", h.request);
+		await vi.waitFor(() => expect(releases).toHaveLength(4));
 		const queued = await h.call("delegate_async", h.request);
 		expect(queued.details.accepted.status).toBe("queued");
 		const inspect = await h.call("inspect_subagent_job", { jobId: first.details.accepted.jobId });
@@ -334,8 +337,12 @@ describe("production file/self delegation acceptance", () => {
 			expect(state.details.inspection.job.status).toBe("failed");
 			expect(state.details.inspection.result.summary).toMatch(/capabilities changed/i);
 		});
-		expect(spy).toHaveBeenCalledTimes(2);
+		// The four already-started jobs invoked the runner; the queued job failed
+		// contract revalidation before its runner was invoked.
+		expect(spy).toHaveBeenCalledTimes(4);
 		releases[1]!();
+		releases[2]!();
+		releases[3]!();
 	});
 	it("discovery includes self without needing any file or consuming a provider call", async () => {
 		const h = await harness();

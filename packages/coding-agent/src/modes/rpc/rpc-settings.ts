@@ -1,6 +1,7 @@
 import type { SettingItem } from "@zykairotis/ice-tui";
 import type { RegisteredSettings } from "../../core/extensions/types.ts";
 import type { IceSettingsValue, PackageSource, SettingsManager, SettingsScope } from "../../core/settings-manager.ts";
+import { resolveSubagentConcurrencyPolicy } from "../../ice-subagent-concurrency.ts";
 import { parseIceSettings, resolveIceSubagentContract } from "../../ice-subagent-settings.ts";
 
 export type RpcSettingsFieldKind = "boolean" | "select" | "number" | "text" | "string-list" | "package-sources";
@@ -137,6 +138,13 @@ function effectiveIceValue(settings: SettingsManager, key: string, fallback: Rpc
 				? false
 				: globalHooks.enabled || projectHooks.enabled;
 		}
+		const concurrencyPolicy = resolveSubagentConcurrencyPolicy({
+			global,
+			project,
+			projectTrusted: settings.isProjectTrusted(),
+		});
+		if (key === "ice.subagents.concurrency.default") return concurrencyPolicy.defaultConcurrency;
+		if (key === "ice.subagents.concurrency.max") return concurrencyPolicy.maxConcurrency;
 		const contract = resolveIceSubagentContract({
 			global,
 			project,
@@ -146,8 +154,6 @@ function effectiveIceValue(settings: SettingsManager, key: string, fallback: Rpc
 			bundledDefaults: {
 				thinking: "medium",
 				timeoutMs: 120_000,
-				maxTurns: 12,
-				maxToolCalls: 40,
 				maxOutputBytes: 24_576,
 			},
 		});
@@ -156,14 +162,8 @@ function effectiveIceValue(settings: SettingsManager, key: string, fallback: Rpc
 				return contract.values.thinking;
 			case "ice.subagents.defaults.timeoutMs":
 				return contract.values.timeoutMs;
-			case "ice.subagents.defaults.maxTurns":
-				return contract.values.maxTurns;
-			case "ice.subagents.defaults.maxToolCalls":
-				return contract.values.maxToolCalls;
 			case "ice.subagents.defaults.maxOutputBytes":
 				return contract.values.maxOutputBytes;
-			case "ice.subagents.defaults.maxTotalTokens":
-				return contract.values.maxTotalTokens ?? fallback;
 			case "ice.subagents.allowedRoles":
 				return contract.allowedRoles.value ? [...contract.allowedRoles.value] : [];
 			default:
@@ -174,6 +174,20 @@ function effectiveIceValue(settings: SettingsManager, key: string, fallback: Rpc
 		// expose stale permissive values through a headless projection.
 		if (key === "ice.subagents.enabled" || key === "ice.hooks.enabled") return false;
 		return cloneValue(fallback);
+	}
+}
+
+function effectiveIceConcurrencySource(settings: SettingsManager, key: string): SettingsScope | undefined {
+	if (key !== "ice.subagents.concurrency.default" && key !== "ice.subagents.concurrency.max") return undefined;
+	try {
+		const projectTrusted = settings.isProjectTrusted();
+		const global = parseIceSettings(settings.getGlobalSettings().ice).subagents;
+		const project = parseIceSettings(projectTrusted ? settings.getProjectSettings().ice : undefined).subagents;
+		const policy = resolveSubagentConcurrencyPolicy({ global, project, projectTrusted });
+		const source = key.endsWith(".default") ? policy.sources.default : policy.sources.max;
+		return source === "global" || source === "project" ? source : undefined;
+	} catch {
+		return undefined;
 	}
 }
 
@@ -249,30 +263,6 @@ const ICE_SETTINGS: RpcSettingsDefinition[] = [
 		read: (settings) => effectiveIceValue(settings, "ice.subagents.defaults.timeoutMs", 120_000) as number,
 	}),
 	iceSetting({
-		key: "ice.subagents.defaults.maxTurns",
-		label: "Subagent turn budget",
-		description: "Default model-turn budget, including the bounded final report turn",
-		group: "ICE · Subagents",
-		kind: "number",
-		scope: "both",
-		defaultValue: 12,
-		constraints: { min: 1, max: 64, integer: true },
-		restartRequired: false,
-		read: (settings) => effectiveIceValue(settings, "ice.subagents.defaults.maxTurns", 12) as number,
-	}),
-	iceSetting({
-		key: "ice.subagents.defaults.maxToolCalls",
-		label: "Subagent tool-call budget",
-		description: "Default enforced child tool-call budget",
-		group: "ICE · Subagents",
-		kind: "number",
-		scope: "both",
-		defaultValue: 40,
-		constraints: { min: 0, max: 512, integer: true },
-		restartRequired: false,
-		read: (settings) => effectiveIceValue(settings, "ice.subagents.defaults.maxToolCalls", 40) as number,
-	}),
-	iceSetting({
 		key: "ice.subagents.defaults.maxOutputBytes",
 		label: "Subagent result size cap",
 		description: "Default complete parent-facing result size cap in UTF-8 bytes; this is not model tokens or cost",
@@ -285,19 +275,6 @@ const ICE_SETTINGS: RpcSettingsDefinition[] = [
 		read: (settings) => effectiveIceValue(settings, "ice.subagents.defaults.maxOutputBytes", 24_576) as number,
 	}),
 	iceSetting({
-		key: "ice.subagents.defaults.maxTotalTokens",
-		label: "Subagent token budget",
-		description:
-			"Soft cumulative limit for input + output + cache-write tokens; cache reads are reported separately; one in-flight response may overshoot.",
-		group: "ICE · Subagents",
-		kind: "number",
-		scope: "both",
-		defaultValue: 0,
-		constraints: { min: 1_024, max: 1_000_000, integer: true },
-		restartRequired: false,
-		read: (settings) => effectiveIceValue(settings, "ice.subagents.defaults.maxTotalTokens", 0) as number,
-	}),
-	iceSetting({
 		key: "ice.subagents.allowedRoles",
 		label: "Allowed subagent roles",
 		description: "Optional role allowlist; an empty list means no additional role restriction",
@@ -308,6 +285,30 @@ const ICE_SETTINGS: RpcSettingsDefinition[] = [
 		constraints: { maxItems: 64, maxLength: 64 },
 		restartRequired: false,
 		read: (settings) => effectiveIceValue(settings, "ice.subagents.allowedRoles", []) as string[],
+	}),
+	iceSetting({
+		key: "ice.subagents.concurrency.default",
+		label: "Subagent default concurrency",
+		description: "Default active read-only children shared by batches and durable jobs",
+		group: "ICE · Subagents",
+		kind: "number",
+		scope: "both",
+		defaultValue: 4,
+		constraints: { min: 1, max: 8, integer: true },
+		restartRequired: false,
+		read: (settings) => effectiveIceValue(settings, "ice.subagents.concurrency.default", 4) as number,
+	}),
+	iceSetting({
+		key: "ice.subagents.concurrency.max",
+		label: "Subagent concurrency cap",
+		description: "Hard active-child ceiling shared by batches and durable jobs",
+		group: "ICE · Subagents",
+		kind: "number",
+		scope: "both",
+		defaultValue: 8,
+		constraints: { min: 1, max: 8, integer: true },
+		restartRequired: false,
+		read: (settings) => effectiveIceValue(settings, "ice.subagents.concurrency.max", 8) as number,
 	}),
 	iceSetting({
 		key: "ice.hooks.enabled",
@@ -915,6 +916,9 @@ function fieldFromDefinition(definition: RpcSettingsDefinition, settingsManager:
 	const globalSettings = settingsManager.getGlobalSettings() as unknown as Record<string, unknown>;
 	const projectSettings = settingsManager.getProjectSettings() as unknown as Record<string, unknown>;
 	const effectiveValue = normalizeForSnapshot(definition, definition.read(settingsManager));
+	const effectiveSource =
+		effectiveIceConcurrencySource(settingsManager, definition.key) ??
+		settingsManager.getSettingSource(definition.key);
 	const configuredValue = normalizeForSnapshot(
 		definition,
 		readPath(globalSettings, definition.key) ?? definition.defaultValue,
@@ -932,7 +936,7 @@ function fieldFromDefinition(definition: RpcSettingsDefinition, settingsManager:
 			definition.scope !== "global" &&
 			hasPath(projectSettings, definition.key) &&
 			!(settingsManager.isGlobalFirst() && hasPath(globalSettings, definition.key)),
-		effectiveSource: settingsManager.getSettingSource(definition.key),
+		effectiveSource,
 		restartRequired: definition.restartRequired,
 		...(definition.hostOnly ? { hostOnly: true } : {}),
 		...(definition.options ? { options: [...definition.options] } : {}),

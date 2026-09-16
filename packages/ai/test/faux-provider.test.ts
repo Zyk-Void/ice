@@ -324,6 +324,30 @@ describe("faux provider", () => {
 		expect(second.usage.input + second.usage.cacheRead).toBeGreaterThan(second.usage.input);
 	});
 
+	it("shares prompt cache affinity without sharing session identity", async () => {
+		const registration = registerFauxProvider();
+		registrations.push(registration);
+		registration.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+
+		const context: Context = {
+			messages: [{ role: "user", content: "shared fork prefix", timestamp: Date.now() }],
+		};
+		const first = await complete(registration.getModel(), context, {
+			sessionId: "child-session-1",
+			promptCacheKey: "fork-cache-key",
+			cacheRetention: "short",
+		});
+		const second = await complete(registration.getModel(), context, {
+			sessionId: "child-session-2",
+			promptCacheKey: "fork-cache-key",
+			cacheRetention: "short",
+		});
+
+		expect(first.usage.cacheWrite).toBeGreaterThan(0);
+		expect(second.usage.cacheRead).toBeGreaterThan(0);
+		expect(second.usage.cacheWrite).toBe(0);
+	});
+
 	it("does not simulate caching when cacheRetention is none", async () => {
 		const registration = registerFauxProvider();
 		registrations.push(registration);

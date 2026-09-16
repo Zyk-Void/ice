@@ -5,7 +5,7 @@ import { registerBeforeCompactHook } from "./src/hooks/before-compact.ts";
 import { registerCompactionTrigger } from "./src/om/compaction-trigger.ts";
 
 function notifyUsage(ctx: { ui: { notify: (message: string, level: "info" | "warning" | "error") => void } }): void {
-	ctx.ui.notify("Usage: /blackhole percent <1-99> | tokens <count> | resume | pause | off | status", "warning");
+	ctx.ui.notify("Usage: /blackhole percent <1-99> | resume | pause | off | status", "warning");
 }
 
 function registerBlackholeSettings(ice: ExtensionAPI): void {
@@ -35,9 +35,9 @@ function registerBlackholeSettings(ice: ExtensionAPI): void {
 		},
 		{
 			id: "threshold",
-			label: "Blackhole token threshold",
+			label: "Blackhole compaction threshold",
 			description: "Percentage of the active model context window; resolves per selected model",
-			currentValue: `${config.compactAfterPercent ?? 20}%`,
+			currentValue: `${config.compactAfterPercent}%`,
 			values: percentValues,
 		},
 		{
@@ -91,18 +91,15 @@ function registerBlackholeCommand(ice: ExtensionAPI): void {
 			if (!command || command === "status") {
 				const config = loadConfig();
 				ctx.ui.notify(
-					`Blackhole: ${config.midRunCompaction}, ${config.compactAfterPercent === undefined ? `${config.compactAfterTokens} tokens` : `${config.compactAfterPercent}%`}; config ${getConfigPath()}`,
+					`Blackhole: ${config.midRunCompaction}, ${config.compactAfterPercent}%; config ${getConfigPath()}`,
 					"info",
 				);
 				return;
 			}
 
-			if (command === "percent" || command === "tokens") {
+			if (command === "percent") {
 				const threshold = Number(value);
-				const valid =
-					command === "percent"
-						? Number.isFinite(threshold) && threshold >= 1 && threshold <= 99
-						: Number.isInteger(threshold) && threshold > 0;
+				const valid = Number.isFinite(threshold) && threshold >= 1 && threshold <= 99;
 				if (!valid) {
 					notifyUsage(ctx);
 					return;
@@ -110,12 +107,9 @@ function registerBlackholeCommand(ice: ExtensionAPI): void {
 				const config = saveConfig({
 					compaction: "auto",
 					compactionEngine: "blackhole",
-					...(command === "percent" ? { compactAfterPercent: threshold } : { compactAfterTokens: threshold }),
+					compactAfterPercent: threshold,
 				});
-				ctx.ui.notify(
-					`Blackhole threshold: ${config.compactAfterPercent === undefined ? `${config.compactAfterTokens} tokens` : `${config.compactAfterPercent}%`}`,
-					"info",
-				);
+				ctx.ui.notify(`Blackhole threshold: ${config.compactAfterPercent}%`, "info");
 				return;
 			}
 

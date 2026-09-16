@@ -20,10 +20,11 @@
   "role": "self",
   "task": "Inspect the implementation and report verified evidence.",
   "scope": { "roots": ["src"] },
-  "execution": { "maxTurns": 8, "maxToolCalls": 20 },
+  "timeoutMs": 120000,
+  "execution": { "maxOutputBytes": 16384 },
   "contextMode": "fresh"
 }</pre>
-<p>Use existing directory roots. Individual files belong in <code>scope.targets</code>, not roots. <code>self.inheritSkills: true</code> explicitly inherits loaded parent skills; <code>self.mcp: ["docs/search"]</code> selects an authorized MCP operation.</p>
+<p>Use existing directory roots. Individual files belong in <code>scope.targets</code>, not roots. <code>timeoutMs</code> is the real wall-clock deadline and <code>maxOutputBytes</code> caps the complete parent-facing result; there are no per-child turn or tool-call ceilings. <code>self.inheritSkills: true</code> explicitly inherits loaded parent skills; <code>self.mcp: ["docs/search"]</code> selects an authorized MCP operation.</p>
 <h2>Model selection is not replay</h2>
 <pre>Explicit call model OR file primary
                  ↓ unavailable

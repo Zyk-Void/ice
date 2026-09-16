@@ -3,10 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import type { Api, Model } from "@zykairotis/ice-ai/compat";
+import { Markdown, Text } from "@zykairotis/ice-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession, AgentSessionEvent } from "../src/core/agent-session.ts";
 import type { CreateAgentSessionResult } from "../src/core/sdk.ts";
-import { IceAgentViewBridge } from "../src/ice-agent-view-bridge.ts";
+import { IceAgentViewBridge, type IceAgentViewColor } from "../src/ice-agent-view-bridge.ts";
 import {
 	createSubagentLiveSessionControl,
 	NativeSubagentRunner,
@@ -16,7 +17,7 @@ import {
 	verifySubagentResult,
 } from "../src/ice-subagents.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 const tempDirs: string[] = [];
 
@@ -100,7 +101,7 @@ class InteractiveChildSession {
 			this.onInitialTurnStarted();
 			await this.releaseInitialTurn;
 			this.messages.push(
-				assistantMessage('{"summary":"conversation JSON, not final","evidence":{"paths":["src"]}}'),
+				assistantMessage('{"summary":"conversation JSON, not final","evidence":{"paths":["src"]},"payload":{}}'),
 			);
 			this.isStreaming = false;
 			return;
@@ -116,7 +117,9 @@ class InteractiveChildSession {
 			if (this.finalization.wait) await this.finalization.wait;
 			if (this.finalization.error) throw this.finalization.error;
 			this.messages.push(
-				assistantMessage(this.finalization.text ?? '{"summary":"verified final","evidence":{"paths":["src"]}}'),
+				assistantMessage(
+					this.finalization.text ?? '{"summary":"verified final","evidence":{"paths":["src"]},"payload":{}}',
+				),
 			);
 			return;
 		}
@@ -145,6 +148,9 @@ function request(cwd: string): SubagentRequest {
 		task: "Inspect the scoped repository.",
 		scope: { roots: ["src"] },
 		cwd,
+		// These tests exercise the structured steered-finalization protocol, which
+		// only typed flows (outputSchema/acceptance criteria) still use.
+		outputSchema: { type: "object", additionalProperties: false },
 	};
 }
 
@@ -387,6 +393,7 @@ describe("ICE agent-view integration", () => {
 				userMessage("Visible child note"),
 				toolCall,
 				toolResult,
+				userMessage("[ICE VOID SUBAGENT WRAP UP] Finish from the current child state."),
 				userMessage("Your interactive work is complete. Return the report."),
 				assistantMessage('{"summary":"verified final","evidence":{"paths":["src"]}}'),
 			],
@@ -395,8 +402,10 @@ describe("ICE agent-view integration", () => {
 				scopeLabels: ["src"],
 				authority: "safe",
 				handoffMessageIndex: 0,
-				finalizationMessageIndex: 5,
-				finalReportMessageIndex: 6,
+				wrapUpMessageMarker: "[ICE VOID SUBAGENT WRAP UP]",
+				wrapUpMessageIndex: 5,
+				finalizationMessageIndex: 6,
+				finalReportMessageIndex: 7,
 				protocolReportPending: false,
 				finalResult: { status: "completed", verified: true, summary: "Verified final", evidencePaths: ["src"] },
 			},
@@ -443,6 +452,10 @@ describe("ICE agent-view integration", () => {
 		expect(rendered).not.toEqual(
 			expect.arrayContaining([
 				expect.objectContaining({ role: "user", content: expect.stringContaining("[ICE VOID SUBAGENT HANDOFF]") }),
+				expect.objectContaining({
+					role: "user",
+					content: expect.stringContaining("[ICE VOID SUBAGENT WRAP UP]"),
+				}),
 				expect.objectContaining({
 					role: "user",
 					content: expect.stringContaining("Your interactive work is complete."),
@@ -714,6 +727,19 @@ describe("ICE agent-view integration", () => {
 		}
 	});
 
+	it("drops invalid live profile colors at the registry boundary", () => {
+		const registry = new SubagentLiveSessionRegistry();
+		const release = registry.register({
+			runId: "run-invalid-color",
+			role: "scout",
+			session: passiveSession("child-invalid-color", "/repo"),
+			color: "not-a-theme-token" as unknown as IceAgentViewColor,
+		});
+
+		expect(registry.get("run-invalid-color")).not.toHaveProperty("color");
+		release();
+	});
+
 	it("keeps parent identity stable while cycling live and historical views and preserving UI state", () => {
 		const bridge = new IceAgentViewBridge();
 		const parent = passiveSession("parent", "/repo");
@@ -724,9 +750,11 @@ describe("ICE agent-view integration", () => {
 		const registry = new SubagentLiveSessionRegistry();
 		bridge.setParentSession(parent);
 		bridge.connectLiveSessions(registry);
-		const releaseA = registry.register({ runId: "run-a", role: "scout", session: childA });
-		const releaseB = registry.register({ runId: "run-b", role: "coder", session: childB });
+		const releaseA = registry.register({ runId: "run-a", role: "scout", session: childA, color: "success" });
+		const releaseB = registry.register({ runId: "run-b", role: "coder", session: childB, color: "warning" });
 
+		expect(bridge.getView("run-a")).toMatchObject({ color: "success" });
+		expect(bridge.getView("run-b")).toMatchObject({ color: "warning" });
 		bridge.setUiState("parent", { editorDraft: "parent draft", followTranscript: false, scrollOffset: 4 });
 		bridge.setUiState("run-a", { editorDraft: "child A draft", followTranscript: true, scrollOffset: 8 });
 		bridge.setUiState("run-b", { editorDraft: "child B draft", followTranscript: false, scrollOffset: 12 });
@@ -750,12 +778,13 @@ describe("ICE agent-view integration", () => {
 			runId: "run-a",
 			role: "scout",
 			status: "completed",
+			color: "success",
 			finishedAt: Date.now(),
 			messages: childA.messages,
 		});
 		releaseA();
 		releaseB();
-		expect(bridge.getView("run-a")?.kind).toBe("historical-subagent");
+		expect(bridge.getView("run-a")).toMatchObject({ kind: "historical-subagent", color: "success" });
 		expect(bridge.getView("run-a")?.session).toBeUndefined();
 		expect(bridge.requestDisplay("run-a")).toBe(true);
 		expect(bridge.getView("parent")?.session).toBe(parent);
@@ -848,7 +877,12 @@ describe("ICE agent-view integration", () => {
 		expect(bridge.getDisplayedView()?.session).toBeUndefined();
 		expect(bridge.getView("parent")?.session).toBe(parent);
 		expect(parent.messages).toEqual([]);
-		expect(child.dispose).toHaveBeenCalledOnce();
+		// Completed children are retained for reuse, so the session stays alive after
+		// the terminal historical snapshot replaces the live view.
+		expect(child.dispose).not.toHaveBeenCalled();
+		expect(runner.listRetainedChildren(normalized.parentSessionId).map((entry) => entry.runId)).toEqual([
+			normalized.runId,
+		]);
 	});
 
 	it("records verification failure in historical presentation before showing a terminal result", async () => {
@@ -862,7 +896,7 @@ describe("ICE agent-view integration", () => {
 			releaseInitialTurn = resolve;
 		});
 		const child = new InteractiveChildSession(cwd, initialTurn, startInitialTurn, {
-			text: '{"summary":"bad evidence","evidence":{"paths":["missing"]}}',
+			text: '{"summary":"bad evidence","evidence":{"paths":["missing"]},"payload":{}}',
 		});
 		const registry = new SubagentLiveSessionRegistry();
 		const bridge = new IceAgentViewBridge();
@@ -903,6 +937,49 @@ describe("ICE agent-view integration", () => {
 		expect(bridge.getView(normalized.runId)?.presentation?.finalResult?.diagnostic).toContain(
 			"Evidence path does not exist",
 		);
+	});
+
+	it("renders the plain final answer in the terminal result card", () => {
+		initTheme("dark");
+		const chatContainer = { addChild: vi.fn() };
+		const mode = Object.create(InteractiveMode.prototype) as InteractiveMode & Record<string, unknown>;
+		Object.assign(mode, {
+			chatContainer,
+			getMarkdownThemeWithSettings: () => getMarkdownTheme(),
+		});
+		const internal = mode as unknown as {
+			addSubagentFinalResult: (view: NonNullable<ReturnType<IceAgentViewBridge["getView"]>>) => void;
+		};
+
+		internal.addSubagentFinalResult({
+			kind: "historical-subagent",
+			id: "run-plain",
+			label: "plain",
+			live: false,
+			readOnly: true,
+			presentation: {
+				reportMode: "plain_final_turn",
+				finalResult: {
+					status: "completed",
+					verified: true,
+					summary: "The answer is **rendered for the user**, not hidden in the transcript.",
+				},
+			},
+		});
+
+		expect(chatContainer.addChild).toHaveBeenCalledTimes(4);
+		const finalAnswer = chatContainer.addChild.mock.calls[1]?.[0] as Markdown | undefined;
+		expect(finalAnswer).toBeInstanceOf(Markdown);
+		if (!finalAnswer) throw new Error("Expected the rendered plain final answer");
+		const renderedAnswer = finalAnswer.render(200).join("\n");
+		expect(renderedAnswer).toContain("rendered for the user");
+
+		const finalCard = chatContainer.addChild.mock.calls[3]?.[0] as Text | undefined;
+		expect(finalCard).toBeInstanceOf(Text);
+		if (!finalCard) throw new Error("Expected the terminal result card");
+		const renderedCard = finalCard.render(200).join("\n");
+		expect(renderedCard).toContain("Completed");
+		expect(renderedCard).not.toContain("Completed · plain final answer");
 	});
 
 	it("keeps a taken-over child alive after its initial turn for idle follow-ups, then finalizes on release", async () => {
@@ -1164,6 +1241,46 @@ describe("ICE agent-view integration", () => {
 		expect(result.diagnostics.map((diagnostic) => diagnostic.message).join("\n")).toMatch(
 			/finalization provider failed/,
 		);
+	});
+
+	it("times out deterministically while the explicit finalization turn is pending", async () => {
+		const { cwd, agentDir } = await createWorkspace();
+		let startInitialTurn!: () => void;
+		const initialTurnStarted = new Promise<void>((resolve) => {
+			startInitialTurn = resolve;
+		});
+		let releaseInitialTurn!: () => void;
+		const initialTurn = new Promise<void>((resolve) => {
+			releaseInitialTurn = resolve;
+		});
+		const neverFinalizes = new Promise<void>(() => {});
+		const child = new InteractiveChildSession(cwd, initialTurn, startInitialTurn, { wait: neverFinalizes });
+		const registry = new SubagentLiveSessionRegistry();
+		const bridge = new IceAgentViewBridge();
+		bridge.setParentSession(passiveSession("parent", cwd));
+		bridge.connectLiveSessions(registry);
+		const normalized = normalizeSubagentRequest({ ...request(cwd), timeoutMs: 100 }, cwd, { agentDir });
+		const runner = new NativeSubagentRunner({
+			agentDir,
+			liveSessionRegistry: registry,
+			agentViewBridge: bridge,
+			createSession: async () => ({ session: child }) as unknown as CreateAgentSessionResult,
+		});
+		const runPromise = runner.runResolved(normalized, ["delegate", "read", "grep", "find", "ls"], {
+			model: { provider: "faux", id: "faux" } as Model<Api>,
+		});
+		await initialTurnStarted;
+		bridge.requestDisplay(normalized.runId);
+		bridge.requestTakeControl();
+		await bridge.sendInput(normalized.runId, "steer child");
+		releaseInitialTurn();
+		bridge.requestTakeControl();
+		await vi.waitFor(() => expect(child.promptCalls).toHaveLength(3));
+		expect(bridge.getView(normalized.runId)?.controlState).toBe("final-report-requested");
+		const result = await runPromise;
+		expect(result).toMatchObject({ status: "timed_out", diagnostics: [{ code: "timeout" }] });
+		expect(child.abort).toHaveBeenCalled();
+		expect(bridge.getView(normalized.runId)).toMatchObject({ kind: "historical-subagent", status: "timed_out" });
 	});
 
 	it("cancels deterministically while the explicit finalization turn is pending", async () => {

@@ -1,5 +1,6 @@
 import { relative, resolve, sep } from "node:path";
 import { stripTerminalSequences } from "@zykairotis/ice-tui";
+import { isSubagentProfileColor, type SubagentProfileColor } from "./ice-agent-view-bridge.ts";
 import type {
 	SubagentJobInspection,
 	SubagentJobResultEnvelope,
@@ -7,13 +8,8 @@ import type {
 	TerminalSubagentJobStatus,
 } from "./ice-subagent-jobs.ts";
 import { JOB_COMPLETION_MESSAGE_TYPE } from "./ice-subagent-jobs.ts";
-import type {
-	SubagentBatchTaskLifecycleEvent,
-	SubagentEvent,
-	SubagentStatus,
-	SubagentTokenBudgetSummary,
-	SubagentUsage,
-} from "./ice-subagents.ts";
+import type { SubagentRetryState } from "./ice-subagent-timeout-supervisor.ts";
+import type { SubagentBatchTaskLifecycleEvent, SubagentEvent, SubagentStatus, SubagentUsage } from "./ice-subagents.ts";
 import { redactCredentialText } from "./utils/redact.ts";
 
 export const OBSERVATORY_RECENT_LIMIT = 32;
@@ -61,6 +57,9 @@ export type ObservatoryPhase =
 	| "created"
 	| "queued"
 	| "starting"
+	| "compacting"
+	| "retrying"
+	| "wrapping_up"
 	| "needs_time"
 	| "completed"
 	| "failed"
@@ -99,6 +98,7 @@ export interface SubagentProgressSnapshot {
 	readonly taskId?: string;
 	readonly batchIndex?: number;
 	readonly role?: string;
+	readonly color?: SubagentProfileColor;
 	readonly model?: string;
 	readonly status: string;
 	readonly phase: ObservatoryPhase;
@@ -109,8 +109,8 @@ export interface SubagentProgressSnapshot {
 	readonly currentPath?: string;
 	readonly attempt?: 1 | 2;
 	readonly attemptHistory: readonly ObservatoryAttemptHistory[];
+	readonly retry?: SubagentRetryState;
 	readonly usage?: SubagentUsage;
-	readonly budget?: SubagentTokenBudgetSummary;
 	readonly batchCounts?: ObservatoryBatchCounts;
 	readonly evidenceCount?: number;
 	readonly changedFileCount?: number;
@@ -139,7 +139,7 @@ export interface ObservatoryRuntimeInput {
 	readonly attempt?: 1 | 2;
 	readonly currentPath?: string;
 	readonly usage?: SubagentUsage;
-	readonly budget?: SubagentTokenBudgetSummary;
+	readonly retry?: SubagentRetryState;
 }
 
 export interface ObservatoryWorkflowInput {
@@ -150,6 +150,7 @@ export interface ObservatoryWorkflowInput {
 	readonly taskId?: string;
 	readonly batchIndex?: number;
 	readonly role?: string;
+	readonly color?: SubagentProfileColor;
 	readonly model?: string;
 	readonly phase: ObservatoryPhase;
 	readonly status: string;
@@ -159,7 +160,7 @@ export interface ObservatoryWorkflowInput {
 	readonly currentPath?: string;
 	readonly attempt?: 1 | 2;
 	readonly usage?: SubagentUsage;
-	readonly budget?: SubagentTokenBudgetSummary;
+	readonly retry?: SubagentRetryState;
 	readonly batchCounts?: ObservatoryBatchCounts;
 	readonly evidenceCount?: number;
 	readonly changedFileCount?: number;
@@ -194,11 +195,10 @@ export interface DurableSubagentJobViewSnapshot {
 	readonly reservedOutputBytes: number;
 	readonly ownerReservedOutputBytes: number;
 	readonly ownerBudgetBytes: number;
-	readonly maxTotalTokens?: number;
-	readonly chargedTokens?: number;
-	readonly remainingTokens?: number;
-	readonly overshootTokens?: number;
-	readonly accounting?: "provider" | "estimated" | "mixed";
+	/** Durable-job admission snapshot; batch queue counts remain in batchCounts. */
+	readonly ownerActiveJobs?: number;
+	readonly ownerQueuedJobs?: number;
+	readonly ownerActiveJobsCap?: number;
 	readonly createdAt: string;
 	readonly startedAt?: string;
 	readonly finishedAt?: string;
@@ -241,17 +241,19 @@ export interface DurableSubagentJobResultView {
 	readonly model?: string;
 	readonly resultRef: string;
 	readonly summary?: string;
+	readonly reportMode?: "plain_final_turn" | "structured_report";
 	readonly verification?: {
 		readonly verified: boolean;
 		readonly reason?: string;
+		readonly kind?: "structured" | "plain_bounds";
+		readonly structuredVerified?: boolean;
 	};
 	readonly evidence: readonly string[];
-	readonly budget?: SubagentTokenBudgetSummary;
 	readonly findings: readonly DurableSubagentJobFindingView[];
 	readonly diagnostics: readonly string[];
 	/** Runtime-owned bounded work projection preserved across report-protocol failures. */
 	readonly workArtifact?: {
-		readonly reportProtocolStatus: "valid" | "malformed" | "missing" | "truncated";
+		readonly reportProtocolStatus: "valid" | "malformed" | "missing" | "truncated" | "plain";
 		readonly reportProtocolDiagnostic?: string;
 		readonly touchedPaths: readonly string[];
 		readonly candidateEvidencePaths: readonly string[];
@@ -267,39 +269,6 @@ function boundedByteCount(value: number | undefined): number {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
-function boundedTokenBudget(budget: SubagentTokenBudgetSummary | undefined): SubagentTokenBudgetSummary | undefined {
-	if (!budget) return undefined;
-	const integerValues = [
-		budget.maxTotalTokens,
-		budget.workPhaseLimit,
-		budget.reportReserveTokens,
-		budget.chargedTokens,
-		budget.remainingTokens,
-		budget.inputTokens,
-		budget.outputTokens,
-		budget.cacheReadTokens,
-		budget.cacheWriteTokens,
-		budget.overshootTokens,
-	];
-	if (integerValues.some((value) => typeof value !== "number" || !Number.isSafeInteger(value) || value < 0))
-		return undefined;
-	const expectedReserve = Math.min(4_096, Math.max(1_024, Math.floor(budget.maxTotalTokens * 0.1)));
-	if (
-		budget.maxTotalTokens < 1_024 ||
-		budget.maxTotalTokens > 1_000_000 ||
-		budget.workPhaseLimit !== budget.maxTotalTokens - expectedReserve ||
-		budget.reportReserveTokens !== expectedReserve ||
-		budget.chargedTokens !== budget.inputTokens + budget.outputTokens + budget.cacheWriteTokens ||
-		budget.remainingTokens !== Math.max(0, budget.maxTotalTokens - budget.chargedTokens) ||
-		budget.overshootTokens !== Math.max(0, budget.chargedTokens - budget.maxTotalTokens) ||
-		(budget.accounting !== "provider" && budget.accounting !== "estimated" && budget.accounting !== "mixed") ||
-		typeof budget.exhausted !== "boolean" ||
-		(budget.hardCap !== "enforced" && budget.hardCap !== "aggregate-soft")
-	)
-		return undefined;
-	return Object.freeze({ ...budget });
-}
-
 function boundedSingleLine(value: string | undefined, maxBytes: number): string | undefined {
 	return boundedText(value, maxBytes)?.replace(/[\r\n\t]+/g, " ");
 }
@@ -307,7 +276,6 @@ function boundedSingleLine(value: string | undefined, maxBytes: number): string 
 export function projectDurableSubagentJob(inspection: SubagentJobInspection): DurableSubagentJobViewSnapshot {
 	const job = inspection.job;
 	const budget = inspection.budget;
-	const terminalBudget = boundedTokenBudget(inspection.result?.budget);
 	const jobId = boundedText(job.jobId, 128) ?? "unknown";
 	const model = job.model ? boundedSingleLine(job.model, OBSERVATORY_PATH_MAX_BYTES) : undefined;
 	const startedAt = job.startedAt ? boundedSingleLine(job.startedAt, OBSERVATORY_PATH_MAX_BYTES) : undefined;
@@ -325,11 +293,9 @@ export function projectDurableSubagentJob(inspection: SubagentJobInspection): Du
 		reservedOutputBytes: boundedByteCount(budget?.reservedOutputBytes ?? job.reservedOutputBytes),
 		ownerReservedOutputBytes: boundedByteCount(budget?.ownerReservedOutputBytes),
 		ownerBudgetBytes: boundedByteCount(budget?.ownerBudgetBytes),
-		...(budget?.resolvedMaxTotalTokens !== undefined ? { maxTotalTokens: budget.resolvedMaxTotalTokens } : {}),
-		...(budget?.chargedTokens !== undefined ? { chargedTokens: budget.chargedTokens } : {}),
-		...(budget?.remainingTokens !== undefined ? { remainingTokens: budget.remainingTokens } : {}),
-		...(terminalBudget?.overshootTokens !== undefined ? { overshootTokens: terminalBudget.overshootTokens } : {}),
-		...(terminalBudget?.accounting ? { accounting: terminalBudget.accounting } : {}),
+		...(budget?.ownerActiveJobs !== undefined ? { ownerActiveJobs: budget.ownerActiveJobs } : {}),
+		...(budget?.ownerQueuedJobs !== undefined ? { ownerQueuedJobs: budget.ownerQueuedJobs } : {}),
+		...(budget?.ownerActiveJobsCap !== undefined ? { ownerActiveJobsCap: budget.ownerActiveJobsCap } : {}),
 		createdAt: boundedSingleLine(job.createdAt, OBSERVATORY_PATH_MAX_BYTES) ?? "",
 		...(startedAt ? { startedAt } : {}),
 		...(finishedAt ? { finishedAt } : {}),
@@ -475,6 +441,10 @@ export function projectDurableSubagentJobResult(
 				...(sanitizeDetailText(result.verification.reason, OBSERVATORY_SUMMARY_MAX_BYTES)
 					? { reason: sanitizeDetailText(result.verification.reason, OBSERVATORY_SUMMARY_MAX_BYTES) }
 					: {}),
+				...(result.verification.kind !== undefined ? { kind: result.verification.kind } : {}),
+				...(result.verification.structuredVerified !== undefined
+					? { structuredVerified: result.verification.structuredVerified }
+					: {}),
 			})
 		: undefined;
 	const diagnostics = Object.freeze(
@@ -514,7 +484,6 @@ export function projectDurableSubagentJobResult(
 				),
 			})
 		: undefined;
-	const tokenBudget = boundedTokenBudget(result?.budget);
 	const tombstone = inspection.tombstone
 		? Object.freeze({
 				terminalStatus: inspection.tombstone.terminalStatus,
@@ -532,9 +501,9 @@ export function projectDurableSubagentJobResult(
 		...(metadata.model ? { model: sanitizeDetailText(metadata.model, OBSERVATORY_PATH_MAX_BYTES) ?? "unknown" } : {}),
 		resultRef: sanitizeDetailText(metadata.resultRef, OBSERVATORY_PATH_MAX_BYTES) ?? `job:${jobId}`,
 		...(summary ? { summary } : {}),
+		...(result?.reportMode !== undefined ? { reportMode: result.reportMode } : {}),
 		...(verification ? { verification } : {}),
 		evidence,
-		...(tokenBudget ? { budget: tokenBudget } : {}),
 		findings,
 		diagnostics,
 		...(workArtifact ? { workArtifact } : {}),
@@ -548,11 +517,6 @@ export function formatDurableSubagentJobDetail(detail: DurableSubagentJobResultV
 		`status: ${detail.status}${detail.tombstone ? " (expired from full retention)" : ""}`,
 		`role: ${detail.role}`,
 		...(detail.model ? [`model: ${detail.model}`] : []),
-		...(detail.budget
-			? [
-					`tokens: ${detail.budget.chargedTokens}/${detail.budget.maxTotalTokens}${detail.budget.accounting === "provider" ? "" : " ~"} charged; ${detail.budget.remainingTokens} remaining`,
-				]
-			: []),
 		`result ref: ${detail.resultRef}`,
 		...(detail.tombstone ? [`retention expired: ${detail.tombstone.expiredAt}`] : []),
 		"",
@@ -563,14 +527,22 @@ export function formatDurableSubagentJobDetail(detail: DurableSubagentJobResultV
 		hasDetails = true;
 	}
 	if (detail.verification) {
-		rows.push("Verification", detail.verification.verified ? "VERIFIED" : "VERIFICATION FAILED");
+		rows.push(
+			"Verification",
+			!detail.verification.verified
+				? "VERIFICATION FAILED"
+				: detail.verification.kind === "plain_bounds"
+					? "ACCEPTED (plain bounds; no structured verification)"
+					: "VERIFIED",
+		);
 		if (detail.verification.reason) rows.push(detail.verification.reason);
 		rows.push("");
 		hasDetails = true;
 	}
 	if (detail.workArtifact) {
+		const plainTurn = detail.workArtifact.reportProtocolStatus === "plain";
 		rows.push(
-			"Preserved work artifact (runtime-owned, unverified)",
+			plainTurn ? "Work artifact (runtime-owned)" : "Preserved work artifact (runtime-owned, unverified)",
 			`report protocol: ${detail.workArtifact.reportProtocolStatus}${
 				detail.workArtifact.reportProtocolDiagnostic ? ` — ${detail.workArtifact.reportProtocolDiagnostic}` : ""
 			}`,
@@ -656,12 +628,14 @@ function formatDurableJobSnapshot(snapshot: DurableSubagentJobViewSnapshot): str
 	return [
 		`${snapshot.status}${snapshot.model ? ` · model ${snapshot.model}` : ""}`,
 		...(snapshot.queuePosition !== undefined ? [`queue position ${snapshot.queuePosition}`] : []),
-		`reservation ${snapshot.reservedOutputBytes}/${snapshot.ownerBudgetBytes} bytes`,
-		...(snapshot.maxTotalTokens !== undefined
+		...(snapshot.ownerActiveJobs !== undefined &&
+		snapshot.ownerQueuedJobs !== undefined &&
+		snapshot.ownerActiveJobsCap !== undefined
 			? [
-					`token reservation ${snapshot.chargedTokens ?? 0}/${snapshot.maxTotalTokens}${snapshot.accounting === "provider" ? "" : " ~"}`,
+					`admission active ${snapshot.ownerActiveJobs}, queued ${snapshot.ownerQueuedJobs}, cap ${snapshot.ownerActiveJobsCap}`,
 				]
 			: []),
+		`reservation ${snapshot.reservedOutputBytes}/${snapshot.ownerBudgetBytes} bytes`,
 		`created ${snapshot.createdAt}`,
 		...(snapshot.startedAt ? [`started ${snapshot.startedAt}`] : []),
 		...(snapshot.finishedAt ? [`finished ${snapshot.finishedAt}`] : []),
@@ -723,7 +697,7 @@ export function normalizeProgressPath(cwd: string | undefined, value: string | u
 	return boundedText(displayPath, OBSERVATORY_PATH_MAX_BYTES);
 }
 
-function phaseForRuntimeEvent(event: SubagentEvent): ObservatoryPhase {
+function phaseForRuntimeEvent(event: SubagentEvent, previous: SubagentProgressSnapshot | undefined): ObservatoryPhase {
 	switch (event.type) {
 		case "subagent_created":
 			return "created";
@@ -733,8 +707,18 @@ function phaseForRuntimeEvent(event: SubagentEvent): ObservatoryPhase {
 		case "subagent_tool_end":
 		case "subagent_progress":
 			return "tool_activity";
-		case "subagent_token_budget":
-			return "running";
+		case "subagent_compaction_start":
+			return "compacting";
+		case "subagent_compaction_end": {
+			const previousActivity = [...(previous?.activity ?? [])]
+				.reverse()
+				.find((activity) => activity.phase !== "compacting");
+			return previousActivity?.phase ?? "running";
+		}
+		case "subagent_retry":
+			return "retrying";
+		case "subagent_wrap_up":
+			return "wrapping_up";
 		case "subagent_needs_time":
 			return "needs_time";
 		case "subagent_completed":
@@ -765,15 +749,16 @@ function createSnapshot(input: {
 	taskId?: string;
 	batchIndex?: number;
 	role?: string;
+	color?: SubagentProfileColor;
 	model?: string;
 	attempt?: 1 | 2;
 	currentTool?: string;
 	currentPath?: string;
 	usage?: SubagentUsage;
-	budget?: SubagentTokenBudgetSummary;
 	batchCounts?: ObservatoryBatchCounts;
 	attemptHistory?: readonly ObservatoryAttemptHistory[];
 	activity?: readonly ObservatoryActivity[];
+	retry?: SubagentRetryState;
 	evidenceCount?: number;
 	changedFileCount?: number;
 	artifactReady?: boolean;
@@ -792,6 +777,7 @@ function createSnapshot(input: {
 		...(input.taskId ? { taskId: input.taskId } : {}),
 		...(input.batchIndex !== undefined ? { batchIndex: input.batchIndex } : {}),
 		...(input.role ? { role: boundedText(input.role, OBSERVATORY_PATH_MAX_BYTES) } : {}),
+		...(isSubagentProfileColor(input.color) ? { color: input.color } : {}),
 		...(input.model ? { model: boundedText(input.model, OBSERVATORY_PATH_MAX_BYTES) } : {}),
 		status: input.status,
 		phase: input.phase,
@@ -802,8 +788,8 @@ function createSnapshot(input: {
 		...(input.currentPath ? { currentPath: input.currentPath } : {}),
 		...(input.attempt ? { attempt: input.attempt } : {}),
 		attemptHistory: Object.freeze((input.attemptHistory ?? []).slice(-OBSERVATORY_ATTEMPT_LIMIT)),
+		...(input.retry ? { retry: Object.freeze({ ...input.retry }) } : {}),
 		...(input.usage ? { usage: input.usage } : {}),
-		...(boundedTokenBudget(input.budget) ? { budget: boundedTokenBudget(input.budget) } : {}),
 		...(input.batchCounts ? { batchCounts: Object.freeze({ ...input.batchCounts }) } : {}),
 		...(input.evidenceCount !== undefined ? { evidenceCount: input.evidenceCount } : {}),
 		...(input.changedFileCount !== undefined ? { changedFileCount: input.changedFileCount } : {}),
@@ -1023,9 +1009,6 @@ export function reduceObservatoryEvent(state: ObservatoryState, input: Observato
 	const now = nowMs(input.nowMs);
 	const existing = findExisting(state, input.streamKey);
 	if (shouldIgnoreRuntimeEvent(existing, input)) return state;
-	// Token-budget lifecycle traces are bounded event-stream signals; the snapshot
-	// only changes at settlement, which arrives with the terminal event's budget.
-	if (input.event.type === "subagent_token_budget") return state;
 	const attempt = input.attempt ?? existing?.attempt ?? 1;
 	const attemptHistory =
 		existing && attempt > (existing.attempt ?? 1) && existing.runId
@@ -1034,7 +1017,7 @@ export function reduceObservatoryEvent(state: ObservatoryState, input: Observato
 					{ attempt: existing.attempt ?? 1, runId: existing.runId, status: existing.status as SubagentStatus },
 				]
 			: (existing?.attemptHistory ?? []);
-	const phase = phaseForRuntimeEvent(input.event);
+	const phase = phaseForRuntimeEvent(input.event, existing);
 	const currentPath = normalizeProgressPath(input.cwd, input.currentPath ?? input.event.path);
 	const startedAt = existing?.startedAtMs ?? now;
 	const snapshot = createSnapshot({
@@ -1050,12 +1033,13 @@ export function reduceObservatoryEvent(state: ObservatoryState, input: Observato
 		taskId: input.taskId ?? input.event.taskId ?? existing?.taskId,
 		batchIndex: existing?.batchIndex,
 		role: input.event.profile,
+		color: isSubagentProfileColor(input.event.color) ? input.event.color : existing?.color,
 		model: input.model ?? existing?.model,
 		attempt,
 		currentTool: input.event.toolName ?? existing?.currentTool,
 		currentPath: currentPath ?? existing?.currentPath,
 		usage: input.usage ?? existing?.usage,
-		budget: boundedTokenBudget(input.budget) ?? existing?.budget,
+		retry: input.event.retry ?? existing?.retry,
 		attemptHistory,
 		activity: activityFor(existing, phase, input.event.toolName, currentPath),
 	});
@@ -1100,12 +1084,13 @@ export function reduceWorkflowProgress(state: ObservatoryState, input: Observato
 		taskId: input.taskId ?? existing?.taskId,
 		batchIndex: input.batchIndex ?? existing?.batchIndex,
 		role: input.role ?? existing?.role,
+		color: isSubagentProfileColor(input.color) ? input.color : existing?.color,
 		model: input.model ?? existing?.model,
 		attempt,
 		currentTool: input.currentTool ?? existing?.currentTool,
 		currentPath: currentPath ?? existing?.currentPath,
 		usage: input.usage ?? existing?.usage,
-		budget: boundedTokenBudget(input.budget) ?? existing?.budget,
+		retry: input.retry ?? existing?.retry,
 		batchCounts: input.batchCounts ?? existing?.batchCounts,
 		attemptHistory,
 		activity: activityFor(existing, input.phase, existing?.currentTool, currentPath),
@@ -1223,11 +1208,6 @@ export function formatProgressSnapshot(snapshot: SubagentProgressSnapshot): stri
 		...(snapshot.usage
 			? [
 					`usage in ${snapshot.usage.inputTokens} · out ${snapshot.usage.outputTokens} · cost ${snapshot.usage.cost.toFixed(4)}`,
-				]
-			: []),
-		...(snapshot.budget
-			? [
-					`tokens ${snapshot.budget.chargedTokens}/${snapshot.budget.maxTotalTokens}${snapshot.budget.accounting === "provider" ? "" : " ~"} · cache-read ${snapshot.budget.cacheReadTokens}`,
 				]
 			: []),
 		...(snapshot.batchCounts ? [`batch ${formatBatchCounts(snapshot.batchCounts)}`] : []),

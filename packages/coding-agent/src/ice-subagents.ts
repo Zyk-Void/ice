@@ -2,10 +2,15 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
 	chmodSync,
+	closeSync,
+	constants,
 	existsSync,
+	fchmodSync,
+	fstatSync,
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
+	openSync,
 	readdirSync,
 	readFileSync,
 	realpathSync,
@@ -60,7 +65,7 @@ import type { ModelRuntime } from "./core/model-runtime.ts";
 import { DefaultResourceLoader } from "./core/resource-loader.ts";
 import { type CreateAgentSessionOptions, type CreateAgentSessionResult, createAgentSession } from "./core/sdk.ts";
 import { type ReadonlySessionManager, SessionManager, sessionEntryToContextMessages } from "./core/session-manager.ts";
-import { type IceSettingsValue, SettingsManager } from "./core/settings-manager.ts";
+import { type IceSettingsValue, type RetrySettings, SettingsManager } from "./core/settings-manager.ts";
 import type { Skill } from "./core/skills.ts";
 import {
 	createBashToolDefinition,
@@ -74,11 +79,15 @@ import {
 import { resolveToCwd } from "./core/tools/path-utils.ts";
 import {
 	type IceAgentViewBridge,
+	type IceAgentViewColor,
 	type IceAgentViewControlState,
 	type IceAgentViewLiveSessionControl,
 	type IceAgentViewPresentation,
 	type IceAgentViewPresentationPatch,
+	isIceAgentViewColor,
+	isSubagentProfileColor,
 	normalizeIceAgentViewPresentation,
+	type SubagentProfileColor,
 } from "./ice-agent-view-bridge.ts";
 import {
 	getConfiguredIceVerifierArgv,
@@ -95,14 +104,22 @@ import {
 	getIceDelegableTools,
 	type IceResolvedDelegableTool,
 	isIceChildToolName,
+	isIceDelegableAdapterId,
 	isIceParentManagementTool,
 	normalizeIceToolSchema,
 	resolveIceDelegableTools,
 } from "./ice-subagent-capabilities.ts";
 import { createIceCommandHookHandler } from "./ice-subagent-command-hooks.ts";
 import {
+	type ResolvedSubagentConcurrencyPolicy,
+	resolveSubagentConcurrencyPolicy,
+	SUBAGENT_CONCURRENCY_LIMITS,
+	SubagentConcurrencyAdmission,
+} from "./ice-subagent-concurrency.ts";
+import {
 	JOB_COMPLETION_MESSAGE_TYPE,
 	JOB_ENTRY_TYPE,
+	SUBAGENT_JOB_QUEUE_LIMIT,
 	type SubagentJobAccepted,
 	SubagentJobError,
 	type SubagentJobInspection,
@@ -147,6 +164,7 @@ import {
 import {
 	getIceSubagentHookHandlers,
 	ICE_HOOK_JOURNAL_ENTRY_TYPE,
+	ICE_SUBAGENT_SETTINGS_LIMITS,
 	type IceContractCallInput,
 	type IceHookContextAddition,
 	type IceHookDispatcherOptions,
@@ -169,18 +187,16 @@ import {
 } from "./ice-subagent-telemetry.ts";
 import {
 	formatSubagentToolActivity,
+	projectSubagentManagementState,
+	projectSubagentTerminalStatus,
+	type SubagentManagementChildState,
+	type SubagentRetryState,
 	SubagentRunSupervisor,
 	SubagentRunSupervisorRegistry,
 	type SubagentRuntimeAttention,
 	type SubagentSupervisorStopReason,
 	type SubagentToolActivityDigest,
 } from "./ice-subagent-timeout-supervisor.ts";
-import {
-	estimateSubagentRequestTokens,
-	normalizeTokenUsage,
-	SessionUsageReconciler,
-	TokenBudgetLedger,
-} from "./ice-subagent-token-budget.ts";
 import { AssistantMessageComponent } from "./modes/interactive/components/assistant-message.ts";
 import { ToolExecutionComponent } from "./modes/interactive/components/tool-execution.ts";
 import { UserMessageComponent } from "./modes/interactive/components/user-message.ts";
@@ -216,18 +232,6 @@ export function createDelegatedShellEnvironment(environment: NodeJS.ProcessEnv):
 }
 
 export const SUBAGENT_TOOL_NAMES = ["read", "grep", "find", "ls"] as const;
-const SUBAGENT_HARD_CAP_APIS = new Set([
-	"anthropic-messages",
-	"azure-openai-responses",
-	"bedrock-converse-stream",
-	"google-generative-ai",
-	"google-vertex",
-	"ice-messages",
-	"mistral-conversations",
-	"openai-codex-responses",
-	"openai-completions",
-	"openai-responses",
-]);
 export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];
 
 /** Every built-in capability a profile may request. Safe launches still clamp this to SUBAGENT_TOOL_NAMES. */
@@ -240,7 +244,46 @@ export const SUBAGENT_PROFILE_LIMITS = {
 	maxTimeoutMs: 10 * 60 * 1_000,
 	minOutputBytes: 1_024,
 	maxOutputBytes: 64 * 1_024,
+	minTemperature: 0,
+	maxTemperature: 2,
+	minTopP: 0,
+	maxTopP: 1,
 } as const;
+
+/** Conservative per-call ceiling for a management `wait`; expiry is never a child timeout. */
+export const SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS = 60_000;
+export const SUBAGENT_MANAGEMENT_WAIT_DEFAULT_MS = 30_000;
+/** Bounded number of settled detached-run terminal results retained for post-terminal management. */
+const SUBAGENT_RETAINED_RESULT_LIMIT = 32;
+/**
+ * Bounded retention window granted to a detached child. It is separate from the
+ * supervisor extension reserve, so detaching never spends the extension budget.
+ */
+export const SUBAGENT_DETACH_RETENTION_MS = 2 * 60 * 1_000;
+
+/**
+ * Bounded result of an observational management action. `waitExpired` is true
+ * only when the parent's management window elapsed before a child state change;
+ * it never implies the child timed out.
+ */
+export interface SubagentManagedObservation {
+	readonly runId: string;
+	readonly childState: SubagentManagementChildState;
+	readonly terminal: boolean;
+	readonly waitExpired: boolean;
+	readonly attention?: SubagentRuntimeAttention;
+	readonly result?: SubagentResult;
+}
+
+/**
+ * Launch-time admission handle for a retained managed child. It is delivered
+ * once, when supervision starts, so the parent can return control before the
+ * initial hard timeout while the same child session keeps running.
+ */
+export interface SubagentManagedHandle {
+	readonly runId: string;
+	readonly childSessionId?: string;
+}
 
 export interface UnsafeSubagentStartupArgOptions {
 	stdinIsTTY: boolean;
@@ -374,17 +417,13 @@ export type SubagentFailureCode =
 	| "preflight_failed"
 	| "verification_failure"
 	| "batch_budget_exhausted"
+	| "provider_option_unsupported"
 	| "writer_precondition"
 	| "writer_workspace_failure"
 	| "writer_patch_failure"
 	| "integration_conflict"
 	| "rollback_conflict"
-	| "unsafe_parent_workspace"
-	| "token_budget_exhausted"
-	| "token_usage_estimated"
-	| "token_usage_invalid"
-	| "token_finalization_unavailable"
-	| "batch_token_budget_exhausted";
+	| "unsafe_parent_workspace";
 
 export type SubagentProfileSource = "user" | "project" | "self";
 
@@ -456,11 +495,19 @@ export interface SubagentProfile {
 	thinkingLevel: SubagentThinkingLevel;
 	timeoutMs: number;
 	maxOutputBytes: number;
+	temperature?: number;
+	topP?: number;
+	/** Appearance-only semantic theme token; it never affects authority. */
+	color?: SubagentProfileColor;
+	/** Discovery-only flag; direct explicit role resolution remains allowed. */
+	hidden?: boolean;
 	resources?: SubagentResourceSelection;
 	unsafeHostExec?: boolean;
 	requestedModel?: string;
 	/** Effective fallback model from the file agent; parent model is the final candidate. */
 	fallbackModel?: string;
+	/** Explicit parent-owned adapter IDs requested by this profile; default none. */
+	adapterIds?: readonly string[];
 	/** Selected MCP tools (server/tool), validated at admission; default none. */
 	mcpTools?: readonly string[];
 	/** Self-delegation marker; file agents omit this. */
@@ -485,17 +532,18 @@ export interface SubagentProfileSummary {
 	tags?: readonly string[];
 	effectiveThinkingLevel?: SubagentThinkingLevel;
 	effectiveTimeoutMs?: number;
-	effectiveMaxTurns?: number;
-	effectiveMaxToolCalls?: number;
 	effectiveMaxOutputBytes?: number;
-	effectiveMaxTotalTokens?: number;
+	requestedTemperature?: number;
+	effectiveTemperature?: number;
+	requestedTopP?: number;
+	effectiveTopP?: number;
+	color?: SubagentProfileColor;
 	effectiveSettingSources?: Readonly<{
 		thinking: string;
 		timeoutMs: string;
-		maxTurns: string;
-		maxToolCalls: string;
 		maxOutputBytes: string;
-		maxTotalTokens: string;
+		temperature: string;
+		topP: string;
 	}>;
 	profileDiagnostics?: readonly string[];
 	unsafeHostExec: boolean;
@@ -506,6 +554,10 @@ export interface SubagentProfileSummary {
 	effectiveModel?: string;
 	modelCandidateSkips?: readonly IceModelCandidateSkip[];
 	effectiveMcpTools?: readonly string[];
+	/** Adapter IDs requested by the profile; they are not authority by themselves. */
+	requestedAdapters?: readonly string[];
+	/** Adapter IDs admitted from the current parent registration/policy snapshot. */
+	effectiveAdapters?: readonly string[];
 	/** Compatibility alias for older consumers. */
 	tools: readonly string[];
 	availability: SubagentProfileAvailability;
@@ -541,11 +593,9 @@ export interface ResolvedSubagentResources {
 
 export const SUBAGENT_BATCH_LIMITS = {
 	maxTasks: 8,
-	defaultConcurrency: 2,
-	maxConcurrency: 4,
+	defaultConcurrency: SUBAGENT_CONCURRENCY_LIMITS.bundledDefault,
+	maxConcurrency: SUBAGENT_CONCURRENCY_LIMITS.hardCap,
 	defaultBudgetBytes: 256 * 1024,
-	minTokenBudget: 1_024,
-	maxTokenBudget: 8_000_000,
 } as const;
 
 export const SUBAGENT_PROFILE_ALIASES: Readonly<Record<string, string>> = Object.freeze({});
@@ -571,7 +621,12 @@ const SUBAGENT_SCOPE_TARGET_HINT =
 const SUBAGENT_SCOPE_TOOL_GUIDANCE =
 	'scope.roots accepts existing directories only. For the current workspace, prefer scope.roots:["."] and use relative subdirectories when narrower scope is sufficient. To focus a file, use its parent directory in scope.roots and the file in scope.targets or task text. Do not reconstruct the absolute cwd when "." is sufficient.';
 const SUBAGENT_INTERNAL_REPORT_GUIDANCE =
-	"The runtime owns the internal bounded structured final-report protocol; describe the task normally and do not ask the child to format its work as JSON.";
+	"Typed child runs (output schema, acceptance criteria, review batches) use the runtime's internal bounded structured final-report protocol; describe the task normally and do not ask the child to format its work as JSON. Ordinary delegations answer in plain prose; the runtime ingests the child's natural final assistant turn directly.";
+
+const SUBAGENT_DELEGATION_POLICY_GUIDELINES: readonly string[] = [
+	"Do not delegate a simple single task: when the whole job is one straightforward piece of work you can do directly with your own tools, do it yourself instead of launching a subagent.",
+	"Delegate only when the work fans out to two or more children (delegate_batch or concurrent background delegate launches).",
+];
 
 export const SUBAGENT_CONTEXT_PACKET_LIMITS = {
 	maxItems: 16,
@@ -617,8 +672,26 @@ export const SUBAGENT_REPORT_LIMITS = {
 	maxEvidencePathBytes: 4096,
 } as const;
 
+/**
+ * How a child run's final answer is ingested. Plain runs ingest the natural
+ * final assistant turn directly; typed flows (output schema, acceptance
+ * criteria, review batches) keep the strict bounded JSON report protocol.
+ */
+export type SubagentReportMode = "plain_final_turn" | "structured_report";
+
+export const SUBAGENT_WRAP_UP_LIMITS = {
+	wallReserveRatio: 0.2,
+	minimumWallReserveMs: 1_000,
+	maximumWallReserveMs: 10_000,
+} as const;
+
+export const SUBAGENT_REPORT_ARTIFACT_LIMITS = {
+	maxBytes: 512 * 1024,
+	inlineSummaryBytes: 8 * 1024,
+} as const;
+
 /** Bounded final-report protocol states. A malformed report is never a verified completion. */
-export type SubagentReportProtocolStatus = "valid" | "malformed" | "missing" | "truncated";
+export type SubagentReportProtocolStatus = "valid" | "malformed" | "missing" | "truncated" | "plain";
 
 /** Child claim for one parent acceptance criterion inside the hidden final-report protocol. */
 export type SubagentRequirementClaimStatus = "satisfied" | "partial" | "blocked" | "failed" | "not_attempted";
@@ -628,6 +701,17 @@ export interface SubagentRequirementClaim {
 	status: SubagentRequirementClaimStatus;
 	note?: string;
 	evidencePaths?: string[];
+}
+
+export interface SubagentReportArtifact {
+	schemaVersion: 1;
+	id: string;
+	path: string;
+	bytes: number;
+	originalBytes: number;
+	sha256: string;
+	contentType: "text/plain" | "application/json";
+	truncated: boolean;
 }
 
 /**
@@ -750,8 +834,8 @@ export interface SubagentForkContextSource {
 /**
  * W12: shared optional per-call execution overrides. Every field is a request
  * that must be validated and enforced by the runtime; prompt text alone never
- * satisfies a budget or tool restriction. `model` stays deferred pending the
- * W19 routing decision; exact parent-model inheritance remains the default.
+ * satisfies an output bound or tool restriction. `model` stays deferred pending
+ * the W19 routing decision; exact parent-model inheritance remains the default.
  */
 export interface SubagentExecutionOverrideInput {
 	model?: string;
@@ -759,30 +843,26 @@ export interface SubagentExecutionOverrideInput {
 	hooks?: string[];
 	thinking?: SubagentThinkingLevel;
 	tools?: string[];
-	maxTurns?: number;
-	maxToolCalls?: number;
 	maxOutputBytes?: number;
-	maxTotalTokens?: number;
+	temperature?: number;
+	topP?: number;
 }
 
 export interface SubagentExecutionContract {
 	thinking: SubagentThinkingLevel;
 	tools: readonly string[] | undefined;
-	maxTurns: number;
-	maxToolCalls: number;
 	maxOutputBytes: number;
-	maxTotalTokens?: number;
+	temperature?: number;
+	topP?: number;
 }
 
 export const SUBAGENT_EXECUTION_LIMITS = {
-	minTurns: 1,
-	maxTurns: 64,
-	minToolCalls: 0,
-	maxToolCalls: 512,
 	minOutputBytes: 1_024,
 	maxOutputBytes: 64 * 1_024,
-	minTotalTokens: 1_024,
-	maxTotalTokens: 1_000_000,
+	minTemperature: 0,
+	maxTemperature: 2,
+	minTopP: 0,
+	maxTopP: 1,
 } as const;
 
 export interface SubagentRequest {
@@ -916,6 +996,8 @@ export interface NormalizedSubagentRequest
 	requestedModel?: string;
 	fallbackModel?: string;
 	selectedMcpTools?: readonly string[];
+	/** Profile-selected parent adapter IDs; never serialized as executable authority. */
+	selectedAdapterIds?: readonly string[];
 	mcpAuthorizations?: readonly IceSubagentMcpToolAuthorization[];
 	mcpAuthorityStillValid?: () => boolean;
 	/** In-process adapters are never serialized; durable jobs store fingerprints only. */
@@ -952,6 +1034,8 @@ export interface NormalizedSubagentRequest
 	acceptanceCriteria: readonly SubagentAcceptanceCriterion[];
 	preflight: readonly SubagentPreflightRequirement[];
 	outputSchema?: SubagentOutputSchemaNode;
+	/** Resolved at normalization; typed flows force the structured report protocol. */
+	reportMode: SubagentReportMode;
 }
 
 export interface SubagentBatchTask {
@@ -992,25 +1076,9 @@ export interface SubagentUsage {
 }
 
 export interface SubagentDiagnostic {
-	code: SubagentFailureCode | "output_truncated";
+	code: SubagentFailureCode | "output_truncated" | "report_spilled" | "report_artifact_failure";
 	message: string;
 	retryable?: boolean;
-}
-
-export interface SubagentTokenBudgetSummary {
-	maxTotalTokens: number;
-	workPhaseLimit: number;
-	reportReserveTokens: number;
-	chargedTokens: number;
-	remainingTokens: number;
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadTokens: number;
-	cacheWriteTokens: number;
-	overshootTokens: number;
-	accounting: "provider" | "estimated" | "mixed";
-	exhausted: boolean;
-	hardCap: "enforced" | "aggregate-soft";
 }
 
 export const REVIEW_DIMENSIONS = ["correctness", "security", "tests", "regressions"] as const;
@@ -1089,18 +1157,21 @@ export interface SubagentResult {
 	summary: string;
 	observedOutputBytes: number;
 	partial: boolean;
+	/** Stage 3 reuse provenance: the retained run this execution continues. */
+	resumedFromRunId?: string;
 	/** Present only for a retained, nonterminal timeout-attention result. */
 	attention?: SubagentRuntimeAttention;
 	truncated?: boolean;
 	diagnostics: SubagentDiagnostic[];
 	usage?: SubagentUsage;
-	budget?: SubagentTokenBudgetSummary;
 	recovery?: SubagentRecoveryMetadata;
 	evidence?: SubagentEvidence;
 	findings?: ReviewFinding[];
 	scopeTargets?: string[];
 	/** Runtime-owned bounded projection of observed work; survives report-protocol failures. */
 	workArtifact?: SubagentWorkArtifact;
+	/** Bounded local capture for oversized final or partial assistant output. */
+	reportArtifact?: SubagentReportArtifact;
 	/** Child claims for parent acceptance criteria; untrusted until parent-verified. */
 	requirementClaims?: readonly SubagentRequirementClaim[];
 	/** Parent-verified requirement states; present when acceptance criteria were declared. */
@@ -1111,6 +1182,8 @@ export interface SubagentResult {
 	observedTurns?: number;
 	/** Redacted bounded hook dispatch projection for parent inspection. */
 	hookRecords?: readonly IceHookDispatchRecord[];
+	/** How the final answer was ingested; plain mode performs no structured verification. */
+	reportMode?: SubagentReportMode;
 }
 
 export interface SubagentVerification {
@@ -1118,6 +1191,14 @@ export interface SubagentVerification {
 	reason: string;
 	paths: string[];
 	unresolvedClaims: string[];
+	/**
+	 * Explicit verification contract: "structured" means the strict JSON report
+	 * pipeline (schema/evidence/payload) ran; "plain_bounds" means only lineage,
+	 * status, and the output bound were checked. Absent in legacy producers.
+	 */
+	kind?: "structured" | "plain_bounds";
+	/** True only when structured-report verification succeeded; never implied by plain text. */
+	structuredVerified?: boolean;
 	/** Bounded per-criterion verification detail; present when acceptance criteria were declared. */
 	requirementSummary?: SubagentRequirementSummary;
 }
@@ -1134,7 +1215,7 @@ export interface SubagentRequirementSummary {
 export interface SubagentLaunchProvenance {
 	profile: Pick<
 		ResolvedSubagentProfile,
-		"name" | "source" | "sourcePath" | "canonicalPath" | "sourceHash" | "unsafeHostExec"
+		"name" | "source" | "sourcePath" | "canonicalPath" | "sourceHash" | "unsafeHostExec" | "color"
 	>;
 	resources: ResolvedSubagentResources;
 	projectTrusted: boolean;
@@ -1144,23 +1225,23 @@ export interface SubagentLaunchProvenance {
 	modelCandidates?: readonly string[];
 	modelCandidateSkips?: readonly IceModelCandidateSkip[];
 	mcpTools?: readonly string[];
+	/** Explicit profile adapter selectors captured at launch. */
+	adapterIds?: readonly string[];
 	scopeRoots: string[];
 	scopeTargets: string[];
 	execution: {
 		thinking: SubagentThinkingLevel;
 		timeoutMs: number;
-		maxTurns: number;
-		maxToolCalls: number;
 		maxOutputBytes: number;
-		maxTotalTokens?: number;
+		temperature?: number;
+		topP?: number;
 		tools?: readonly string[];
 		sources: {
 			thinking: string;
 			timeoutMs: string;
-			maxTurns: string;
-			maxToolCalls: string;
 			maxOutputBytes: string;
-			maxTotalTokens: string;
+			temperature: string;
+			topP: string;
 		};
 		restrictionsApplied: readonly string[];
 	};
@@ -1180,6 +1261,8 @@ export interface SubagentLaunchPreflightTask {
 		skipped?: readonly IceModelCandidateSkip[];
 	};
 	mcpTools?: readonly string[];
+	/** Explicit profile adapter selectors, if any. */
+	adapterIds?: readonly string[];
 	scopeRoots: string[];
 	scopeTargets: string[];
 	tools: string[];
@@ -1191,10 +1274,9 @@ export interface SubagentLaunchPreflightTask {
 	execution: {
 		thinking: SubagentThinkingLevel;
 		timeoutMs: number;
-		maxTurns: number;
-		maxToolCalls: number;
 		maxOutputBytes: number;
-		maxTotalTokens?: number;
+		temperature?: number;
+		topP?: number;
 		tools: readonly string[] | undefined;
 	};
 	outputSchema?: { schemaBytes: number; maxPayloadBytes: number };
@@ -1233,11 +1315,6 @@ export interface SubagentLaunchPreflight {
 		totalOutputBytes: number;
 		reservedOutputBytes: number;
 		maxPotentialOutputBytes: number;
-		tokens?: {
-			total: number;
-			reserved: number;
-			maxPotential: number;
-		};
 	};
 	recovery: {
 		maxAttempts: 1 | 2;
@@ -1255,15 +1332,6 @@ export interface SubagentBatchBudget {
 	consumed: number;
 	remaining: number;
 	released: number;
-	tokens?: {
-		total: number;
-		reserved: number;
-		charged: number;
-		remaining: number;
-		released: number;
-		overshoot: number;
-		accounting: "provider" | "estimated" | "mixed";
-	};
 }
 
 export type AggregateUsage = SubagentUsage;
@@ -1311,10 +1379,15 @@ export interface ReviewBatchResult {
 
 export interface SubagentBatchRunOptions {
 	concurrency?: number;
+	/** Canonical resolved concurrency policy; defaults to bundled batch limits. */
+	concurrencyPolicy?: ResolvedSubagentConcurrencyPolicy;
+	/** Shared admission coordinator across batch and background-job execution. */
+	admission?: SubagentConcurrencyAdmission;
 	modelRuntime?: ModelRuntime;
+	/** Parent-resolved retry policy copied into each isolated child session. */
+	settingsManager?: SettingsManager;
 	unsafeHostExec?: boolean;
 	totalBudgetBytes?: number;
-	totalTokenBudget?: number;
 	timeoutMs?: number;
 	failFast?: boolean;
 	signal?: AbortSignal;
@@ -1349,12 +1422,8 @@ export type SubagentBatchTaskLifecycleEvent =
 			reason: string;
 	  };
 
-export type SubagentTokenBudgetTracePhase =
-	| "resolved"
-	| "work_exhausted"
-	| "tool_denied"
-	| "finalizing"
-	| "finalization_unavailable";
+export type SubagentCompactionReason = "manual" | "threshold" | "overflow";
+export type SubagentCompactionStatus = "started" | "completed" | "aborted" | "failed";
 
 export interface SubagentEvent {
 	type:
@@ -1363,7 +1432,10 @@ export interface SubagentEvent {
 		| "subagent_progress"
 		| "subagent_tool_start"
 		| "subagent_tool_end"
-		| "subagent_token_budget"
+		| "subagent_compaction_start"
+		| "subagent_compaction_end"
+		| "subagent_retry"
+		| "subagent_wrap_up"
 		| "subagent_completed"
 		| "subagent_failed"
 		| "subagent_cancelled"
@@ -1373,17 +1445,21 @@ export interface SubagentEvent {
 	parentSessionId: string;
 	childSessionId?: string;
 	profile: SubagentProfile["name"];
+	color?: SubagentProfileColor;
 	status: SubagentStatus;
 	toolName?: string;
 	toolCallId?: string;
 	path?: string;
 	attention?: SubagentRuntimeAttention;
+	retry?: SubagentRetryState;
 	model?: string;
 	taskId?: string;
 	attempt?: 1 | 2;
 	batchId?: string;
-	/** Present only on `subagent_token_budget`; at most one event per lifecycle phase. */
-	tokenBudgetPhase?: SubagentTokenBudgetTracePhase;
+	/** Bounded child compaction lifecycle metadata; summary contents are never projected. */
+	compactionReason?: SubagentCompactionReason;
+	compactionStatus?: SubagentCompactionStatus;
+	compactionWillRetry?: boolean;
 }
 
 function modelLabel(model: Model<Api> | undefined): string | undefined {
@@ -1627,6 +1703,22 @@ function formatSubagentToolError(error: unknown): SubagentToolErrorDetails {
 			...(failure.details ? { details: failure.details } : {}),
 		},
 	};
+}
+
+function formatManagedIdentifierError(error: unknown, runId: string): string {
+	const message = redactCredentialText(error instanceof Error ? error.message : String(error));
+	const resultRefHint = runId.startsWith("job:")
+		? " The supplied value looks like a resultRef; remove the `job:` prefix and use the resulting bare jobId with inspect_subagent_job or cancel_subagent_job instead."
+		: "";
+	return `${message} manage_subagent requires a foreground runId returned by delegate (use details.managed.runId for a live background launch or details.result.runId for a retained terminal result); it does not accept a durable jobId, resultRef, batchId, or taskId.${resultRefHint}`;
+}
+
+function formatDurableJobIdentifierError(error: unknown, jobId: string): string {
+	const message = redactCredentialText(error instanceof Error ? error.message : String(error));
+	const resultRefHint = jobId.startsWith("job:")
+		? " The supplied value is a resultRef, not a jobId; pass the bare value returned as details.accepted.jobId."
+		: "";
+	return `${message} This tool requires the bare durable jobId returned as details.accepted.jobId by delegate_async; do not pass a resultRef (job:<id>), foreground runId, batchId, or taskId.${resultRefHint}`;
 }
 
 type StartupControlReason = "cancelled" | "timed_out";
@@ -1896,6 +1988,18 @@ function parseSelectedMcpTools(value: unknown): readonly string[] | undefined {
 	return Object.freeze([...new Set(normalized)]);
 }
 
+function parseRoleAdapterIds(value: unknown, sourcePath: string): readonly string[] | undefined {
+	if (value === undefined) return undefined;
+	const adapters = parseRoleList(value, "adapters");
+	if (adapters.some((adapterId) => !isIceDelegableAdapterId(adapterId) || Buffer.byteLength(adapterId) > 128)) {
+		throw new SubagentError(
+			"malformed_result",
+			`Configurable role adapters must use explicit parent adapter IDs in ${sourcePath}.`,
+		);
+	}
+	return Object.freeze([...new Set(adapters)]);
+}
+
 function parseRoleTools(value: unknown): string[] {
 	const tools = parseRoleList(value, "tools");
 	if (value === undefined) return [...SUBAGENT_REQUESTED_TOOL_NAMES];
@@ -1929,6 +2033,42 @@ function parseProfileThinkingLevel(
 		return fallback;
 	}
 	return value as SubagentThinkingLevel;
+}
+
+function parseStrictProfileNumber(
+	value: unknown,
+	label: string,
+	minimum: number,
+	maximum: number,
+	sourcePath: string,
+): number | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "number" || !Number.isFinite(value) || value < minimum || value > maximum) {
+		throw new SubagentError(
+			"malformed_result",
+			`Invalid ${label} metadata in ${sourcePath}; expected a finite number in [${minimum}, ${maximum}].`,
+		);
+	}
+	return value;
+}
+
+function parseProfileColor(value: unknown, sourcePath: string): SubagentProfileColor | undefined {
+	if (value === undefined) return undefined;
+	if (!isSubagentProfileColor(value)) {
+		throw new SubagentError(
+			"malformed_result",
+			`Invalid color metadata in ${sourcePath}; expected a semantic theme color token.`,
+		);
+	}
+	return value;
+}
+
+function parseProfileHidden(value: unknown, sourcePath: string): boolean | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "boolean") {
+		throw new SubagentError("malformed_result", `Invalid hidden metadata in ${sourcePath}; expected a boolean.`);
+	}
+	return value;
 }
 
 function parseBoundedProfileNumber(
@@ -2032,6 +2172,7 @@ function loadProfilesFromDirectory(
 				"name",
 				"description",
 				"tools",
+				"adapters",
 				"tags",
 				"model",
 				"fallbackModel",
@@ -2046,6 +2187,12 @@ function loadProfilesFromDirectory(
 				"max-output-bytes",
 				"maxOutputBytes",
 				"max_output_bytes",
+				"temperature",
+				"top-p",
+				"topP",
+				"top_p",
+				"color",
+				"hidden",
 				"skills",
 				"prompts",
 				"context",
@@ -2093,8 +2240,25 @@ function loadProfilesFromDirectory(
 				}
 			}
 			const mcpTools = parseSelectedMcpTools(frontmatter.mcp ?? frontmatter.mcpTools ?? frontmatter.mcp_tools);
+			const adapterIds = parseRoleAdapterIds(frontmatter.adapters, sourcePath);
 			const requestedTools = parseRoleTools(frontmatter.tools);
 			const roleTags = parseRoleTags(frontmatter.tags);
+			const temperature = parseStrictProfileNumber(
+				frontmatter.temperature,
+				"temperature",
+				SUBAGENT_PROFILE_LIMITS.minTemperature,
+				SUBAGENT_PROFILE_LIMITS.maxTemperature,
+				sourcePath,
+			);
+			const topP = parseStrictProfileNumber(
+				frontmatter["top-p"] ?? frontmatter.topP ?? frontmatter.top_p,
+				"top-p",
+				SUBAGENT_PROFILE_LIMITS.minTopP,
+				SUBAGENT_PROFILE_LIMITS.maxTopP,
+				sourcePath,
+			);
+			const color = parseProfileColor(frontmatter.color, sourcePath);
+			const hidden = parseProfileHidden(frontmatter.hidden, sourcePath);
 			const profile: ResolvedSubagentProfile = {
 				name,
 				description,
@@ -2126,12 +2290,17 @@ function loadProfilesFromDirectory(
 					diagnostics,
 					true,
 				),
+				...(temperature !== undefined ? { temperature } : {}),
+				...(topP !== undefined ? { topP } : {}),
+				...(color !== undefined ? { color } : {}),
+				...(hidden !== undefined ? { hidden } : {}),
 				resources: parseRoleResources(frontmatter),
 				unsafeHostExec: parseUnsafeHostExecEligibility(
 					frontmatter["ice-unsafe-host-exec"] ?? frontmatter.iceUnsafeHostExec,
 				),
 				...(requestedModel ? { requestedModel } : {}),
 				...(fallbackModel ? { fallbackModel } : {}),
+				...(adapterIds ? { adapterIds } : {}),
 				...(mcpTools ? { mcpTools } : {}),
 				modelPolicy: "inherit-parent",
 				...(diagnostics.length > 0 ? { diagnostics: Object.freeze([...diagnostics]) } : {}),
@@ -3391,10 +3560,34 @@ function createSelectedMcpToolDefinitions(
 	});
 }
 
+/**
+ * Run-scoped execution policy consulted at dispatch time by the wrappers installed on a child
+ * session. Those wrappers outlive a single run once a completed child is retained and resumed, so
+ * they read this box instead of closing over one run's locals. `runResolved` re-points `current`
+ * at the new run's policy before the first resumed model prompt, which is what makes a reused
+ * `AgentSession` dispatch against current hooks, authority, and budgets.
+ */
+interface SubagentExecutionPolicy {
+	beforeTool?: NativeSubagentSessionOptions["beforeTool"];
+	/** Tools the current parent policy still authorizes for this child. */
+	eligibleTools: ReadonlySet<string>;
+	/**
+	 * True for a reused session. A fresh run relies on the eligible set applied when its tool
+	 * definitions were built; a reused session re-checks every wrapped tool so authority removed
+	 * since the original run fails closed instead of dispatching.
+	 */
+	strictEligibility: boolean;
+	reportOnly?: () => boolean;
+	shouldStopAfterTurn?: () => boolean | Promise<boolean>;
+}
+
+interface SubagentExecutionPolicyBox {
+	current: SubagentExecutionPolicy;
+}
+
 function wrapSubagentToolDefinitions(
 	definitions: readonly ToolDefinition[],
-	options: Pick<NativeSubagentSessionOptions, "beforeTool" | "reserveToolCall" | "settleToolCall">,
-	eligibleTools: ReadonlySet<string>,
+	policy: SubagentExecutionPolicyBox,
 	enforceEligibility = true,
 ): ToolDefinition[] {
 	return definitions.map((definition) => {
@@ -3402,25 +3595,18 @@ function wrapSubagentToolDefinitions(
 		return {
 			...definition,
 			execute: async (toolCallId, params, signal, onUpdate, ctx) => {
-				if (enforceEligibility) assertSubagentToolEligible(definition.name, eligibleTools);
-				await options.beforeTool?.(
+				const current = policy.current;
+				if (enforceEligibility || current.strictEligibility) {
+					assertSubagentToolEligible(definition.name, current.eligibleTools);
+				}
+				await current.beforeTool?.(
 					definition.name,
 					toolCallId,
 					(params && typeof params === "object" ? params : {}) as Record<string, unknown>,
 					signal,
 				);
 				if (signal?.aborted) throw new SubagentError("cancellation", "Child tool cancelled after policy hooks.");
-				if (options.reserveToolCall && !options.reserveToolCall(toolCallId)) {
-					throw new SubagentError(
-						"batch_budget_exhausted",
-						`Child exceeded its bounded tool-call budget before dispatching ${definition.name}.`,
-					);
-				}
-				try {
-					return await execute(toolCallId, params, signal, onUpdate, ctx);
-				} finally {
-					options.settleToolCall?.(true, toolCallId);
-				}
+				return execute(toolCallId, params, signal, onUpdate, ctx);
 			},
 		} as ToolDefinition;
 	});
@@ -3717,24 +3903,39 @@ function profileSummary(
 		unsafeHostExec,
 	});
 	const diagnostics = [...(profile.diagnostics ?? []), ...extraDiagnostics].slice(0, 8);
+	const requestedAdapters = profile.adapterIds ?? [];
+	const effectiveAdapters: string[] = [];
 	for (const tool of options.delegableTools ?? []) {
+		const directToolRequested = profile.requestedTools.includes(tool.name);
+		const adapterRequested = requestedAdapters.includes(tool.adapterId);
 		if (
-			profile.requestedTools.includes(tool.name) &&
+			(directToolRequested || adapterRequested) &&
 			parentActiveTools.includes(tool.name) &&
 			tool.isCurrent() &&
 			(tool.access === "read-only" || (tool.access === "mutation" && unsafeHostExec))
-		)
-			(effectiveTools as string[]).push(tool.name);
+		) {
+			if (!(effectiveTools as string[]).includes(tool.name)) (effectiveTools as string[]).push(tool.name);
+			if (adapterRequested && !effectiveAdapters.includes(tool.adapterId)) effectiveAdapters.push(tool.adapterId);
+		}
 	}
+	const missingAdapters = requestedAdapters.filter((adapterId) => !effectiveAdapters.includes(adapterId));
 	const toolClass = effectiveTools.length === 0 ? "none" : unsafeHostExec ? "host" : "read-only";
-	const eligibilityNote = availabilityOverride ?? profileAvailability(profile, effectiveTools, unsafeHostExec);
+	const baseAvailability = profileAvailability(profile, effectiveTools, unsafeHostExec);
+	const eligibilityNote =
+		availabilityOverride ??
+		(missingAdapters.length > 0 && baseAvailability === "available" ? "limited" : baseAvailability);
 	const profileDiagnostics = [
 		...diagnostics,
 		`effective tool class for this invocation: ${toolClass}`,
 		...(eligibilityNote === "requires_yolo"
 			? ["profile requests host/mutation tools; requires explicit trusted YOLO authorization"]
 			: []),
-		...(eligibilityNote === "limited" ? ["parent policy grants only a subset of the profile requested tools"] : []),
+		...(eligibilityNote === "limited"
+			? ["parent policy grants only a subset of the profile requested tools or adapters"]
+			: []),
+		...(missingAdapters.length > 0
+			? [`parent policy does not currently grant adapter IDs: ${missingAdapters.join(", ")}`]
+			: []),
 	].slice(0, 10);
 	return {
 		name: profile.name,
@@ -3742,15 +3943,29 @@ function profileSummary(
 		source: profile.source,
 		sourcePath: profile.sourcePath,
 		...(profile.tags ? { tags: profile.tags } : {}),
+		...(profile.color ? { color: profile.color } : {}),
 		effectiveThinkingLevel: profile.thinkingLevel,
 		effectiveTimeoutMs: profile.timeoutMs,
 		effectiveMaxOutputBytes: profile.maxOutputBytes,
+		...(profile.temperature !== undefined
+			? { requestedTemperature: profile.temperature, effectiveTemperature: profile.temperature }
+			: {}),
+		...(profile.topP !== undefined ? { requestedTopP: profile.topP, effectiveTopP: profile.topP } : {}),
+		effectiveSettingSources: Object.freeze({
+			thinking: "bundled",
+			timeoutMs: "bundled",
+			maxOutputBytes: "bundled",
+			temperature: "bundled",
+			topP: "bundled",
+		}),
 		profileDiagnostics: Object.freeze(profileDiagnostics),
 		unsafeHostExec: profile.unsafeHostExec === true,
 		requestedTools: profile.requestedTools,
 		effectiveTools,
+		...(requestedAdapters.length > 0 ? { requestedAdapters } : {}),
+		...(effectiveAdapters.length > 0 ? { effectiveAdapters: Object.freeze([...effectiveAdapters]) } : {}),
 		tools: profile.tools,
-		availability: availabilityOverride ?? profileAvailability(profile, effectiveTools, unsafeHostExec),
+		availability: eligibilityNote,
 		...(diagnostics.length > 0 ? { diagnostics: Object.freeze(diagnostics) } : {}),
 		...(profile.requestedModel ? { requestedModel: profile.requestedModel } : {}),
 		...(profile.fallbackModel ? { fallbackModel: profile.fallbackModel } : {}),
@@ -3788,16 +4003,18 @@ export function listSubagentProfiles(
 			else shadowedProjectSources.set(name, profile.sourcePath);
 		}
 	}
-	const summaries: SubagentProfileSummary[] = [...profiles.values()].map((profile) =>
-		profileSummary(
-			profile,
-			options,
-			undefined,
-			shadowedProjectSources.has(profile.name)
-				? [`shadowed trusted project definition: ${shadowedProjectSources.get(profile.name)}`]
-				: [],
-		),
-	);
+	const summaries: SubagentProfileSummary[] = [...profiles.values()]
+		.filter((profile) => !profile.hidden)
+		.map((profile) =>
+			profileSummary(
+				profile,
+				options,
+				undefined,
+				shadowedProjectSources.has(profile.name)
+					? [`shadowed trusted project definition: ${shadowedProjectSources.get(profile.name)}`]
+					: [],
+			),
+		);
 	if (options.includeSelf)
 		summaries.unshift(
 			profileSummary(
@@ -3840,7 +4057,7 @@ export function listSubagentProfiles(
 		});
 	}
 	for (const profile of projectProfiles.values()) {
-		if (!options.projectTrusted) {
+		if (!options.projectTrusted && !profile.hidden) {
 			summaries.push(
 				profileSummary(profile, options, "untrusted", [
 					"Project profile is hidden until project trust is established.",
@@ -4472,31 +4689,30 @@ export function normalizeSubagentAcceptanceCriteria(
  * run is consumed, and an empty tools array means no tools (never fallback).
  */
 export function normalizeSubagentExecutionOverride(
-	profile: Pick<ResolvedSubagentProfile, "thinkingLevel" | "maxOutputBytes">,
+	profile: Pick<ResolvedSubagentProfile, "thinkingLevel" | "maxOutputBytes" | "temperature" | "topP">,
 	execution: SubagentExecutionOverrideInput | undefined,
 ): SubagentExecutionContract {
 	if (execution === undefined) {
 		return Object.freeze({
 			thinking: profile.thinkingLevel,
 			tools: undefined,
-			maxTurns: SUBAGENT_EXECUTION_LIMITS.maxTurns,
-			maxToolCalls: SUBAGENT_EXECUTION_LIMITS.maxToolCalls,
 			maxOutputBytes: profile.maxOutputBytes,
+			...(profile.temperature !== undefined ? { temperature: profile.temperature } : {}),
+			...(profile.topP !== undefined ? { topP: profile.topP } : {}),
 		});
 	}
 	if (typeof execution !== "object" || execution === null || Array.isArray(execution)) {
 		throw new SubagentError("malformed_result", "Subagent execution overrides must be an object.");
 	}
-	const allowed = new Set([
-		"thinking",
-		"tools",
-		"maxTurns",
-		"maxToolCalls",
-		"maxOutputBytes",
-		"maxTotalTokens",
-		"hooks",
-		"model",
-	]);
+	if (Object.hasOwn(execution, "maxTotalTokens")) {
+		throw new SubagentError("malformed_result", '"maxTotalTokens" was removed; use timeoutMs/maxOutputBytes');
+	}
+	for (const key of ["maxTurns", "maxToolCalls"] as const) {
+		if (Object.hasOwn(execution, key)) {
+			throw new SubagentError("malformed_result", `"${key}" was removed; use timeoutMs/maxOutputBytes`);
+		}
+	}
+	const allowed = new Set(["thinking", "tools", "maxOutputBytes", "temperature", "topP", "hooks", "model"]);
 	if (
 		execution.model !== undefined &&
 		(typeof execution.model !== "string" ||
@@ -4546,18 +4762,6 @@ export function normalizeSubagentExecutionOverride(
 		}
 		return value;
 	};
-	const maxTurns = checkBudget(
-		execution.maxTurns,
-		"maxTurns",
-		SUBAGENT_EXECUTION_LIMITS.minTurns,
-		SUBAGENT_EXECUTION_LIMITS.maxTurns,
-	);
-	const maxToolCalls = checkBudget(
-		execution.maxToolCalls,
-		"maxToolCalls",
-		SUBAGENT_EXECUTION_LIMITS.minToolCalls,
-		SUBAGENT_EXECUTION_LIMITS.maxToolCalls,
-	);
 	const maxOutputBytes =
 		execution.maxOutputBytes === undefined
 			? Math.min(profile.maxOutputBytes, SUBAGENT_EXECUTION_LIMITS.maxOutputBytes)
@@ -4567,22 +4771,37 @@ export function normalizeSubagentExecutionOverride(
 					SUBAGENT_EXECUTION_LIMITS.minOutputBytes,
 					SUBAGENT_EXECUTION_LIMITS.maxOutputBytes,
 				);
-	const maxTotalTokens =
-		execution.maxTotalTokens === undefined
-			? undefined
-			: checkBudget(
-					execution.maxTotalTokens,
-					"maxTotalTokens",
-					SUBAGENT_EXECUTION_LIMITS.minTotalTokens,
-					SUBAGENT_EXECUTION_LIMITS.maxTotalTokens,
-				);
+
+	const checkSampling = (
+		value: number | undefined,
+		label: string,
+		minimum: number,
+		maximum: number,
+	): number | undefined => {
+		if (value === undefined) return undefined;
+		if (!Number.isFinite(value) || value < minimum || value > maximum) {
+			throw new SubagentError("malformed_result", `Subagent execution ${label} is outside the bounded range.`);
+		}
+		return value;
+	};
+	const temperature = checkSampling(
+		execution.temperature ?? profile.temperature,
+		"temperature",
+		SUBAGENT_EXECUTION_LIMITS.minTemperature,
+		SUBAGENT_EXECUTION_LIMITS.maxTemperature,
+	);
+	const topP = checkSampling(
+		execution.topP ?? profile.topP,
+		"topP",
+		SUBAGENT_EXECUTION_LIMITS.minTopP,
+		SUBAGENT_EXECUTION_LIMITS.maxTopP,
+	);
 	return Object.freeze({
 		thinking: execution.thinking ?? profile.thinkingLevel,
 		tools,
-		maxTurns,
-		maxToolCalls,
 		maxOutputBytes,
-		...(maxTotalTokens !== undefined ? { maxTotalTokens } : {}),
+		...(temperature !== undefined ? { temperature } : {}),
+		...(topP !== undefined ? { topP } : {}),
 	});
 }
 
@@ -4615,12 +4834,9 @@ function resolveIceContractForRequest(
 	const call: IceContractCallInput = {};
 	if (request.timeoutMs !== undefined) call.timeoutMs = request.timeoutMs;
 	if (request.execution?.thinking !== undefined) call.thinking = validatedExecution.thinking;
-	if (request.execution?.maxTurns !== undefined) call.maxTurns = validatedExecution.maxTurns;
-	if (request.execution?.maxToolCalls !== undefined) call.maxToolCalls = validatedExecution.maxToolCalls;
 	if (request.execution?.maxOutputBytes !== undefined) call.maxOutputBytes = validatedExecution.maxOutputBytes;
-	if (request.execution?.maxTotalTokens !== undefined) {
-		call.maxTotalTokens = validatedExecution.maxTotalTokens;
-	}
+	if (request.execution?.temperature !== undefined) call.temperature = validatedExecution.temperature;
+	if (request.execution?.topP !== undefined) call.topP = validatedExecution.topP;
 	const contract = resolveIceSubagentContract({
 		global: globalSettings,
 		project: projectSettings,
@@ -4632,6 +4848,8 @@ function resolveIceContractForRequest(
 			thinking: profile.thinkingLevel,
 			timeoutMs: profile.timeoutMs,
 			maxOutputBytes: profile.maxOutputBytes,
+			temperature: profile.temperature,
+			topP: profile.topP,
 		},
 	});
 	return contract;
@@ -4736,6 +4954,7 @@ export function normalizeSubagentRequest(
 	}
 	const selectedMcpTools =
 		request.execution?.tools?.length === 0 ? undefined : isSelf ? request.self?.mcp : profile.mcpTools;
+	const selectedAdapterIds = request.execution?.tools?.length === 0 ? undefined : profile.adapterIds;
 	if (request.self?.inheritSkills !== undefined && typeof request.self.inheritSkills !== "boolean") {
 		throw new SubagentError("malformed_result", "inheritSkills must be boolean.");
 	}
@@ -4878,6 +5097,7 @@ export function normalizeSubagentRequest(
 		available: options.delegableTools ?? [],
 		parentActiveTools: options.parentActiveTools ?? [],
 		requested: (requestedTools ?? profile.requestedTools).filter((tool) => profile.requestedTools.includes(tool)),
+		requestedAdapterIds: selectedAdapterIds,
 		denied: iceContract.deniedTools,
 		allowMutation: options.unsafeHostExec === true && projectTrusted,
 	});
@@ -4889,11 +5109,11 @@ export function normalizeSubagentRequest(
 	const resolvedExecution: SubagentExecutionContract = Object.freeze({
 		thinking: iceContract.values.thinking,
 		tools: requestedTools,
-		maxTurns: iceContract.values.maxTurns,
-		maxToolCalls: iceContract.values.maxToolCalls,
 		maxOutputBytes: iceContract.values.maxOutputBytes,
-		...(iceContract.values.maxTotalTokens !== undefined ? { maxTotalTokens: iceContract.values.maxTotalTokens } : {}),
+		...(iceContract.values.temperature !== undefined ? { temperature: iceContract.values.temperature } : {}),
+		...(iceContract.values.topP !== undefined ? { topP: iceContract.values.topP } : {}),
 	});
+	const acceptanceCriteria = normalizeSubagentAcceptanceCriteria(request.acceptanceCriteria);
 
 	return {
 		runId: randomUUID(),
@@ -4908,6 +5128,7 @@ export function normalizeSubagentRequest(
 		...(request.execution?.model !== undefined ? { requestedModel: request.execution.model } : {}),
 		...(profile.fallbackModel ? { fallbackModel: profile.fallbackModel } : {}),
 		...(selectedMcpTools ? { selectedMcpTools: Object.freeze([...selectedMcpTools]) } : {}),
+		...(selectedAdapterIds ? { selectedAdapterIds: Object.freeze([...selectedAdapterIds]) } : {}),
 		task: request.task.trim(),
 		scope: targets.length > 0 ? { roots, targets } : { roots },
 		cwd: resolvedCwd,
@@ -4922,13 +5143,16 @@ export function normalizeSubagentRequest(
 		deniedTools: iceContract.deniedTools,
 		iceContract,
 		maxOutputBytes: resolvedExecution.maxOutputBytes,
-		...(resolvedExecution.maxTotalTokens !== undefined ? { maxTotalTokens: resolvedExecution.maxTotalTokens } : {}),
 		resources,
 		projectTrusted,
 		allowExternal: options.allowExternal === true,
-		acceptanceCriteria: normalizeSubagentAcceptanceCriteria(request.acceptanceCriteria),
+		acceptanceCriteria,
 		preflight: normalizeSubagentPreflightRequirements(request.preflight),
 		...(outputSchema ? { outputSchema } : {}),
+		// Typed flows (output schema, acceptance criteria) keep the strict JSON
+		// report protocol; ordinary delegations ingest the natural final turn.
+		reportMode:
+			outputSchema !== undefined || acceptanceCriteria.length > 0 ? "structured_report" : "plain_final_turn",
 	};
 }
 
@@ -5020,9 +5244,131 @@ export function normalizeWriterRequest(
 
 type SelectedPromptContent = { name: string; content: string };
 
+function compareSubagentCacheText(left: string, right: string): number {
+	return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function stableSubagentCacheJson(value: unknown): string {
+	if (value === null) return "null";
+	if (value === undefined) return "undefined";
+	if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+		return JSON.stringify(value);
+	}
+	if (Array.isArray(value)) return `[${value.map(stableSubagentCacheJson).join(",")}]`;
+	if (typeof value === "object") {
+		return `{${Object.entries(value as Record<string, unknown>)
+			.sort(([left], [right]) => compareSubagentCacheText(left, right))
+			.map(([key, child]) => `${JSON.stringify(key)}:${stableSubagentCacheJson(child)}`)
+			.join(",")}}`;
+	}
+	throw new Error("Subagent prompt cache material must be JSON-compatible.");
+}
+
+function sortSubagentCacheCollection<T>(values: readonly T[]): T[] {
+	return [...values].sort((left, right) =>
+		compareSubagentCacheText(stableSubagentCacheJson(left), stableSubagentCacheJson(right)),
+	);
+}
+
 function loadSelectedPromptContent(resource: SubagentResourceProvenance): SelectedPromptContent {
 	const { body } = parseFrontmatter<Record<string, unknown>>(readValidatedResource(resource).toString("utf8"));
 	return { name: resource.name, content: redactCredentialText(body.trim()) };
+}
+
+/**
+ * Derive a provider prompt-cache key from the common, non-task fork contract.
+ * The task is intentionally excluded because sibling tasks must retain distinct
+ * conversation/session identities while sharing only the stable prefix affinity.
+ */
+export function deriveSubagentPromptCacheKey(
+	request: NormalizedSubagentRequest,
+	model: Model<Api> | undefined,
+	childTools: readonly string[],
+	unsafeHostExec = false,
+): string | undefined {
+	if (request.contextMode !== "fork") return undefined;
+	const material = {
+		version: 1,
+		model: model
+			? {
+					api: model.api,
+					provider: model.provider,
+					id: model.id,
+					baseUrl: model.baseUrl,
+					compat: model.compat ?? null,
+				}
+			: null,
+		agentKind: request.agentKind,
+		role: request.role,
+		profile: {
+			name: request.profile.name,
+			source: request.profile.source,
+			sourceHash: request.profile.sourceHash,
+			systemPromptHash: hashSource(request.profile.systemPrompt),
+		},
+		contextMode: request.contextMode,
+		scope: {
+			// Scope order is an authority set, not a semantic message sequence.
+			roots: sortSubagentCacheCollection(request.scope.roots),
+			targets: sortSubagentCacheCollection(request.scope.targets ?? []),
+		},
+		authority: {
+			projectTrusted: request.projectTrusted,
+			allowExternal: request.allowExternal,
+			unsafeHostExec,
+		},
+		execution: {
+			...request.execution,
+			tools: request.execution.tools ? sortSubagentCacheCollection(request.execution.tools) : undefined,
+		},
+		timeoutMs: request.timeoutMs,
+		// Only collections canonicalized in the provider-visible request are sorted above.
+		// Resource/tool ordering below remains provider-visible and therefore part of cache identity.
+		childTools: [...childTools],
+		resources: {
+			skills: request.resources.skills.map(({ kind, name, source, canonicalPath, sourceHash }) => ({
+				kind,
+				name,
+				source,
+				canonicalPath,
+				sourceHash,
+			})),
+			prompts: request.resources.prompts.map(({ kind, name, source, canonicalPath, sourceHash }) => ({
+				kind,
+				name,
+				source,
+				canonicalPath,
+				sourceHash,
+			})),
+			context: request.resources.context.map(({ kind, name, source, canonicalPath, sourceHash }) => ({
+				kind,
+				name,
+				source,
+				canonicalPath,
+				sourceHash,
+			})),
+		},
+		handoff: {
+			contextPacket: request.contextPacket.items,
+			fork: request.forkContext.messages,
+		},
+		selectedMcpTools: [...(request.selectedMcpTools ?? [])],
+		selectedAdapterIds: [...(request.selectedAdapterIds ?? [])],
+		mcpAuthorizations: (request.mcpAuthorizations ?? []).map(({ selector, access, parameters, description }) => ({
+			selector,
+			access,
+			parameters: parameters ?? null,
+			description: description ?? null,
+		})),
+		delegatedTools: (request.delegatedTools ?? []).map(({ adapterId, name, origin, access, fingerprint }) => ({
+			adapterId,
+			name,
+			origin,
+			access,
+			fingerprint,
+		})),
+	};
+	return `ice-fork-v1-${hashSource(stableSubagentCacheJson(material)).slice(0, 52)}`;
 }
 
 export function buildSubagentPrompt(
@@ -5030,8 +5376,12 @@ export function buildSubagentPrompt(
 	selectedPromptContents: readonly SelectedPromptContent[] = request.resources.prompts.map(loadSelectedPromptContent),
 	unsafeHostExec = false,
 ): string {
-	const scope = request.scope.roots.map((root) => `- ${root}`).join("\n");
-	const targets = request.scope.targets?.map((target) => `- ${relative(request.cwd, target) || "."}`).join("\n");
+	const scope = sortSubagentCacheCollection(request.scope.roots)
+		.map((root) => `- ${root}`)
+		.join("\n");
+	const targets = sortSubagentCacheCollection(request.scope.targets ?? [])
+		.map((target) => `- ${relative(request.cwd, target) || "."}`)
+		.join("\n");
 	const selectedPrompts = selectedPromptContents
 		.map(
 			({ name, content }) =>
@@ -5083,21 +5433,30 @@ export function buildSubagentPrompt(
 	const authorizedTaskHandoff = unsafeHostExec
 		? ["AUTHORIZED TASK (execute immediately with the provided tools):", redactCredentialText(request.task)]
 		: contextHandoff;
-	// W12/W15: the execution contract is advisory prompt context; runtime budgets
+	// W12: the execution contract is advisory prompt context; runtime output
 	// and tool eligibility are enforced by NativeSubagentRunner, never by prose.
+	const executionTools = request.execution.tools ? sortSubagentCacheCollection(request.execution.tools) : undefined;
 	const executionContractNote =
-		request.execution.tools !== undefined
-			? `Execution contract: at most ${request.execution.maxTurns} model turns, ${request.execution.maxToolCalls} tool calls, tools [${request.execution.tools.join(", ") || "none"}]. Budgets are enforced by the runtime; do not attempt extra turns or tools.`
-			: `Execution contract: at most ${request.execution.maxTurns} model turns and ${request.execution.maxToolCalls} tool calls. Budgets are enforced by the runtime; do not attempt extra turns or tools.`;
-	const tokenContractNote =
-		request.execution.maxTotalTokens === undefined
-			? undefined
-			: `Soft cumulative work-token limit: ${request.execution.maxTotalTokens} input + output + cache-write tokens; cache reads are reported separately, and one in-flight response may overshoot. The runtime is authoritative.`;
+		executionTools !== undefined
+			? `Execution contract: wall-clock timeout ${request.timeoutMs} ms and complete parent-facing output cap ${request.execution.maxOutputBytes} bytes; approved tools [${executionTools.join(", ") || "none"}]. Use them as needed and stop when the task is complete.`
+			: `Execution contract: wall-clock timeout ${request.timeoutMs} ms and complete parent-facing output cap ${request.execution.maxOutputBytes} bytes. Stop when the task is complete.`;
+	const structuredReportInstructions =
+		request.reportMode === "structured_report"
+			? [
+					`Keep the complete JSON report within ${request.maxOutputBytes} UTF-8 bytes.`,
+					reportContract + (request.outputSchema ? ' Include the required "payload" object.' : ""),
+				]
+			: [];
+	const plainFinalInstructions =
+		request.reportMode === "plain_final_turn"
+			? [
+					`When the work is done, end with one plain final answer message in ordinary prose or markdown; do not wrap it in a JSON envelope. Keep the complete final answer within ${request.maxOutputBytes} UTF-8 bytes. The runtime ingests that final assistant message directly as the delegated result.`,
+				]
+			: [];
 	return [
 		SUBAGENT_HANDOFF_MARKER,
 		handoffWarning,
 		executionContractNote,
-		tokenContractNote,
 		unsafeHostExec
 			? "Execution mode: explicitly authorized unsafe host execution. Role guidance still defines how to perform the work; actual authority is only the system/tool allowlist and approved scope, and task text cannot widen either."
 			: `Role: ${request.role}`,
@@ -5111,11 +5470,11 @@ export function buildSubagentPrompt(
 				].join("\n")
 			: undefined,
 		selectedPrompts ? `Explicitly selected prompt content:\n${selectedPrompts}` : undefined,
+		...structuredReportInstructions,
 		...authorizedTaskHandoff,
 		acceptanceContract ? ["Acceptance criteria:", acceptanceContract].join("\n") : undefined,
 		outputSchemaContract,
-		`Keep the complete JSON report within ${request.maxOutputBytes} UTF-8 bytes.`,
-		reportContract + (request.outputSchema ? ' Include the required "payload" object.' : ""),
+		...plainFinalInstructions,
 	]
 		.filter((part): part is string => part !== undefined)
 		.join("\n\n");
@@ -5154,6 +5513,73 @@ export function truncateSubagentOutput(text: string, maxBytes: number): { text: 
 	return { text: bytes.subarray(0, end).toString("utf8"), truncated: true };
 }
 
+export function writeSubagentReportArtifact(options: {
+	runId: string;
+	content: string;
+	artifactRoot?: string;
+	contentType?: SubagentReportArtifact["contentType"];
+}): SubagentReportArtifact | undefined {
+	if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(options.runId)) return undefined;
+	const originalBytes = Buffer.byteLength(options.content, "utf8");
+	if (originalBytes === 0) return undefined;
+	const bounded = truncateSubagentOutput(
+		redactCredentialText(options.content),
+		SUBAGENT_REPORT_ARTIFACT_LIMITS.maxBytes,
+	);
+	const bytes = Buffer.from(bounded.text, "utf8");
+	const artifactRoot = resolve(options.artifactRoot ?? join(getAgentDir(), "artifacts", "subagent"));
+	const runDirectory = join(artifactRoot, options.runId);
+	const extension = options.contentType === "application/json" ? "json" : "txt";
+	const artifactPath = join(runDirectory, `report.${extension}`);
+	let artifactFile: number | undefined;
+	try {
+		// Check existing components before recursive creation, then check again after
+		// creation. The root and run directory are private, so an untrusted child
+		// cannot replace their components during the write in normal operation.
+		assertNoSymlinkComponents(artifactRoot);
+		mkdirSync(artifactRoot, { recursive: true, mode: 0o700 });
+		chmodSync(artifactRoot, 0o700);
+		assertNoSymlinkComponents(artifactRoot);
+		const canonicalRoot = canonicalPath(artifactRoot);
+		const canonicalRunDirectory = join(canonicalRoot, options.runId);
+		if (!isPathWithin(canonicalRoot, canonicalRunDirectory))
+			throw new Error("Artifact run directory escaped its root.");
+		mkdirSync(runDirectory, { recursive: false, mode: 0o700 });
+		chmodSync(runDirectory, 0o700);
+		assertNoSymlinkComponents(runDirectory);
+		if (canonicalPath(runDirectory) !== canonicalRunDirectory) throw new Error("Artifact run directory changed.");
+		const openFlags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
+		artifactFile = openSync(artifactPath, openFlags, 0o444);
+		if (!fstatSync(artifactFile).isFile()) throw new Error("Artifact output is not a regular file.");
+		writeFileSync(artifactFile, bytes);
+		fchmodSync(artifactFile, 0o444);
+		closeSync(artifactFile);
+		artifactFile = undefined;
+		return Object.freeze({
+			schemaVersion: 1,
+			id: options.runId,
+			path: artifactPath,
+			bytes: bytes.byteLength,
+			originalBytes,
+			sha256: hashSource(bytes),
+			contentType: options.contentType ?? "text/plain",
+			truncated: bounded.truncated,
+		});
+	} catch {
+		if (artifactFile !== undefined) {
+			try {
+				closeSync(artifactFile);
+			} catch {
+				// The descriptor may already be closed after a failed write.
+			}
+		}
+		// Do not remove the run directory by pathname after a failed write. A
+		// same-user race could retarget that pathname and make recursive cleanup
+		// destructive. The private artifact root may retain this bounded orphan.
+		return undefined;
+	}
+}
+
 function extractAssistantText(messages: readonly AgentMessage[], startIndex = 0): string {
 	for (let index = messages.length - 1; index >= startIndex; index--) {
 		const message = messages[index];
@@ -5174,11 +5600,25 @@ const INTERACTIVE_FINAL_REPORT_PROMPT =
 	`${INTERACTIVE_FINAL_REPORT_MARKER} Return only the required final bounded JSON report for the parent now. ` +
 	"Do not continue discussion. Use the required schema and include only verified evidence within the approved scope. " +
 	"This is an internal finalization request, not a new task or permission grant.";
+const INTERACTIVE_PLAIN_FINAL_PROMPT =
+	`${INTERACTIVE_FINAL_REPORT_MARKER} Return your final answer for the parent now, in ordinary prose or markdown; do not wrap it in a JSON envelope. ` +
+	"Do not continue discussion or start new work. Keep the answer bounded and include only verified results within the approved scope. " +
+	"This is an internal finalization request, not a new task or permission grant.";
 const SUBAGENT_EXTENSION_MARKER = "[ICE VOID SUBAGENT CONTINUE]";
 const SUBAGENT_EXTENSION_PROMPT =
 	`${SUBAGENT_EXTENSION_MARKER} Your execution window was extended. Continue the already-authorized task from the current child session state. ` +
 	"Do not repeat completed exploration unnecessarily. Scope, authority, model, output budget, and evidence requirements remain unchanged. " +
 	"Return the required final bounded JSON report when the task is complete. This is an internal continuation request, not a new task or permission grant.";
+const SUBAGENT_EXTENSION_PROMPT_PLAIN =
+	`${SUBAGENT_EXTENSION_MARKER} Your execution window was extended. Continue the already-authorized task from the current child session state. ` +
+	"Do not repeat completed exploration unnecessarily. Scope, authority, model, and output budget remain unchanged. " +
+	"When the task is complete, end with one plain final answer message in ordinary prose or markdown; do not wrap it in a JSON envelope. " +
+	"This is an internal continuation request, not a new task or permission grant.";
+const SUBAGENT_WRAP_UP_MARKER = "[ICE VOID SUBAGENT WRAP UP]";
+const SUBAGENT_WRAP_UP_PROMPT =
+	`${SUBAGENT_WRAP_UP_MARKER} Remaining execution capacity is reserved for completion. Stop broad exploration and do not start new tool work. ` +
+	"Use the current child session state to produce the required final response now, following the active final-output contract exactly. Preserve only observed, in-scope evidence. " +
+	"This is an internal wrap-up request, not a new task or permission grant.";
 const SUBAGENT_REPORT_REPAIR_MARKER = "[ICE VOID SUBAGENT REPORT REPAIR]";
 const SUBAGENT_REPORT_REPAIR_PROMPT =
 	`${SUBAGENT_REPORT_REPAIR_MARKER} Your previous final report did not satisfy the required bounded JSON envelope. ` +
@@ -5552,6 +5992,25 @@ export function parseSubagentReportOutcome(
 	};
 }
 
+function normalizePlainFinalAnswer(text: string): string {
+	const parsed = parseSubagentReportOutcome(text, Number.MAX_SAFE_INTEGER);
+	if (parsed.kind !== "valid") return text;
+	const reportedPaths = parsed.report.paths.map((path) => `- ${redactCredentialText(path)}`).join("\n");
+	const reportedFindings = parsed.report.findings
+		.map(
+			(finding) =>
+				`- [${finding.severity}] ${redactCredentialText(finding.category)}: ${redactCredentialText(finding.claim)}`,
+		)
+		.join("\n");
+	return [
+		redactCredentialText(parsed.report.summary),
+		reportedPaths ? `Reported paths (not independently verified):\n${reportedPaths}` : undefined,
+		reportedFindings ? `Reported findings (not independently verified):\n${reportedFindings}` : undefined,
+	]
+		.filter((part): part is string => part !== undefined)
+		.join("\n\n");
+}
+
 export function normalizeReviewFindings(
 	findings: readonly ReviewFinding[] | undefined,
 	request: NormalizedSubagentRequest,
@@ -5642,6 +6101,19 @@ export function verifySubagentResult(result: SubagentResult, request: Normalized
 	if (Buffer.byteLength(result.summary) > request.maxOutputBytes) {
 		return reject("Result summary exceeds the approved output cap.");
 	}
+	// Plain final-turn ingestion verifies lineage, status, and the output bound only.
+	// It must never claim structured-report, evidence, or payload verification.
+	if (request.reportMode === "plain_final_turn") {
+		return {
+			verified: true,
+			reason:
+				"Plain final-turn answer passed lineage and output-bound verification; no structured report, evidence paths, or payload claims were verified.",
+			paths: [],
+			unresolvedClaims: [],
+			kind: "plain_bounds",
+			structuredVerified: false,
+		};
+	}
 	if (request.outputSchema) {
 		const payloadFailure = validateSubagentOutputPayload(result.payload, request.outputSchema);
 		if (payloadFailure) return reject(payloadFailure);
@@ -5708,6 +6180,8 @@ export function verifySubagentResult(result: SubagentResult, request: Normalized
 			reason: "Observed child result passed parent verification; semantic claims remain unresolved.",
 			paths: canonicalPaths,
 			unresolvedClaims,
+			kind: "structured",
+			structuredVerified: true,
 			...(requirementOutcome.summary ? { requirementSummary: requirementOutcome.summary } : {}),
 		};
 	}
@@ -5716,6 +6190,8 @@ export function verifySubagentResult(result: SubagentResult, request: Normalized
 		reason: "Observed child result passed parent verification; semantic claims remain unresolved.",
 		paths: canonicalPaths,
 		unresolvedClaims,
+		kind: "structured",
+		structuredVerified: true,
 	};
 }
 
@@ -5870,6 +6346,8 @@ export interface NativeSubagentSessionOptions {
 	agentDir?: string;
 	sessionStartEvent?: SessionStartEvent;
 	hookRuntime?: SubagentHookRuntime;
+	/** Parent-resolved retry policy, copied into the isolated child settings manager. */
+	retrySettings?: Pick<RetrySettings, "enabled" | "maxRetries" | "baseDelayMs">;
 	/** Parent-owned MCP dispatch for explicitly selected server/tool entries. */
 	mcpDispatch?: IceSubagentMcpAdapter["dispatch"];
 	/** Parent MCP tool allowlist snapshot; selected child MCP tools must be a subset. */
@@ -5882,14 +6360,15 @@ export interface NativeSubagentSessionOptions {
 		params: Record<string, unknown>,
 		signal: AbortSignal | undefined,
 	) => Promise<void>;
-	reserveToolCall?: (toolCallId?: string) => boolean;
-	settleToolCall?: (executed: boolean, toolCallId?: string) => void;
-	/** Called after each completed Ice turn to enforce the parent-owned turn budget. */
+	/** Called after each completed Ice turn for authority and timeout-finalization checks. */
 	shouldStopAfterTurn?: () => boolean | Promise<boolean>;
-	/** Shared logical-run token ledger; absent when token budgeting is disabled. */
-	tokenBudgetLedger?: TokenBudgetLedger;
-	/** Dynamic report-only state for the bounded token finalizer. */
+	/** Dynamic report-only state while the parent requests a bounded final report. */
 	reportOnly?: () => boolean;
+	/**
+	 * Mutable policy box for a session whose wrappers may outlive one run. Absent for a plain
+	 * one-shot child, in which case the flat fields above seed a box that is never re-pointed.
+	 */
+	policyBox?: SubagentExecutionPolicyBox;
 }
 
 async function dispatchSubagentHookDecision(
@@ -5993,6 +6472,9 @@ export interface NativeSubagentSession {
 	profile: ResolvedSubagentProfile;
 	tools: string[];
 	prompt: string;
+	diagnostics?: readonly SubagentDiagnostic[];
+	/** Stable affinity for the shared fork prefix; independent of child session identity. */
+	promptCacheKey?: string;
 }
 
 export interface SubagentLiveSession {
@@ -6001,6 +6483,7 @@ export interface SubagentLiveSession {
 	readonly taskId?: string;
 	readonly model?: string;
 	readonly authority?: "safe" | "yolo";
+	readonly color?: IceAgentViewColor;
 	readonly presentation?: IceAgentViewPresentation;
 	readonly session: CreateAgentSessionResult["session"];
 	readonly control?: IceAgentViewLiveSessionControl;
@@ -6012,6 +6495,7 @@ export interface SubagentLiveSessionRegistration {
 	readonly taskId?: string;
 	readonly model?: string;
 	readonly authority?: "safe" | "yolo";
+	readonly color?: IceAgentViewColor;
 	readonly presentation?: IceAgentViewPresentation;
 	readonly session: CreateAgentSessionResult["session"];
 	readonly control?: IceAgentViewLiveSessionControl;
@@ -6022,8 +6506,11 @@ export class SubagentLiveSessionRegistry {
 	private readonly listeners = new Set<() => void>();
 
 	register(input: SubagentLiveSessionRegistration): () => void {
+		const { color: requestedColor, ...sessionInput } = input;
+		const color = isIceAgentViewColor(requestedColor) ? requestedColor : undefined;
 		const session = Object.freeze({
-			...input,
+			...sessionInput,
+			...(color ? { color } : {}),
 			...(input.presentation ? { presentation: normalizeIceAgentViewPresentation(input.presentation) } : {}),
 		});
 		this.sessions.set(input.runId, session);
@@ -6254,6 +6741,49 @@ function mergeTrustedChildContext(
 	return merged;
 }
 
+const SUBAGENT_OPENAI_SAMPLING_APIS = new Set(["azure-openai-responses", "openai-completions", "openai-responses"]);
+
+interface SubagentSamplingResolution {
+	options: Pick<StreamOptions, "temperature" | "samplingParams">;
+	diagnostics: readonly SubagentDiagnostic[];
+}
+
+function resolveSubagentSamplingOptions(
+	model: Model<Api>,
+	execution: Pick<SubagentExecutionContract, "thinking" | "temperature" | "topP">,
+): SubagentSamplingResolution {
+	const diagnostics: SubagentDiagnostic[] = [];
+	const options: Pick<StreamOptions, "temperature" | "samplingParams"> = {};
+	const compatibility = model.compat as { supportsTemperature?: boolean } | undefined;
+	if (execution.temperature !== undefined) {
+		const unsupported =
+			model.api === "anthropic-messages" &&
+			(compatibility?.supportsTemperature === false || execution.thinking !== "off");
+		if (unsupported) {
+			diagnostics.push({
+				code: "provider_option_unsupported",
+				message:
+					execution.thinking !== "off"
+						? "Profile temperature was omitted because Anthropic extended thinking does not accept temperature."
+						: "Profile temperature was omitted because the selected Anthropic model does not support it.",
+			});
+		} else {
+			options.temperature = execution.temperature;
+		}
+	}
+	if (execution.topP !== undefined) {
+		if (SUBAGENT_OPENAI_SAMPLING_APIS.has(model.api)) {
+			options.samplingParams = { top_p: execution.topP };
+		} else {
+			diagnostics.push({
+				code: "provider_option_unsupported",
+				message: `Profile top-p was omitted because ${model.api} is not an OpenAI-compatible sampling API.`,
+			});
+		}
+	}
+	return { options, diagnostics: Object.freeze(diagnostics) };
+}
+
 /**
  * W13: resolve the requested reasoning level without changing the selected
  * provider route. An explicit caller override for unsupported effort fails
@@ -6283,6 +6813,17 @@ export async function createNativeSubagentSession(
 	createSession: (options: CreateAgentSessionOptions) => Promise<CreateAgentSessionResult> = createAgentSession,
 ): Promise<NativeSubagentSession> {
 	if (options.request.readOnlyReview) options = { ...options, unsafeHostExec: false };
+	// A retained child keeps the wrappers installed by its original run; they read this box so a
+	// resumed run can re-point them at its own policy instead of inheriting the original closures.
+	const policyBox: SubagentExecutionPolicyBox = options.policyBox ?? {
+		current: {
+			beforeTool: options.beforeTool,
+			eligibleTools: new Set<string>(),
+			strictEligibility: false,
+			reportOnly: options.reportOnly,
+			shouldStopAfterTurn: options.shouldStopAfterTurn,
+		},
+	};
 	const profile = options.request.profile;
 	revalidateSubagentProfile(profile);
 	revalidateSubagentResources(options.request.resources);
@@ -6367,6 +6908,16 @@ export async function createNativeSubagentSession(
 			: undefined,
 	});
 	await resourceLoader.reload();
+	// A child usually runs one long prompt rather than many user checkpoints. Use
+	// the existing AgentSession mid-run compaction pipeline by default so a child
+	// can compact between tool turns and resume the same turn. Apply this after
+	// resource loading because reload() refreshes SettingsManager state. An
+	// explicit setting (including `off`) remains authoritative, and parent
+	// compaction behavior is unchanged because this override is child-local.
+	if (settingsManager.getEffectiveSettings().compaction?.midRunCompaction === undefined) {
+		settingsManager.applyOverrides({ compaction: { midRunCompaction: "resume" } });
+	}
+	if (options.retrySettings) settingsManager.applyOverrides({ retry: options.retrySettings });
 	// Revalidate after loader reads and immediately before session creation.
 	revalidateSubagentProfile(profile);
 	revalidateSubagentResources(options.request.resources);
@@ -6380,6 +6931,9 @@ export async function createNativeSubagentSession(
 	// checks remain bounded by childTools. Resource roots extend path authority
 	// only; they never authorize a tool omitted from childTools.
 	const eligibleToolSet = new Set<string>(childTools);
+	// The wrappers installed below consult this box at dispatch time, so the run that owns the
+	// session owns the authority check rather than the run that built the definitions.
+	policyBox.current.eligibleTools = eligibleToolSet;
 	// Selected MCP tools are opt-in, explicit, and parent-owned: the child never
 	// loads an MCP adapter or opens a connection itself. Each selected
 	// server/tool dispatches through the parent adapter with hooks, budgets,
@@ -6416,7 +6970,7 @@ export async function createNativeSubagentSession(
 				allowExternalTools,
 				eligibleToolSet,
 			);
-	const scopedReadTools = wrapSubagentToolDefinitions(scopedReadDefinitions, options, eligibleToolSet, false);
+	const scopedReadTools = wrapSubagentToolDefinitions(scopedReadDefinitions, policyBox, false);
 	const externalDefinitions = createIceDelegableToolDefinitions(
 		externalTools,
 		{
@@ -6437,11 +6991,13 @@ export async function createNativeSubagentSession(
 		if (!childTools.includes(definition.name)) childTools.push(definition.name);
 		eligibleToolSet.add(definition.name);
 	}
-	const scopedMcpTools = wrapSubagentToolDefinitions(
-		[...mcpDefinitions, ...externalDefinitions],
-		options,
-		eligibleToolSet,
+	const promptCacheKey = deriveSubagentPromptCacheKey(
+		options.request,
+		options.model,
+		childTools,
+		options.unsafeHostExec === true,
 	);
+	const scopedMcpTools = wrapSubagentToolDefinitions([...mcpDefinitions, ...externalDefinitions], policyBox);
 	const created = await createSession({
 		cwd: options.request.cwd,
 		agentDir,
@@ -6463,8 +7019,7 @@ export async function createNativeSubagentSession(
 								}),
 							}) as unknown as ToolDefinition,
 						],
-						options,
-						eligibleToolSet,
+						policyBox,
 					)
 				: []),
 		],
@@ -6484,64 +7039,67 @@ export async function createNativeSubagentSession(
 			};
 		}
 	).agent;
-	if (options.tokenBudgetLedger && childAgent?.streamFunction) {
+	const streamDiagnostics: SubagentDiagnostic[] = [];
+	if (
+		(created.session.model ?? options.model) &&
+		(options.request.execution.temperature !== undefined || options.request.execution.topP !== undefined)
+	) {
+		streamDiagnostics.push(
+			...resolveSubagentSamplingOptions(created.session.model ?? options.model!, options.request.execution)
+				.diagnostics,
+		);
+	}
+	if (promptCacheKey && childAgent?.streamFunction) {
+		const originalStreamFunction = childAgent.streamFunction;
+		childAgent.streamFunction = ((model: Model<Api>, context: Context, streamOptions: StreamOptions = {}) =>
+			originalStreamFunction(model, context, {
+				...streamOptions,
+				promptCacheKey:
+					streamOptions.cacheRetention === "none" ? undefined : (streamOptions.promptCacheKey ?? promptCacheKey),
+			})) as StreamFunction;
+	}
+	if (
+		childAgent?.streamFunction &&
+		(options.request.execution.temperature !== undefined || options.request.execution.topP !== undefined)
+	) {
 		const originalStreamFunction = childAgent.streamFunction;
 		childAgent.streamFunction = ((model: Model<Api>, context: Context, streamOptions: StreamOptions = {}) => {
-			const snapshot = options.tokenBudgetLedger!.snapshot();
-			if (snapshot.phase === "work") {
-				const inputEstimate = estimateSubagentRequestTokens(context).inputTokens ?? 0;
-				const outputAuthority = Math.max(1, snapshot.workPhaseLimit - snapshot.chargedTokens - inputEstimate);
-				return originalStreamFunction(model, context, {
-					...streamOptions,
-					...(SUBAGENT_HARD_CAP_APIS.has(model.api)
-						? {
-								hardMaxOutputTokens: Math.min(
-									streamOptions.hardMaxOutputTokens ?? outputAuthority,
-									outputAuthority,
-								),
-							}
-						: {}),
-					...(options.reportOnly?.() ? { toolChoice: "none" as const } : {}),
-					maxTokens:
-						streamOptions?.maxTokens === undefined
-							? outputAuthority
-							: Math.min(streamOptions.maxTokens, outputAuthority),
-				});
+			const sampling = resolveSubagentSamplingOptions(model, options.request.execution);
+			for (const diagnostic of sampling.diagnostics) {
+				if (!streamDiagnostics.some((entry) => entry.message === diagnostic.message))
+					streamDiagnostics.push(diagnostic);
 			}
-			// Finalization must reserve the estimated input for the complete provider
-			// request, not only the newly appended report prompt. Re-sending the
-			// conversation is fresh provider input usage and consumes the same aggregate
-			// ledger. The preflight below normally rejects an unsafe request first; this
-			// wrapper applies the same authority at the actual stream boundary.
-			const finalizerInputEstimate = estimateSubagentRequestTokens(context).inputTokens ?? 0;
-			const outputAuthority = Math.max(1, snapshot.remainingTokens - finalizerInputEstimate);
+			const inheritedSamplingParams = streamOptions.samplingParams;
+			const profileSamplingParams = sampling.options.samplingParams;
+			const samplingParams =
+				profileSamplingParams && inheritedSamplingParams?.top_p === undefined
+					? { ...inheritedSamplingParams, ...profileSamplingParams }
+					: inheritedSamplingParams;
 			return originalStreamFunction(model, context, {
 				...streamOptions,
-				...(SUBAGENT_HARD_CAP_APIS.has(model.api)
-					? {
-							hardMaxOutputTokens: Math.min(
-								streamOptions.hardMaxOutputTokens ?? outputAuthority,
-								outputAuthority,
-							),
-						}
+				...(streamOptions.temperature === undefined && sampling.options.temperature !== undefined
+					? { temperature: sampling.options.temperature }
 					: {}),
-				...(options.reportOnly?.() ? { toolChoice: "none" as const } : {}),
-				maxTokens:
-					streamOptions?.maxTokens === undefined
-						? outputAuthority
-						: Math.min(streamOptions.maxTokens, outputAuthority),
+				...(samplingParams !== undefined ? { samplingParams } : {}),
 			});
 		}) as StreamFunction;
 	}
-	if (options.shouldStopAfterTurn && childAgent) {
+	if (childAgent) {
 		const previousShouldStopAfterTurn = childAgent.shouldStopAfterTurn;
-		childAgent.shouldStopAfterTurn = async (context, signal) =>
-			(await previousShouldStopAfterTurn?.(context, signal)) ||
-			options.tokenBudgetLedger?.phase === "exhausted" ||
-			options.tokenBudgetLedger?.phase === "finalizing" ||
-			options.shouldStopAfterTurn!();
+		childAgent.shouldStopAfterTurn = async (context, signal) => {
+			if (await previousShouldStopAfterTurn?.(context, signal)) return true;
+			const policy = policyBox.current;
+			return (await policy.shouldStopAfterTurn?.()) ?? false;
+		};
 	}
-	return { session: created.session, profile, tools: childTools, prompt };
+	return {
+		session: created.session,
+		profile,
+		tools: childTools,
+		prompt,
+		...(streamDiagnostics.length > 0 ? { diagnostics: Object.freeze([...streamDiagnostics]) } : {}),
+		...(promptCacheKey ? { promptCacheKey } : {}),
+	};
 }
 
 const WRITER_SYSTEM_PROMPT =
@@ -7037,6 +7595,8 @@ export function assertIceSubagentBackendPolicy(): void {
 export interface NativeSubagentRunnerOptions {
 	createSession?: (options: CreateAgentSessionOptions) => Promise<CreateAgentSessionResult>;
 	agentDir?: string;
+	/** Root for bounded oversized child-report captures. */
+	artifactRoot?: string;
 	/** Optional parent-owned MCP adapter supplied by the host integration. */
 	mcpAdapter?: IceSubagentMcpAdapter;
 	liveSessionRegistry?: SubagentLiveSessionRegistry;
@@ -7054,11 +7614,15 @@ export interface NativeSubagentRunOptions {
 	isAuthorityStillValid?: () => boolean | Promise<boolean>;
 	batchId?: string;
 	taskId?: string;
+	/** Internal sibling execution (for batches/reviews) has no public lifecycle handle or retention. */
+	management?: "public" | "internal";
 	attempt?: 1 | 2;
 	signal?: AbortSignal;
 	onEvent?: (event: SubagentEvent) => void;
 	onRuntimeAttention?: (attention: SubagentRuntimeAttention) => void;
 	onManagedResult?: (result: SubagentResult) => void | Promise<void>;
+	/** Launch-time admission handle; invoked once when supervision starts for this run. */
+	onManagedHandle?: (handle: SubagentManagedHandle) => void;
 	/** Parent-owned lifecycle hook runtime; absent when the feature is disabled. */
 	hookRuntime?: SubagentHookRuntime;
 	/** Optional per-run parent-owned MCP dispatch override. */
@@ -7067,13 +7631,72 @@ export interface NativeSubagentRunOptions {
 	mcpToolAccess?: ReadonlyMap<string, IceSubagentMcpToolAccess>;
 	/** Advisory hook for parent steering (Take Control input); never affects execution. */
 	onSteering?: (runId: string) => void;
-	/** Internal shared ledger for startup fallback/recovery attempts. */
-	tokenBudgetLedger?: TokenBudgetLedger;
+	/** Stage 3 reuse: continue a retained terminal child session instead of creating a new one. */
+	resume?: {
+		session: CreateAgentSessionResult["session"];
+		tools: readonly string[];
+		resumedFromRunId: string;
+		/** Reuse cycles already consumed by this child, carried across re-retention. */
+		resumeCount: number;
+		/** Policy box installed by the original run; this run re-points it at its own policy. */
+		policyBox: SubagentExecutionPolicyBox;
+		/** Tools the current parent policy still authorizes for this child. */
+		eligibleTools: ReadonlySet<string>;
+	};
+}
+
+/** Bounded metadata for a retained terminal child; safe to surface to the parent. */
+export interface RetainedSubagentChild {
+	runId: string;
+	role: string;
+	terminalStatus: string;
+	finishedAt: number;
+	resumeCount: number;
+}
+
+/** Stage 3 reuse options. Deliberately cannot carry model/profile/scope/tool widening. */
+export interface NativeSubagentResumeOptions
+	extends Omit<NativeSubagentRunOptions, "resume" | "model" | "unsafeHostExec" | "projectTrusted"> {
+	/** Parent-owned hook runtime factory, bound to the resumed request. */
+	createHookRuntimeFor?: (request: NormalizedSubagentRequest) => SubagentHookRuntime | undefined;
+	/** Parent-owned revalidation, bound to the resumed request and its hook runtime. */
+	isAuthorityStillValidFor?: (
+		request: NormalizedSubagentRequest,
+		hookRuntime: SubagentHookRuntime | undefined,
+	) => boolean;
+}
+
+/** Stage 1 decision: only verified completions are eligible for reuse. */
+function isReusableTerminalStatus(status: string | undefined): boolean {
+	return status === "completed";
+}
+
+/** Bounded retained terminal children per runner; the oldest is evicted first. */
+const SUBAGENT_RETAINED_CHILD_LIMIT = 8;
+/** Bounded reuse cycles per retained child before it must be deleted. */
+const SUBAGENT_RETAINED_RESUME_LIMIT = 8;
+
+/** Stage 2: a terminal child session retained for explicit reuse or deletion. */
+interface RetainedSubagentSession {
+	runId: string;
+	parentSessionId: string;
+	role: string;
+	terminalStatus: string;
+	finishedAt: number;
+	resumeCount: number;
+	session: CreateAgentSessionResult["session"];
+	tools: readonly string[];
+	request: NormalizedSubagentRequest;
+	model?: Model<Api>;
+	unsafeHostExec: boolean;
+	/** Policy box the original run installed; a resume re-points this exact box. */
+	policyBox: SubagentExecutionPolicyBox;
 }
 
 export class NativeSubagentRunner {
 	private readonly createSession: (options: CreateAgentSessionOptions) => Promise<CreateAgentSessionResult>;
 	private readonly agentDir?: string;
+	private readonly artifactRoot?: string;
 	private readonly liveSessionRegistry?: SubagentLiveSessionRegistry;
 	private readonly agentViewBridge?: IceAgentViewBridge;
 	private readonly supervisorRegistry: SubagentRunSupervisorRegistry<SubagentResult>;
@@ -7081,11 +7704,20 @@ export class NativeSubagentRunner {
 	private readonly runtimeManagementEnabled: boolean;
 	private readonly supervisorOwners = new Map<string, string>();
 	private readonly followUpRequests = new Map<string, Set<string>>();
+	/** Terminal child sessions retained for explicit resume/delete or history inspection. */
+	private readonly retainedChildren = new Map<string, RetainedSubagentSession>();
+	/** Superseded retained runId -> the active run that claimed it while a resume is in flight. */
+	private readonly activeResumeClaims = new Map<string, string>();
+	/** Live multiplexed runs detached from the parent tool call but still under supervision. */
+	private readonly detachedRuns = new Map<string, { promise?: Promise<SubagentResult> }>();
+	/** Terminal result observation ledger for settled managed runs (all terminal states). */
+	private readonly retainedManagedResults = new Map<string, { result: SubagentResult; parentSessionId: string }>();
 
 	constructor(options: NativeSubagentRunnerOptions = {}) {
 		assertIceSubagentBackendPolicy();
 		this.createSession = options.createSession ?? createAgentSession;
 		this.agentDir = options.agentDir;
+		this.artifactRoot = options.artifactRoot;
 		this.liveSessionRegistry = options.liveSessionRegistry;
 		this.agentViewBridge = options.agentViewBridge;
 		this.mcpAdapter = options.mcpAdapter;
@@ -7100,6 +7732,239 @@ export class NativeSubagentRunner {
 			: undefined;
 	}
 
+	/**
+	 * Observational snapshot of a live retained run. Peeking mutates no runtime
+	 * budget and grants no authority; ownership is checked by parent session.
+	 * Settled runs keep serving their bounded terminal observation from the
+	 * retained-result ledger after supervisor cleanup.
+	 */
+	peekRuntime(runId: string, parentSessionId: string): SubagentManagedObservation | undefined {
+		const supervisor = this.getOwnedSupervisor(runId, parentSessionId);
+		if (supervisor) {
+			const snapshot = supervisor.getSnapshot();
+			const { childState, terminal } = projectSubagentManagementState(snapshot);
+			const retained = terminal ? this.retainedManagedResults.get(runId) : undefined;
+			return Object.freeze({
+				runId,
+				childState,
+				terminal,
+				waitExpired: false,
+				attention: Object.freeze({
+					...snapshot,
+					lastActivities: Object.freeze(snapshot.lastActivities.slice(-3)),
+				}),
+				...(retained && retained.parentSessionId === parentSessionId ? { result: retained.result } : {}),
+			});
+		}
+		const retained = this.retainedManagedResults.get(runId);
+		if (retained && retained.parentSessionId === parentSessionId) {
+			return Object.freeze({
+				runId,
+				childState: projectSubagentTerminalStatus(retained.result.status),
+				terminal: true,
+				waitExpired: false,
+				result: retained.result,
+			});
+		}
+		return undefined;
+	}
+
+	/**
+	 * Wait for a terminal or attention child state for at most `waitMs`, then
+	 * return the latest observation. Expiry sets `waitExpired` and never marks
+	 * the child `timed_out`. Event driven through the supervisor lifecycle
+	 * waiters; there is no polling loop.
+	 */
+	async waitRuntime(
+		runId: string,
+		parentSessionId: string,
+		waitMs: number,
+		signal?: AbortSignal,
+	): Promise<SubagentManagedObservation> {
+		if (!Number.isInteger(waitMs) || waitMs < 1 || waitMs > SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS) {
+			throw new SubagentError(
+				"malformed_result",
+				`Management wait must be an integer between 1 and ${SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS} ms.`,
+			);
+		}
+		const supervisor = this.getOwnedSupervisor(runId, parentSessionId);
+		if (!supervisor) {
+			// A settled run can outlive its supervisor in the bounded retained
+			// ledger; there is nothing left to wait for, so report it directly.
+			const settled = this.peekRuntime(runId, parentSessionId);
+			if (settled) return settled;
+			throw new SubagentError(
+				"child_protocol_failure",
+				"The selected subagent is not a live retained run owned by this parent session.",
+			);
+		}
+		const deadline = Date.now() + waitMs;
+		for (;;) {
+			const observation = this.peekRuntime(runId, parentSessionId);
+			if (!observation) {
+				throw new SubagentError(
+					"child_protocol_failure",
+					"The selected subagent is no longer a live retained run owned by this parent session.",
+				);
+			}
+			// Attention states pause the child clock awaiting an explicit decision;
+			// they are wait-satisfying states, not waiting-in-progress states.
+			if (observation.childState !== "running") return observation;
+			let timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+			try {
+				await Promise.race([
+					supervisor.waitForLifecycleChange(signal),
+					new Promise<void>((resolve) => {
+						timer = globalThis.setTimeout(resolve, Math.max(0, deadline - Date.now()));
+					}),
+				]);
+			} finally {
+				if (timer) globalThis.clearTimeout(timer);
+			}
+			// Loop first so a terminal transition racing the deadline is reported
+			// as the observed state; only a still-running child after the deadline
+			// returns with waitExpired (a management expiry, never a child timeout).
+			if (signal?.aborted) {
+				// Parent cancellation stops the wait without inventing a child outcome.
+				const cancelled = this.peekRuntime(runId, parentSessionId);
+				if (!cancelled) {
+					throw new SubagentError(
+						"child_protocol_failure",
+						"The selected subagent is no longer a live retained run owned by this parent session.",
+					);
+				}
+				return cancelled;
+			}
+			if (Date.now() < deadline) continue;
+			const afterDeadline = this.peekRuntime(runId, parentSessionId);
+			if (!afterDeadline) {
+				throw new SubagentError(
+					"child_protocol_failure",
+					"The selected subagent is no longer a live retained run owned by this parent session.",
+				);
+			}
+			if (afterDeadline.childState !== "running") return afterDeadline;
+			return Object.freeze({ ...afterDeadline, waitExpired: true });
+		}
+	}
+
+	/**
+	 * Retain the same child under management so the parent can continue other
+	 * work, without a replacement child and without replaying the initial prompt.
+	 * The same run ID, session, model, profile, scope, and tool authority
+	 * continue. A running child is retained in place and no budget changes; a
+	 * paused child resumes under the separate bounded retention pool, never the
+	 * extension reserve, so detaching cannot silently spend extension budget.
+	 * Idempotent per run.
+	 */
+	detachRuntime(runId: string, parentSessionId: string): SubagentManagedObservation | undefined {
+		const supervisor = this.getOwnedSupervisor(runId, parentSessionId);
+		if (!supervisor) {
+			const retained = this.retainedChildren.get(runId);
+			if (
+				this.getRetainedManagedResult(runId, parentSessionId) ||
+				(retained !== undefined && retained.parentSessionId === parentSessionId)
+			) {
+				throw new SubagentError(
+					"child_protocol_failure",
+					"The selected subagent is already terminal; detach is live-only.",
+				);
+			}
+			return undefined;
+		}
+		const state = supervisor.stateValue;
+		if (state === "terminal") {
+			throw new SubagentError(
+				"child_protocol_failure",
+				"The selected subagent is already terminal; detach is live-only.",
+			);
+		}
+		if (!this.detachedRuns.has(runId)) {
+			if (state === "awaiting_extension") {
+				const retentionMs = Math.min(
+					SUBAGENT_DETACH_RETENTION_MS,
+					supervisor.getSnapshot().remainingRetentionMs ?? 0,
+				);
+				if (retentionMs < 1_000) return undefined;
+				const continuation = supervisor.retain(retentionMs);
+				this.detachedRuns.set(runId, { promise: continuation });
+				// The continuation settles through the runner managed-terminal path;
+				// swallow only the detached rejection so it cannot become unhandled.
+				void continuation.catch(() => {});
+			} else {
+				// Retain in place: the child keeps running under its admitted budget
+				// and the parent simply stops blocking on it.
+				this.detachedRuns.set(runId, {});
+			}
+		}
+		return this.peekRuntime(runId, parentSessionId);
+	}
+
+	/** Terminal result of a settled retained run; absent while the run is live. */
+	getRetainedManagedResult(runId: string, parentSessionId: string): SubagentResult | undefined {
+		const retained = this.retainedManagedResults.get(runId);
+		return retained && retained.parentSessionId === parentSessionId ? retained.result : undefined;
+	}
+
+	/**
+	 * Store a terminal managed result for post-terminal observation. Returns true
+	 * only for the first publication of a run, which is the exactly-once guard
+	 * shared by every managed terminal observer.
+	 *
+	 * The result ledger is keyed by managed run identity. A `resume` mints a new
+	 * run id for the continued execution, so the superseded terminal handle keeps
+	 * its own observation until it is explicitly deleted or evicted; it never
+	 * masquerades as the resumed run.
+	 */
+	noteManagedTerminalResult(runId: string, parentSessionId: string, result: SubagentResult): boolean {
+		if (this.activeResumeClaims.has(runId)) return false;
+		if (this.retainedManagedResults.has(runId)) return false;
+		if (result.status === "needs_time") return false;
+		this.retainedManagedResults.set(runId, { result, parentSessionId });
+		this.detachedRuns.delete(runId);
+		while (this.retainedManagedResults.size > SUBAGENT_RETAINED_RESULT_LIMIT) {
+			const oldest = this.retainedManagedResults.keys().next().value;
+			if (oldest === undefined) break;
+			this.retainedManagedResults.delete(oldest);
+		}
+		return true;
+	}
+
+	/**
+	 * Publish a terminal result for a run whose terminal path is owned by the
+	 * runner promise rather than a supervisor callback. This covers runs the
+	 * parent stopped blocking on at launch time, so their completion is still
+	 * observable through the retained-result ledger. It runs before the
+	 * supervisor is terminated and unregistered, so a concurrent management wait
+	 * never observes a gap between terminal state and the retained result.
+	 * Idempotent.
+	 */
+	private async settleManagedRun(
+		runId: string,
+		parentSessionId: string,
+		result: SubagentResult,
+		onManagedResult?: (result: SubagentResult) => void | Promise<void>,
+	): Promise<void> {
+		if (!this.runtimeManagementEnabled) return;
+		// A retry-safe startup failure is not terminal for the run: the shared
+		// recovery loop re-attempts the same run ID.
+		if (result.status === "needs_time" || result.retrySafeStartup === true) return;
+		// Retain before the terminal transition wakes any pending management wait,
+		// so a waiter never observes terminal state without a retained result.
+		const firstPublication = this.noteManagedTerminalResult(runId, parentSessionId, result);
+		this.getOwnedSupervisor(runId, parentSessionId)?.finish(result, result.status);
+		if (firstPublication && onManagedResult) {
+			// A run that reached its terminal state without an extension or stop
+			// decision never passes through finalizeManaged, so its durable observer
+			// is notified here to keep terminal publication exactly once.
+			try {
+				await onManagedResult(result);
+			} catch {
+				// Durable/job observers cannot change a terminal child result.
+			}
+		}
+	}
+
 	async extendRuntime(runId: string, parentSessionId: string, additionalMs: number): Promise<SubagentResult> {
 		const supervisor = this.getOwnedSupervisor(runId, parentSessionId);
 		if (!supervisor) throw new SubagentError("child_protocol_failure", "The selected subagent is not extendable.");
@@ -7108,7 +7973,13 @@ export class NativeSubagentRunner {
 
 	async stopRuntime(runId: string, parentSessionId: string): Promise<SubagentResult> {
 		const supervisor = this.getOwnedSupervisor(runId, parentSessionId);
-		if (!supervisor) throw new SubagentError("child_protocol_failure", "The selected subagent is not running.");
+		if (!supervisor) {
+			// A settled run outlives its supervisor in the bounded retained ledger;
+			// stopping it again reports the same terminal result instead of failing.
+			const settled = this.getRetainedManagedResult(runId, parentSessionId);
+			if (settled) return settled;
+			throw new SubagentError("child_protocol_failure", "The selected subagent is not running.");
+		}
 		return supervisor.stop("cancelled");
 	}
 
@@ -7153,12 +8024,257 @@ export class NativeSubagentRunner {
 		await this.supervisorRegistry.shutdownAll();
 		this.supervisorOwners.clear();
 		this.followUpRequests.clear();
+		this.detachedRuns.clear();
+		this.retainedManagedResults.clear();
+		// Deterministic cleanup: await every retained session's shutdown event and dispose
+		// rather than returning while disposal is still in flight.
+		await Promise.allSettled(
+			[...this.retainedChildren.values()].map((retained) => shutdownChildSession(retained.session)),
+		);
+		this.retainedChildren.clear();
+		this.activeResumeClaims.clear();
 	}
 
-	private getOwnedSupervisor(
+	/** Bounded retention of terminal children eligible for reuse or deletion. */
+	/** True when a retained entry already owns this exact child session. */
+	private hasRetainedSession(session: CreateAgentSessionResult["session"]): boolean {
+		for (const value of this.retainedChildren.values()) {
+			if (value.session === session) return true;
+		}
+		return false;
+	}
+
+	/** Drops any retained entry owning this exact child session, so no stale handle survives. */
+	private dropRetainedSession(session: CreateAgentSessionResult["session"]): void {
+		for (const [key, value] of this.retainedChildren) {
+			if (value.session === session) this.retainedChildren.delete(key);
+		}
+	}
+
+	private async retainTerminalChild(child: RetainedSubagentSession): Promise<void> {
+		// One retained entry per child session: a resume re-retains the same session under the
+		// new run id, so the superseded entry must not linger as a stale handle.
+		this.dropRetainedSession(child.session);
+		this.retainedChildren.set(child.runId, child);
+		while (this.retainedChildren.size > SUBAGENT_RETAINED_CHILD_LIMIT) {
+			const oldest = this.retainedChildren.keys().next();
+			if (oldest.done) break;
+			const evicted = this.retainedChildren.get(oldest.value);
+			this.retainedChildren.delete(oldest.value);
+			// Eviction forgets the managed terminal observation as well, so a peek
+			// cannot outlive the retained session it describes.
+			this.retainedManagedResults.delete(oldest.value);
+			this.detachedRuns.delete(oldest.value);
+			if (evicted) await shutdownChildSession(evicted.session);
+		}
+	}
+
+	/** Stage 3: continue a retained completed child in its original session and authority. */
+	async resumeRuntime(
 		runId: string,
 		parentSessionId: string,
-	): SubagentRunSupervisor<SubagentResult> | undefined {
+		message: string,
+		parentActiveTools: readonly string[],
+		options: NativeSubagentResumeOptions = {},
+	): Promise<SubagentResult> {
+		if (this.activeResumeClaims.has(runId)) {
+			throw new SubagentError("child_protocol_failure", "The retained subagent is already resuming.");
+		}
+		const retained = this.retainedChildren.get(runId);
+		if (!retained || retained.parentSessionId !== parentSessionId) {
+			throw new SubagentError(
+				"child_protocol_failure",
+				"The selected subagent is not a retained terminal child owned by this parent session.",
+			);
+		}
+		// Only a verified completion is reusable. Failed, cancelled, and timed-out terminal
+		// children stay retained for inspection and deletion but cannot be resumed.
+		if (!isReusableTerminalStatus(retained.terminalStatus)) {
+			throw new SubagentError(
+				"child_protocol_failure",
+				`Only a completed retained subagent can be resumed; this one is ${retained.terminalStatus}.`,
+			);
+		}
+		if (message.trim().length === 0 || Buffer.byteLength(message) > 8 * 1024) {
+			throw new SubagentError("malformed_result", "Resume message must be nonempty and at most 8 KiB.");
+		}
+		if (retained.resumeCount >= SUBAGENT_RETAINED_RESUME_LIMIT) {
+			throw new SubagentError(
+				"child_protocol_failure",
+				"The retained subagent has reached its reuse limit and must be deleted.",
+			);
+		}
+		// Reject pre-start conditions before consuming the retained handle.
+		if (!parentActiveTools.includes("delegate")) {
+			throw new SubagentError("capability_denied", "Delegation is not active in the parent policy.");
+		}
+		if (options.signal?.aborted) {
+			throw new SubagentError("cancellation", "Parent cancellation arrived before retained-child resume.");
+		}
+		this.revalidateResumedChild(retained, parentActiveTools);
+		// A new run identity keeps verifySubagentResult lineage sound; the retained session keeps
+		// its conversation history, and no resume parameter can widen the original authority.
+		const request: NormalizedSubagentRequest = {
+			...retained.request,
+			runId: randomUUID(),
+			task: message.trim(),
+		};
+		const { isAuthorityStillValidFor, createHookRuntimeFor, ...rest } = options;
+		const hookRuntime = createHookRuntimeFor?.(request);
+		// Fail closed before any resumed model turn when current authority has drifted. The
+		// retained session's wrappers are rebound through its mutable execution-policy box below.
+		if (isAuthorityStillValidFor && !isAuthorityStillValidFor(request, hookRuntime)) {
+			throw new SubagentError(
+				"capability_denied",
+				"Current settings, trust, profile, resources, or hooks no longer authorize resuming this child.",
+			);
+		}
+		retained.resumeCount += 1;
+		// Claim the handle synchronously before the first await: while this execution is in
+		// flight the superseded handle must reject both a second resume and a delete, and the
+		// reused session must not be reachable through two identities at once. The old
+		// terminal observation is forgotten at the same instant so the superseded run id
+		// cannot keep serving a stale peekable result while its session is live again.
+		this.retainedChildren.delete(runId);
+		this.retainedManagedResults.delete(runId);
+		this.detachedRuns.delete(runId);
+		this.activeResumeClaims.set(runId, request.runId);
+		// Defence in depth beside `revalidateResumedChild`: the resumed run's policy carries the
+		// intersection of the child's original tools with current parent authority, so a tool
+		// removed since the original run fails closed at dispatch, not only at this boundary.
+		const resumedMcpTools = new Set((retained.request.selectedMcpTools ?? []).map(subagentMcpToolName));
+		const resumedEligibleTools = new Set(
+			retained.tools.filter((tool) => parentActiveTools.includes(tool) || resumedMcpTools.has(tool)),
+		);
+		try {
+			return await this.runResolved(request, parentActiveTools, {
+				...rest,
+				// Model, unsafe-exec, and trust state are reused verbatim: the resume surface
+				// exposes no parameter that could widen the child's original authority.
+				model: retained.model,
+				unsafeHostExec: retained.unsafeHostExec,
+				projectTrusted: retained.request.projectTrusted,
+				hookRuntime,
+				isAuthorityStillValid: isAuthorityStillValidFor
+					? () => isAuthorityStillValidFor(request, hookRuntime)
+					: undefined,
+				resume: {
+					session: retained.session,
+					tools: retained.tools,
+					resumedFromRunId: runId,
+					resumeCount: retained.resumeCount,
+					policyBox: retained.policyBox,
+					eligibleTools: resumedEligibleTools,
+				},
+			});
+		} catch (error) {
+			// Restore the handle so a thrown execution cannot silently drop retained state.
+			this.activeResumeClaims.delete(runId);
+			if (!this.hasRetainedSession(retained.session)) this.retainedChildren.set(runId, retained);
+			throw error;
+		}
+	}
+
+	/** Fail-closed revalidation for reuse; mirrors the launch-time authority gates. */
+	private revalidateResumedChild(retained: RetainedSubagentSession, parentActiveTools: readonly string[]): void {
+		revalidateSubagentProfile(retained.request.profile);
+		revalidateSubagentResources(retained.request.resources);
+		if (retained.unsafeHostExec) {
+			if (!retained.request.projectTrusted) {
+				throw new SubagentError("capability_denied", "Unsafe subagent host execution requires a trusted project.");
+			}
+			if (!parentActiveTools.includes("bash")) {
+				throw new SubagentError(
+					"capability_denied",
+					"Unsafe subagent host execution requires parent Bash capability.",
+				);
+			}
+		}
+		const mcpToolNames = new Set((retained.request.selectedMcpTools ?? []).map(subagentMcpToolName));
+		if (retained.request.mcpAuthorityStillValid?.() === false) {
+			throw new SubagentError("capability_denied", "Selected MCP authority changed since the child was retained.");
+		}
+		for (const delegated of retained.request.delegatedTools ?? []) {
+			if (!delegated.isCurrent() || !parentActiveTools.includes(delegated.name)) {
+				throw new SubagentError("capability_denied", `Delegated tool ${delegated.name} was revoked.`);
+			}
+		}
+		// Ordinary child tools must still be active in the parent. MCP definitions are synthetic
+		// child names and are validated by the captured MCP authority fingerprint above.
+		const revokedTools = retained.tools.filter(
+			(tool) => !mcpToolNames.has(tool) && !parentActiveTools.includes(tool),
+		);
+		if (revokedTools.length > 0) {
+			throw new SubagentError(
+				"capability_denied",
+				`Resumed child tool authority is no longer active in the parent: ${revokedTools.join(", ")}.`,
+			);
+		}
+	}
+
+	/**
+	 * Stage 4: owner-scoped, idempotent removal of a retained terminal child.
+	 * Forgets the reusable session, the managed terminal observation, and any
+	 * detached multiplexing handle together: after a successful delete no
+	 * management operation may keep serving the forgotten run's result.
+	 */
+	async deleteRetainedChild(runId: string, parentSessionId: string): Promise<{ runId: string; deleted: boolean }> {
+		// A handle claimed by an in-flight resume is still active: deleting it would dispose
+		// the session underneath the running execution.
+		if (this.activeResumeClaims.has(runId)) {
+			throw new SubagentError(
+				"child_protocol_failure",
+				"The selected subagent is still active; stop it before deleting.",
+			);
+		}
+		const retained = this.retainedChildren.get(runId);
+		if (!retained) {
+			if (this.supervisorOwners.get(runId) === parentSessionId) {
+				throw new SubagentError(
+					"child_protocol_failure",
+					"The selected subagent is still active; stop it before deleting.",
+				);
+			}
+			// Idempotent: an unknown or already-forgotten child session is not an error.
+			// A terminal observation without a retained session (for example, a startup
+			// failure) remains observable through peek; there is no session to delete.
+			return { runId, deleted: false };
+		}
+		if (retained.parentSessionId !== parentSessionId) {
+			throw new SubagentError(
+				"child_protocol_failure",
+				"The selected subagent is not a retained terminal child owned by this parent session.",
+			);
+		}
+		this.retainedChildren.delete(runId);
+		this.retainedManagedResults.delete(runId);
+		this.detachedRuns.delete(runId);
+		this.agentViewBridge?.removeHistoricalSnapshot(runId);
+		await shutdownChildSession(retained.session);
+		return { runId, deleted: true };
+	}
+
+	/** Bounded metadata for the retained terminal children of one parent session. */
+	listRetainedChildren(parentSessionId: string): readonly RetainedSubagentChild[] {
+		return Object.freeze(
+			[...this.retainedChildren.values()]
+				.filter((child) => child.parentSessionId === parentSessionId)
+				.map((child) =>
+					Object.freeze({
+						runId: child.runId,
+						role: child.role,
+						terminalStatus: child.terminalStatus,
+						finishedAt: child.finishedAt,
+						resumeCount: child.resumeCount,
+					}),
+				),
+		);
+	}
+
+	/** Owner-scoped live supervisor lookup. Public so the phase-aware `manage_subagent`
+	 * dispatcher can gate live-only actions (detach/stop) against terminal-only
+	 * actions (resume/delete) without reaching into the registry. */
+	getOwnedSupervisor(runId: string, parentSessionId: string): SubagentRunSupervisor<SubagentResult> | undefined {
 		if (this.supervisorOwners.get(runId) !== parentSessionId) return undefined;
 		return this.supervisorRegistry.get(runId);
 	}
@@ -7181,46 +8297,7 @@ export class NativeSubagentRunner {
 		parentActiveTools: readonly string[],
 		options: NativeSubagentRunOptions = {},
 	): Promise<SubagentResult> {
-		let result = await this.runResolvedInternal(normalized, parentActiveTools, options);
-		if (normalized.execution.maxTotalTokens !== undefined && !result.budget) {
-			const fallbackLedger =
-				options.tokenBudgetLedger ??
-				new TokenBudgetLedger(
-					normalized.execution.maxTotalTokens,
-					options.model
-						? SUBAGENT_HARD_CAP_APIS.has(options.model.api)
-							? "enforced"
-							: "aggregate-soft"
-						: undefined,
-				);
-			if (options.tokenBudgetLedger && options.model) {
-				fallbackLedger.setHardCapMode(
-					SUBAGENT_HARD_CAP_APIS.has(options.model.api) ? "enforced" : "aggregate-soft",
-				);
-			}
-			const snapshot =
-				options.tokenBudgetLedger && result.retrySafeStartup === true
-					? fallbackLedger.snapshot()
-					: fallbackLedger.settle();
-			result = {
-				...result,
-				budget: {
-					maxTotalTokens: snapshot.maxTotalTokens,
-					workPhaseLimit: snapshot.workPhaseLimit,
-					reportReserveTokens: snapshot.reportReserveTokens,
-					chargedTokens: snapshot.chargedTokens,
-					remainingTokens: snapshot.remainingTokens,
-					inputTokens: snapshot.inputTokens,
-					outputTokens: snapshot.outputTokens,
-					cacheReadTokens: snapshot.cacheReadTokens,
-					cacheWriteTokens: snapshot.cacheWriteTokens,
-					overshootTokens: snapshot.overshootTokens,
-					accounting: snapshot.accounting,
-					exhausted: snapshot.chargedTokens > snapshot.workPhaseLimit,
-					hardCap: snapshot.hardCap,
-				},
-			};
-		}
+		const result = await this.runResolvedInternal(normalized, parentActiveTools, options);
 		if (result.status !== "needs_time") await flushSubagentHookObservations(options.hookRuntime);
 		const records = options.hookRuntime?.records;
 		return records && records.length > 0 ? { ...result, hookRecords: Object.freeze([...records]) } : result;
@@ -7232,41 +8309,23 @@ export class NativeSubagentRunner {
 		options: NativeSubagentRunOptions = {},
 	): Promise<SubagentResult> {
 		const runId = normalized.runId;
+		const publicManagementEnabled = this.runtimeManagementEnabled && options.management !== "internal";
+		const agentViewEnabled = options.management !== "internal";
 		const attemptDeadline = Date.now() + normalized.timeoutMs;
 		const profile = normalized.profile;
 		const startedAt = Date.now();
-		const tokenBudgetLedger =
-			options.tokenBudgetLedger ??
-			(normalized.execution.maxTotalTokens !== undefined
-				? new TokenBudgetLedger(
-						normalized.execution.maxTotalTokens,
-						options.model
-							? SUBAGENT_HARD_CAP_APIS.has(options.model.api)
-								? "enforced"
-								: "aggregate-soft"
-							: undefined,
-					)
-				: undefined);
-		if (tokenBudgetLedger && options.model) {
-			tokenBudgetLedger.setHardCapMode(
-				SUBAGENT_HARD_CAP_APIS.has(options.model.api) ? "enforced" : "aggregate-soft",
-			);
-		}
-		const tokenDiagnostics: SubagentDiagnostic[] = [];
-		let tokenWorkExhausted = false;
-		const emittedTokenBudgetPhases = new Set<SubagentTokenBudgetTracePhase>();
-		/** Tool calls denied by the token gate; their lifecycle events are suppressed. */
-		const tokenDeniedToolCallIds = new Set<string>();
-		let tokenUsageReconciler: SessionUsageReconciler | undefined;
 		const base = {
 			runId,
 			parentSessionId: normalized.parentSessionId,
 			profile: profile.name,
+			color: profile.color,
 			source: profile.source,
 			batchId: options.batchId,
 			model: modelLabel(options.model),
 			attempt: options.attempt,
+			...(options.resume ? { resumedFromRunId: options.resume.resumedFromRunId } : {}),
 			observedOutputBytes: 0,
+			reportMode: normalized.reportMode,
 			...(normalized.scope.targets?.length ? { scopeTargets: [...normalized.scope.targets] } : {}),
 		};
 		if (!parentActiveTools.includes("delegate")) {
@@ -7288,12 +8347,18 @@ export class NativeSubagentRunner {
 			};
 		}
 
+		// One mutable policy box per child session. A fresh run installs it; a resumed run re-points
+		// the box the original run's wrappers already read, so a reused `AgentSession` dispatches
+		// against current hooks, authority, and budgets instead of inheriting the original run's
+		// closures. Declared before the terminal cleanup below, which publishes the same box with
+		// the retained child so a later resume re-points the very box those wrappers hold.
+		const policyBox: SubagentExecutionPolicyBox = options.resume?.policyBox ?? {
+			current: { eligibleTools: new Set<string>(), strictEligibility: false },
+		};
 		let childSession: NativeSubagentSession["session"] | undefined;
 		let observedOutputBytes = 0;
-		let control: "cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted" | undefined;
-		let resolveControl:
-			| ((reason: "cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted") => void)
-			| undefined;
+		let control: "cancelled" | "timed_out" | "output_truncated" | undefined;
+		let resolveControl: ((reason: "cancelled" | "timed_out" | "output_truncated") => void) | undefined;
 		let outputLimitReached = false;
 		let removeAbortListener: (() => void) | undefined;
 		let supervisor: SubagentRunSupervisor<SubagentResult> | undefined;
@@ -7301,40 +8366,39 @@ export class NativeSubagentRunner {
 		let cleanupPromise: Promise<void> | undefined;
 		let unsubscribeChild: (() => void) | undefined;
 		let releaseLiveSession: (() => void) | undefined;
+		let retainedChildTools: readonly string[] = [];
 		let liveControl: IceAgentViewLiveSessionControl | undefined;
 		let childToolFailed = false;
+		const runDiagnostics: SubagentDiagnostic[] = [];
 		let reportOnly = false;
 		let authorityRevoked = false;
 		let lastProgressAt = 0;
+		let retryState: SubagentRetryState | undefined;
+		let wrapUpRequested = false;
+		let wrapUpPromptStarted = false;
 		let terminalStatus: string | undefined;
-		// W15/W16: enforced turn and tool-call budgets. Reservation happens before
-		// dispatch so parallel scheduling cannot oversubscribe the shared counter;
-		// cancellation never refunds an executed side-effecting call.
-		const maxTurns = normalized.execution.maxTurns;
-		const maxToolCalls = normalized.execution.maxToolCalls;
+		// Terminal result of this attempt, captured before teardown so the retained
+		// ledger is populated ahead of supervisor cleanup.
+		let settledTerminalResult: SubagentResult | undefined;
+		// Per-child turn and tool-call ceilings were intentionally removed. Keep
+		// observed turn telemetry and reserve only the final wall-clock window so
+		// the child can finish a useful answer before its real timeout.
 		let observedTurns = 0;
-		let dispatchedToolCalls = 0;
-		let reservedToolCalls = 0;
-		const reservedToolCallIds = new Set<string>();
-		let budgetExhausted: "turns" | "tool-calls" | undefined;
-		const reserveToolCall = (toolCallId?: string): boolean => {
-			if (toolCallId && reservedToolCallIds.has(toolCallId)) return true;
-			if (dispatchedToolCalls + reservedToolCalls >= maxToolCalls) {
-				budgetExhausted = "tool-calls";
-				return false;
-			}
-			reservedToolCalls += 1;
-			if (toolCallId) reservedToolCallIds.add(toolCallId);
+		const wrapUpWallReserveMs = Math.min(
+			SUBAGENT_WRAP_UP_LIMITS.maximumWallReserveMs,
+			Math.max(
+				SUBAGENT_WRAP_UP_LIMITS.minimumWallReserveMs,
+				Math.floor(normalized.timeoutMs * SUBAGENT_WRAP_UP_LIMITS.wallReserveRatio),
+			),
+		);
+		const requestWrapUpIfNeeded = (): boolean => {
+			if (wrapUpRequested || wrapUpPromptStarted || reportOnly || liveControl?.isControlled()) return false;
+			const wallThreshold = Date.now() >= attemptDeadline - wrapUpWallReserveMs;
+			if (!wallThreshold) return false;
+			wrapUpRequested = true;
+			supervisor?.setPhase("wrapping_up");
+			emit("subagent_wrap_up", "running");
 			return true;
-		};
-		const settleToolReservation = (executed: boolean, toolCallId?: string): void => {
-			if (toolCallId) {
-				if (!reservedToolCallIds.delete(toolCallId)) return;
-			} else if (reservedToolCalls === 0) {
-				return;
-			}
-			if (reservedToolCalls > 0) reservedToolCalls -= 1;
-			if (executed) dispatchedToolCalls += 1;
 		};
 		let childAbortPromise: Promise<void> | undefined;
 		const abortChild = async (): Promise<void> => {
@@ -7360,14 +8424,19 @@ export class NativeSubagentRunner {
 				unsubscribeChild?.();
 				unsubscribeChild = undefined;
 				liveControl?.markTerminal();
-				if (childSession && terminalStatus) {
+				if (agentViewEnabled && childSession && terminalStatus) {
+					presentation = presentation
+						? normalizeIceAgentViewPresentation({ ...presentation, compacting: false })
+						: presentation;
 					this.agentViewBridge?.registerHistoricalSnapshot({
 						runId,
 						role: profile.name,
+						color: profile.color,
 						taskId: options.taskId,
 						model: modelLabel(options.model ?? childSession.model),
 						authority: options.unsafeHostExec === true ? "yolo" : "safe",
 						status: terminalStatus,
+						retentionState: isReusableTerminalStatus(terminalStatus) ? "reusable" : "history-only",
 						startedAt,
 						finishedAt: Date.now(),
 						presentation,
@@ -7382,13 +8451,30 @@ export class NativeSubagentRunner {
 				this.supervisorOwners.delete(runId);
 				this.followUpRequests.delete(runId);
 				if (childSession) {
-					try {
-						tokenUsageReconciler?.finalize(childSession.getSessionStats());
-					} catch {
-						// Terminal usage reconciliation is best effort; observed message usage remains charged.
-						tokenBudgetLedger?.settle();
+					// Every terminal child with a session remains inspectable and deletable. Only verified
+					// completions are reusable; failed, cancelled, and timed-out children are history-only.
+					// The resume claim ends here; retention republishes exactly one handle.
+					if (options.resume) this.activeResumeClaims.delete(options.resume.resumedFromRunId);
+					const keepRetained = options.management !== "internal" && terminalStatus !== undefined;
+					if (keepRetained) {
+						await this.retainTerminalChild({
+							runId,
+							parentSessionId: normalized.parentSessionId,
+							role: profile.name,
+							terminalStatus: terminalStatus ?? "completed",
+							finishedAt: Date.now(),
+							resumeCount: options.resume?.resumeCount ?? 0,
+							session: childSession,
+							tools: retainedChildTools,
+							request: normalized,
+							model: options.model,
+							unsafeHostExec: options.unsafeHostExec === true,
+							policyBox,
+						});
+					} else {
+						this.dropRetainedSession(childSession);
+						await shutdownChildSession(childSession);
 					}
-					await shutdownChildSession(childSession);
 				}
 			})();
 			return cleanupPromise;
@@ -7400,7 +8486,12 @@ export class NativeSubagentRunner {
 			path?: string,
 			toolCallId?: string,
 			attention?: SubagentRuntimeAttention,
-			tokenBudgetPhase?: SubagentTokenBudgetTracePhase,
+			compaction?: {
+				reason: SubagentCompactionReason;
+				status: SubagentCompactionStatus;
+				willRetry?: boolean;
+			},
+			retry?: SubagentRetryState,
 		) => {
 			if (
 				type === "subagent_completed" ||
@@ -7420,7 +8511,14 @@ export class NativeSubagentRunner {
 				...(toolCallId ? { toolCallId } : {}),
 				...(safePath ? { path: safePath } : {}),
 				...(attention ? { attention } : {}),
-				...(tokenBudgetPhase ? { tokenBudgetPhase } : {}),
+				...(compaction
+					? {
+							compactionReason: compaction.reason,
+							compactionStatus: compaction.status,
+							...(compaction.willRetry !== undefined ? { compactionWillRetry: compaction.willRetry } : {}),
+						}
+					: {}),
+				...(retry ? { retry } : {}),
 			});
 		};
 		const observeAssistantText = (): string => {
@@ -7428,21 +8526,37 @@ export class NativeSubagentRunner {
 			observedOutputBytes = Buffer.byteLength(text);
 			return text;
 		};
+		const spillAssistantOutput = (
+			text: string,
+			contentType: SubagentReportArtifact["contentType"] = "text/plain",
+		): SubagentReportArtifact | undefined =>
+			Buffer.byteLength(text, "utf8") > normalized.maxOutputBytes
+				? writeSubagentReportArtifact({
+						runId,
+						content: text,
+						artifactRoot: this.artifactRoot,
+						contentType,
+					})
+				: undefined;
+		const reportSpillDiagnostic = (
+			text: string,
+			artifact: SubagentReportArtifact | undefined,
+		): SubagentDiagnostic | undefined => {
+			if (Buffer.byteLength(text, "utf8") <= normalized.maxOutputBytes) return undefined;
+			return artifact
+				? {
+						code: "report_spilled",
+						message: `Oversized child output was preserved at ${artifact.path} (${artifact.originalBytes} bytes${artifact.truncated ? ", artifact truncated" : ""}).`,
+					}
+				: {
+						code: "report_artifact_failure",
+						message: "Oversized child output could not be preserved as a local artifact.",
+					};
+		};
 		const observeUsage = (): SubagentUsage | undefined => {
 			if (!childSession) return undefined;
 			try {
 				const stats = childSession.getSessionStats();
-				if (tokenUsageReconciler) {
-					tokenUsageReconciler.reconcile(stats);
-					const snapshot = tokenUsageReconciler.snapshot();
-					return {
-						inputTokens: snapshot.inputTokens,
-						outputTokens: snapshot.outputTokens,
-						cacheReadTokens: snapshot.cacheReadTokens,
-						cacheWriteTokens: snapshot.cacheWriteTokens,
-						cost: snapshot.cost,
-					};
-				}
 				return {
 					inputTokens: stats.tokens.input,
 					outputTokens: stats.tokens.output,
@@ -7454,13 +8568,7 @@ export class NativeSubagentRunner {
 				return undefined;
 			}
 		};
-		const emitTokenBudgetEvent = (phase: SubagentTokenBudgetTracePhase): void => {
-			if (emittedTokenBudgetPhases.has(phase)) return;
-			emittedTokenBudgetPhases.add(phase);
-			emit("subagent_token_budget", "running", undefined, undefined, undefined, undefined, phase);
-		};
 		emit("subagent_created", "created");
-		if (tokenBudgetLedger) emitTokenBudgetEvent("resolved");
 
 		const activeToolActivities = new Map<string, SubagentToolActivityDigest>();
 		const touchedPaths = new Set<string>();
@@ -7511,79 +8619,19 @@ export class NativeSubagentRunner {
 		};
 		let terminalHookObserved = false;
 		let observeTerminalHook: (result?: SubagentResult) => Promise<void> = async () => {};
-		const tokenBudgetSummary = (): SubagentTokenBudgetSummary | undefined => {
-			const snapshot = tokenBudgetLedger?.snapshot();
-			if (!snapshot) return undefined;
-			return {
-				maxTotalTokens: snapshot.maxTotalTokens,
-				workPhaseLimit: snapshot.workPhaseLimit,
-				reportReserveTokens: snapshot.reportReserveTokens,
-				chargedTokens: snapshot.chargedTokens,
-				remainingTokens: snapshot.remainingTokens,
-				inputTokens: snapshot.inputTokens,
-				outputTokens: snapshot.outputTokens,
-				cacheReadTokens: snapshot.cacheReadTokens,
-				cacheWriteTokens: snapshot.cacheWriteTokens,
-				overshootTokens: snapshot.overshootTokens,
-				accounting: snapshot.accounting,
-				exhausted: tokenWorkExhausted || snapshot.chargedTokens > snapshot.workPhaseLimit,
-				hardCap: snapshot.hardCap,
-			};
-		};
 		const decorateSubagentResult = (result: SubagentResult): SubagentResult => {
-			if (result.status !== "needs_time") {
-				if (tokenUsageReconciler && childSession) {
-					try {
-						tokenUsageReconciler.reconcile(childSession.getSessionStats());
-					} catch {
-						if (!tokenDiagnostics.some((entry) => entry.code === "token_usage_invalid"))
-							tokenDiagnostics.push({
-								code: "token_usage_invalid",
-								message: "Terminal session token statistics could not be reconciled.",
-							});
-					}
-				} else if (!(options.tokenBudgetLedger && result.retrySafeStartup === true)) {
-					tokenBudgetLedger?.settle();
-				}
-			}
+			const usage = observeUsage();
 			const hookRecords = options.hookRuntime ? Object.freeze(options.hookRuntime.records.slice()) : undefined;
-			const budget = tokenBudgetLedger?.snapshot();
-			const reconciledUsage =
-				budget && tokenUsageReconciler
-					? {
-							inputTokens: budget.inputTokens,
-							outputTokens: budget.outputTokens,
-							cacheReadTokens: budget.cacheReadTokens,
-							cacheWriteTokens: budget.cacheWriteTokens,
-							cost: budget.cost,
-						}
-					: undefined;
-			const budgetSummary = tokenBudgetSummary();
 			return {
 				...result,
-				...(reconciledUsage ? { usage: reconciledUsage } : {}),
+				diagnostics: [
+					...result.diagnostics,
+					...runDiagnostics.filter(
+						(diagnostic) => !result.diagnostics.some((entry) => entry.message === diagnostic.message),
+					),
+				],
+				...(usage ? { usage } : {}),
 				observedTurns,
-				...(budgetSummary ? { budget: budgetSummary } : {}),
-				...(budgetSummary?.exhausted &&
-				!result.diagnostics.some((entry) => entry.code === "token_budget_exhausted") &&
-				!tokenDiagnostics.some((entry) => entry.code === "token_budget_exhausted")
-					? {
-							diagnostics: [
-								...result.diagnostics,
-								{ code: "token_budget_exhausted", message: "Token work budget exhausted." },
-							],
-						}
-					: {}),
-				...(tokenDiagnostics.length > 0
-					? {
-							diagnostics: [
-								...result.diagnostics,
-								...tokenDiagnostics.filter(
-									(entry) => !result.diagnostics.some((item) => item.code === entry.code),
-								),
-							],
-						}
-					: {}),
 				...(hookRecords && hookRecords.length > 0 ? { hookRecords } : {}),
 			};
 		};
@@ -7599,69 +8647,67 @@ export class NativeSubagentRunner {
 				normalized.selectedMcpTools ?? [],
 				options.unsafeHostExec === true,
 			);
-			const startupPromise = createNativeSubagentSession(
-				{
-					request: normalized,
-					parentActiveTools,
-					model: options.model,
-					modelRuntime: options.modelRuntime,
-					agentDir: this.agentDir,
-					unsafeHostExec: options.unsafeHostExec,
-					mcpDispatch: mcpRuntime.dispatch,
-					parentMcpTools: mcpRuntime.parentMcpTools,
-					mcpToolAccess: mcpRuntime.mcpToolAccess,
-					hookRuntime: options.hookRuntime ? { ...options.hookRuntime, attempt: options.attempt } : undefined,
-					beforeTool: async (toolName, toolCallId, params, signal) => {
-						if (tokenBudgetLedger && tokenBudgetLedger.phase !== "work") {
-							emitTokenBudgetEvent("tool_denied");
-							if (!tokenDiagnostics.some((entry) => entry.code === "token_budget_exhausted"))
-								tokenDiagnostics.push({
-									code: "token_budget_exhausted",
-									message: "Child tool denied after the token work budget was exhausted.",
-								});
-							throw new SubagentError(
-								"token_budget_exhausted",
-								"Child tool denied after the token work budget was exhausted.",
-							);
-						}
-						if (reportOnly)
-							throw new SubagentError("capability_denied", "Report finalization cannot execute tools.");
-						if (options.isAuthorityStillValid && !(await options.isAuthorityStillValid())) {
-							authorityRevoked = true;
-							throw new SubagentError(
-								"capability_denied",
-								"Current parent settings or trust no longer authorize this child tool dispatch.",
-							);
-						}
-						await dispatchSubagentHookDecision(
-							options.hookRuntime ? { ...options.hookRuntime, attempt: options.attempt } : undefined,
-							"subagent.beforeTool",
-							{ toolName, toolCallId, params },
-							signal,
+			policyBox.current = {
+				beforeTool: async (toolName, toolCallId, params, signal) => {
+					if (reportOnly)
+						throw new SubagentError("capability_denied", "Report finalization cannot execute tools.");
+					if (options.isAuthorityStillValid && !(await options.isAuthorityStillValid())) {
+						authorityRevoked = true;
+						throw new SubagentError(
+							"capability_denied",
+							"Current parent settings or trust no longer authorize this child tool dispatch.",
 						);
-						if (signal?.aborted || (options.isAuthorityStillValid && !(await options.isAuthorityStillValid()))) {
-							authorityRevoked = true;
-							throw new SubagentError(
-								"capability_denied",
-								"Authority changed while awaiting a tool policy hook.",
-							);
-						}
-					},
-					reserveToolCall,
-					settleToolCall: (executed, toolCallId) => settleToolReservation(executed, toolCallId),
-					tokenBudgetLedger,
-					reportOnly: () => reportOnly,
-					shouldStopAfterTurn: async () => {
-						if (tokenBudgetLedger?.phase === "exhausted") return true;
-						if (options.isAuthorityStillValid && !(await options.isAuthorityStillValid())) {
-							authorityRevoked = true;
-							return true;
-						}
-						return observedTurns >= maxTurns;
-					},
+					}
+					await dispatchSubagentHookDecision(
+						options.hookRuntime ? { ...options.hookRuntime, attempt: options.attempt } : undefined,
+						"subagent.beforeTool",
+						{ toolName, toolCallId, params },
+						signal,
+					);
+					if (signal?.aborted || (options.isAuthorityStillValid && !(await options.isAuthorityStillValid()))) {
+						authorityRevoked = true;
+						throw new SubagentError("capability_denied", "Authority changed while awaiting a tool policy hook.");
+					}
 				},
-				this.createSession,
-			);
+				reportOnly: () => reportOnly,
+				shouldStopAfterTurn: async () => {
+					if (options.isAuthorityStillValid && !(await options.isAuthorityStillValid())) {
+						authorityRevoked = true;
+						return true;
+					}
+					return requestWrapUpIfNeeded();
+				},
+				// A resumed child re-checks every wrapped tool against current parent authority; a fresh
+				// child relies on the eligible set applied when its definitions were built.
+				eligibleTools: options.resume?.eligibleTools ?? policyBox.current.eligibleTools,
+				strictEligibility: options.resume !== undefined,
+			};
+			const startupPromise = options.resume
+				? Promise.resolve<NativeSubagentSession>({
+						session: options.resume.session,
+						profile,
+						tools: [...options.resume.tools],
+						prompt: normalized.task,
+					})
+				: createNativeSubagentSession(
+						{
+							request: normalized,
+							parentActiveTools,
+							model: options.model,
+							modelRuntime: options.modelRuntime,
+							agentDir: this.agentDir,
+							retrySettings: options.settingsManager?.getRetrySettings(),
+							unsafeHostExec: options.unsafeHostExec,
+							mcpDispatch: mcpRuntime.dispatch,
+							parentMcpTools: mcpRuntime.parentMcpTools,
+							mcpToolAccess: mcpRuntime.mcpToolAccess,
+							hookRuntime: options.hookRuntime
+								? { ...options.hookRuntime, attempt: options.attempt }
+								: undefined,
+							policyBox,
+						},
+						this.createSession,
+					);
 			const startup = await awaitSubagentStartup(startupPromise, normalized.timeoutMs, options.signal);
 			if (startup.kind !== "completed") {
 				if (startup.kind === "error") throw startup.error;
@@ -7690,28 +8736,20 @@ export class NativeSubagentRunner {
 			}
 			const created = startup.value;
 			childSession = created.session;
-			if (tokenBudgetLedger && childSession.model) {
-				tokenBudgetLedger.setHardCapMode(
-					SUBAGENT_HARD_CAP_APIS.has(childSession.model.api) ? "enforced" : "aggregate-soft",
-				);
-			}
-			if (tokenBudgetLedger) {
-				let baselineStats: ReturnType<typeof childSession.getSessionStats> | undefined;
-				try {
-					baselineStats = childSession.getSessionStats();
-				} catch {
-					baselineStats = undefined;
-				}
-				tokenUsageReconciler = new SessionUsageReconciler(tokenBudgetLedger, baselineStats);
-			}
+			retainedChildTools = created.tools;
+			if (created.diagnostics) runDiagnostics.push(...created.diagnostics);
 			presentation = normalizeIceAgentViewPresentation({
 				delegatedTask: normalized.task,
 				scopeLabels: normalized.scope.roots.map((root) => relative(normalized.cwd, root) || "."),
 				authority: options.unsafeHostExec === true ? "yolo" : "safe",
-				protocolReportPending: true,
+				reportMode: normalized.reportMode,
+				// Plain mode streams the child's natural answer, so internal
+				// final-report text is only hidden while the structured protocol runs.
+				protocolReportPending: normalized.reportMode === "structured_report",
 				handoffMessageMarker: SUBAGENT_HANDOFF_MARKER,
 				finalizationMessageMarker: INTERACTIVE_FINAL_REPORT_MARKER,
 				timeoutContinuationMessageMarker: SUBAGENT_EXTENSION_MARKER,
+				wrapUpMessageMarker: SUBAGENT_WRAP_UP_MARKER,
 				handoffMessageIndex: childSession.messages.length,
 			});
 			liveControl = createSubagentLiveSessionControl(
@@ -7720,65 +8758,37 @@ export class NativeSubagentRunner {
 				() => updatePresentation({ protocolReportPending: false }),
 			);
 			unsubscribeChild = childSession.subscribe((event: AgentSessionEvent) => {
-				if (event.type === "message_end" && event.message.role === "assistant" && tokenUsageReconciler) {
-					const assistant = event.message as AssistantMessage;
-					const estimate = estimateSubagentRequestTokens(childSession!.messages, assistant);
-					const rawUsage = assistant.usage as unknown;
-					const rawRecord = isRecord(rawUsage) ? rawUsage : undefined;
-					let validUsage =
-						rawRecord !== undefined &&
-						["input", "output", "cacheRead", "cacheWrite"].every((key) => {
-							const value = rawRecord[key];
-							return typeof value === "number" && Number.isFinite(value) && value >= 0;
-						});
-					if (rawRecord && validUsage) {
-						const rawCost = rawRecord.cost;
-						validUsage =
-							(isRecord(rawCost) &&
-								typeof rawCost.total === "number" &&
-								Number.isFinite(rawCost.total) &&
-								rawCost.total >= 0) ||
-							(typeof rawCost === "number" && Number.isFinite(rawCost) && rawCost >= 0);
-					}
-					const observed = tokenUsageReconciler.messageEnd(assistant, estimate);
-					if (observed.phase === "exhausted") {
-						tokenWorkExhausted = true;
-						emitTokenBudgetEvent("work_exhausted");
-					}
-					if (observed.accounting === "estimated" || !validUsage) {
-						if (!tokenDiagnostics.some((entry) => entry.code === "token_usage_estimated"))
-							tokenDiagnostics.push({
-								code: "token_usage_estimated",
-								message: "Provider usage was unavailable or invalid; token usage was estimated.",
-							});
-					}
-					if (!validUsage && !tokenDiagnostics.some((entry) => entry.code === "token_usage_invalid"))
-						tokenDiagnostics.push({
-							code: "token_usage_invalid",
-							message: "Provider token usage was invalid and replaced with an estimate.",
-						});
-				} else if (event.type === "turn_start") {
+				if (event.type === "auto_retry_start") {
+					const diagnostic = truncateSubagentOutput(redactCredentialText(event.errorMessage), 512).text;
+					retryState = Object.freeze({
+						state: "scheduled" as const,
+						attempt: event.attempt,
+						maxAttempts: event.maxAttempts,
+						delayMs: event.delayMs,
+						...(diagnostic ? { diagnostic } : {}),
+					});
+					updatePresentation({ retry: retryState });
+					emit("subagent_retry", "running", undefined, undefined, undefined, undefined, undefined, retryState);
+					return;
+				}
+				if (event.type === "auto_retry_end") {
+					const diagnostic = event.finalError
+						? truncateSubagentOutput(redactCredentialText(event.finalError), 512).text
+						: undefined;
+					retryState = Object.freeze({
+						state: event.success ? ("recovered" as const) : ("failed" as const),
+						attempt: event.attempt,
+						maxAttempts: retryState?.maxAttempts ?? event.attempt,
+						...(retryState?.delayMs !== undefined ? { delayMs: retryState.delayMs } : {}),
+						...(diagnostic ? { diagnostic } : {}),
+					});
+					updatePresentation({ retry: retryState });
+					emit("subagent_retry", "running", undefined, undefined, undefined, undefined, undefined, retryState);
+					return;
+				}
+				if (event.type === "turn_start") {
 					observedTurns += 1;
 				} else if (event.type === "tool_execution_start") {
-					// Reserve at the lifecycle boundary as a fallback for native/session
-					// implementations that emit tool events without using our wrapper.
-					// Wrapped calls deduplicate by toolCallId and settle exactly once.
-					if (tokenBudgetLedger?.phase !== undefined && tokenBudgetLedger.phase !== "work") {
-						tokenDeniedToolCallIds.add(event.toolCallId);
-						emitTokenBudgetEvent("tool_denied");
-						if (!tokenDiagnostics.some((entry) => entry.code === "token_budget_exhausted"))
-							tokenDiagnostics.push({
-								code: "token_budget_exhausted",
-								message:
-									"Tool lifecycle observed after token exhaustion; execution was denied by the adapter gate.",
-							});
-						// The denied call never executed: suppress the normal start/end
-						// lifecycle so denied attempts cannot read as real tool activity.
-						return;
-					}
-					if (budgetExhausted === undefined && !reserveToolCall(event.toolCallId)) {
-						resolveControl?.("tool_budget_exhausted");
-					}
 					const activity = buildSubagentToolActivityDigest(
 						event.toolCallId,
 						event.toolName,
@@ -7798,8 +8808,6 @@ export class NativeSubagentRunner {
 						event.toolCallId,
 					);
 				} else if (event.type === "tool_execution_end") {
-					if (tokenDeniedToolCallIds.has(event.toolCallId)) return;
-					settleToolReservation(true, event.toolCallId);
 					childToolFailed ||= event.isError;
 					const started = activeToolActivities.get(event.toolCallId);
 					if (started) {
@@ -7828,18 +8836,19 @@ export class NativeSubagentRunner {
 						},
 						options.signal,
 					);
-				} else if (event.type === "turn_end" || event.type === "compaction_end") {
-					if (tokenUsageReconciler) {
-						try {
-							tokenUsageReconciler.reconcile(childSession!.getSessionStats());
-						} catch {
-							if (!tokenDiagnostics.some((entry) => entry.code === "token_usage_invalid"))
-								tokenDiagnostics.push({
-									code: "token_usage_invalid",
-									message: "Session token statistics could not be reconciled.",
-								});
-						}
-					}
+				} else if (event.type === "compaction_start") {
+					updatePresentation({ compacting: true });
+					emit("subagent_compaction_start", "running", undefined, undefined, undefined, undefined, {
+						reason: event.reason,
+						status: "started",
+					});
+				} else if (event.type === "compaction_end") {
+					updatePresentation({ compacting: false });
+					emit("subagent_compaction_end", "running", undefined, undefined, undefined, undefined, {
+						reason: event.reason,
+						status: event.aborted ? "aborted" : event.result ? "completed" : "failed",
+						willRetry: event.willRetry,
+					});
 				} else if (event.type === "message_update") {
 					const outputBytes = Buffer.byteLength(extractAssistantText(childSession?.messages ?? []));
 					observedOutputBytes = outputBytes;
@@ -7883,7 +8892,7 @@ export class NativeSubagentRunner {
 			let resumeAfterExtension: (() => Promise<SubagentResult>) | undefined;
 			let stopAfterSupervisor: ((reason: SubagentSupervisorStopReason) => Promise<SubagentResult>) | undefined;
 			const baseLiveControl = liveControl;
-			if (this.runtimeManagementEnabled) {
+			if (publicManagementEnabled) {
 				supervisor = new SubagentRunSupervisor<SubagentResult>({
 					runId,
 					childSessionId: childSession.sessionId,
@@ -7916,6 +8925,11 @@ export class NativeSubagentRunner {
 				});
 				this.supervisorRegistry.register(supervisor);
 				this.supervisorOwners.set(runId, normalized.parentSessionId);
+				try {
+					options.onManagedHandle?.({ runId, childSessionId: childSession.sessionId });
+				} catch {
+					// Admission observers cannot affect child execution.
+				}
 				liveControl = baseLiveControl
 					? {
 							...baseLiveControl,
@@ -7945,16 +8959,19 @@ export class NativeSubagentRunner {
 						}
 					: undefined;
 			}
-			releaseLiveSession = this.liveSessionRegistry?.register({
-				runId,
-				role: profile.name,
-				taskId: options.taskId,
-				model: modelLabel(options.model ?? childSession.model),
-				authority: options.unsafeHostExec === true ? "yolo" : "safe",
-				presentation,
-				session: childSession,
-				control: liveControl,
-			});
+			releaseLiveSession = agentViewEnabled
+				? this.liveSessionRegistry?.register({
+						runId,
+						role: profile.name,
+						color: profile.color,
+						taskId: options.taskId,
+						model: modelLabel(options.model ?? childSession.model),
+						authority: options.unsafeHostExec === true ? "yolo" : "safe",
+						presentation,
+						session: childSession,
+						control: liveControl,
+					})
+				: undefined;
 			emit("subagent_started", "running");
 			dispatchSubagentHookObservation(
 				options.hookRuntime!,
@@ -7970,13 +8987,11 @@ export class NativeSubagentRunner {
 			type PromptOutcome =
 				| { kind: "completed" }
 				| { kind: "error"; error: unknown }
-				| { kind: "cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted" }
+				| { kind: "cancelled" | "timed_out" | "output_truncated" }
 				| { kind: "needs_time" };
-			const controlPromise = new Promise<"cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted">(
-				(resolveControlPromise) => {
-					resolveControl = resolveControlPromise;
-				},
-			);
+			const controlPromise = new Promise<"cancelled" | "timed_out" | "output_truncated">((resolveControlPromise) => {
+				resolveControl = resolveControlPromise;
+			});
 			const abortListener = (): void => {
 				resolveControl?.("cancelled");
 				if (supervisor?.stateValue === "awaiting_extension") {
@@ -8006,13 +9021,17 @@ export class NativeSubagentRunner {
 				return Promise.race(races);
 			};
 			let controlledFailurePromise: Promise<SubagentResult> | undefined;
+			const structuredReportMode = normalized.reportMode === "structured_report";
+			const finalDeliverableNoun = structuredReportMode ? "report" : "answer";
+			const missingDeliverableTarget = structuredReportMode
+				? "a valid final envelope"
+				: "a nonempty final assistant answer";
 			const controlledFailure = (
-				reason: "cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted",
+				reason: "cancelled" | "timed_out" | "output_truncated",
 			): Promise<SubagentResult> => {
 				if (controlledFailurePromise) return controlledFailurePromise;
 				controlledFailurePromise = (async () => {
 					control = reason;
-					budgetExhausted = reason === "tool_budget_exhausted" ? "tool-calls" : budgetExhausted;
 					await abortChild();
 					const status = reason === "cancelled" ? "cancelled" : reason === "timed_out" ? "timed_out" : "failed";
 					emit(
@@ -8025,18 +9044,24 @@ export class NativeSubagentRunner {
 					);
 					const diagnosticMessage =
 						reason === "timed_out"
-							? `Child exceeded its ${normalized.timeoutMs} ms execution/finalization timeout before a verified bounded report completed.`
+							? structuredReportMode
+								? `Child reached its ${normalized.timeoutMs} ms wall-clock timeout before a verified bounded report completed.`
+								: `Child reached its ${normalized.timeoutMs} ms wall-clock timeout before a final assistant answer completed.`
 							: reason === "cancelled"
-								? "Child was cancelled before a verified bounded report completed."
-								: reason === "tool_budget_exhausted"
-									? `Child exceeded its bounded tool-call budget (${maxToolCalls} calls).`
-									: "Child exceeded the bounded output budget before a valid report completed.";
+								? structuredReportMode
+									? "Child was cancelled before a verified bounded report completed."
+									: "Child was cancelled before a final assistant answer completed."
+								: structuredReportMode
+									? "Child exceeded the bounded output budget before a valid report completed."
+									: "Child exceeded the bounded output budget before a final assistant answer completed.";
 					updatePresentation({
 						finalizationStarted: false,
 						protocolReportPending: false,
 						finalResult: { status, diagnostic: diagnosticMessage },
 					});
 					const partialReport = observeAssistantText();
+					const reportArtifact = spillAssistantOutput(partialReport);
+					const spillDiagnostic = reportSpillDiagnostic(partialReport, reportArtifact);
 					return {
 						...base,
 						childSessionId: childSession!.sessionId,
@@ -8049,15 +9074,14 @@ export class NativeSubagentRunner {
 								status: "missing",
 								diagnostic:
 									reason === "cancelled"
-										? "No final report: the child was cancelled before a valid final envelope."
+										? `No final ${finalDeliverableNoun}: the child was cancelled before ${missingDeliverableTarget}.`
 										: reason === "timed_out"
-											? "No final report: the child timed out before a valid final envelope."
-											: reason === "tool_budget_exhausted"
-												? "No final report: the child exceeded the bounded tool-call budget before a valid final envelope."
-												: "No final report: the child exceeded the bounded output budget before a valid final envelope.",
+											? `No final ${finalDeliverableNoun}: the child reached its wall-clock timeout before ${missingDeliverableTarget}.`
+											: `No final ${finalDeliverableNoun}: the child exceeded the bounded output budget before ${missingDeliverableTarget}.`,
 							},
 							{ terminal: true },
 						),
+						...(reportArtifact ? { reportArtifact } : {}),
 						diagnostics: [
 							{
 								code:
@@ -8065,11 +9089,10 @@ export class NativeSubagentRunner {
 										? "cancellation"
 										: reason === "timed_out"
 											? "timeout"
-											: reason === "tool_budget_exhausted"
-												? "batch_budget_exhausted"
-												: "output_truncated",
+											: "output_truncated",
 								message: diagnosticMessage,
 							},
+							...(spillDiagnostic ? [spillDiagnostic] : []),
 						],
 					};
 				})();
@@ -8083,6 +9106,8 @@ export class NativeSubagentRunner {
 					...(failure.retryable ? { retryable: true } : {}),
 				};
 				const assistantText = childSession ? observeAssistantText() : "";
+				const reportArtifact = childSession ? spillAssistantOutput(assistantText) : undefined;
+				const spillDiagnostic = childSession ? reportSpillDiagnostic(assistantText, reportArtifact) : undefined;
 				const usage = observeUsage();
 				const status = control === "cancelled" ? "cancelled" : control === "timed_out" ? "timed_out" : "failed";
 				if (childSession) {
@@ -8114,13 +9139,14 @@ export class NativeSubagentRunner {
 								workArtifact: buildWorkArtifact(
 									{
 										status: "missing",
-										diagnostic: "No final report: the run ended before a valid final envelope.",
+										diagnostic: `No final ${finalDeliverableNoun}: the run ended before ${missingDeliverableTarget}.`,
 									},
 									{ terminal: true },
 								),
 							}
 						: {}),
-					diagnostics: [diagnostic],
+					...(reportArtifact ? { reportArtifact } : {}),
+					diagnostics: [diagnostic, ...(spillDiagnostic ? [spillDiagnostic] : [])],
 					...(usage ? { usage } : {}),
 				};
 			};
@@ -8150,15 +9176,44 @@ export class NativeSubagentRunner {
 			};
 			const finalizeManaged = async (result: SubagentResult): Promise<SubagentResult> => {
 				if (result.status === "needs_time") return result;
-				await observeTerminalHook(result);
+				// An explicit parent control decision owns the terminal
+				// classification: an aborted child turn cannot downgrade a
+				// cancellation into a generic failure or a silent completion.
+				const controlled: SubagentResult =
+					control === "cancelled" || control === "timed_out"
+						? result.status === control
+							? result
+							: {
+									...result,
+									status: control,
+									diagnostics: [
+										...result.diagnostics,
+										{
+											code: control === "cancelled" ? "cancellation" : "timeout",
+											message:
+												control === "cancelled"
+													? "Parent cancelled the retained child; the terminal status is cancellation."
+													: "Parent ended the retained child at its time decision; the terminal status is timeout.",
+										},
+									],
+								}
+						: result;
+				await observeTerminalHook(controlled);
 				await flushSubagentHookObservations(options.hookRuntime);
-				supervisor?.finish(result, result.status);
+				// Retain before the terminal transition wakes any pending management
+				// wait, so a waiter never observes terminal state without a result.
+				const firstPublication = publicManagementEnabled
+					? this.noteManagedTerminalResult(runId, normalized.parentSessionId, controlled)
+					: false;
+				supervisor?.finish(controlled, controlled.status);
 				await cleanupTerminalSession();
-				const decorated = decorateSubagentResult(result);
-				try {
-					await options.onManagedResult?.(decorated);
-				} catch {
-					// Durable/job observers cannot change a terminal child result.
+				const decorated = decorateSubagentResult(controlled);
+				if (firstPublication) {
+					try {
+						await options.onManagedResult?.(decorated);
+					} catch {
+						// Durable/job observers cannot change a terminal child result.
+					}
 				}
 				return decorated;
 			};
@@ -8203,7 +9258,7 @@ export class NativeSubagentRunner {
 					workArtifact: buildWorkArtifact(
 						{
 							status: "missing",
-							diagnostic: "No final report yet: the same live child is awaiting an extension or stop decision.",
+							diagnostic: `No final ${finalDeliverableNoun} yet: the same live child is awaiting an extension or stop decision.`,
 						},
 						{ terminal: false },
 					),
@@ -8218,65 +9273,24 @@ export class NativeSubagentRunner {
 			};
 			const awaitInteractiveBoundary = async (
 				waitPromise: Promise<void>,
-			): Promise<
-				"cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted" | "needs_time" | undefined
-			> => {
-				const races: Array<
-					Promise<
-						"cancelled" | "timed_out" | "output_truncated" | "tool_budget_exhausted" | "needs_time" | undefined
-					>
-				> = [waitPromise.then(() => undefined), controlPromise.then((reason) => reason)];
+			): Promise<"cancelled" | "timed_out" | "output_truncated" | "needs_time" | undefined> => {
+				const races: Array<Promise<"cancelled" | "timed_out" | "output_truncated" | "needs_time" | undefined>> = [
+					waitPromise.then(() => undefined),
+					controlPromise.then((reason) => reason),
+				];
 				if (supervisor) races.push(supervisor.getTimeoutPromise().then(() => "needs_time"));
 				return Promise.race(races);
 			};
 
-			let runTokenFinalization: () => Promise<SubagentResult>;
-			let tokenFinalizationAttempted = false;
-			const tokenFallbackResult = (reason: string, finalizationUnavailable = false): SubagentResult => {
-				tokenWorkExhausted = true;
-				if (finalizationUnavailable) emitTokenBudgetEvent("finalization_unavailable");
-				if (
-					finalizationUnavailable &&
-					!tokenDiagnostics.some((entry) => entry.code === "token_finalization_unavailable")
-				)
-					tokenDiagnostics.push({
-						code: "token_finalization_unavailable",
-						message: "No bounded token finalization result was available; parent-side fallback was returned.",
-					});
-				if (!tokenDiagnostics.some((entry) => entry.code === "token_budget_exhausted"))
-					tokenDiagnostics.push({ code: "token_budget_exhausted", message: reason });
-				const usage = observeUsage();
-				tokenBudgetLedger?.settle();
-				updatePresentation({
-					finalizationStarted: false,
-					protocolReportPending: false,
-					finalResult: { status: "failed", diagnostic: reason },
-				});
-				emit("subagent_failed", "failed");
-				const partial = truncateSubagentOutput(observeAssistantText(), normalized.maxOutputBytes);
-				return {
-					...base,
-					childSessionId: childSession?.sessionId,
-					status: "failed",
-					summary: partial.text || reason,
-					observedOutputBytes,
-					partial: true,
-					workArtifact: buildWorkArtifact({ status: "missing", diagnostic: reason }, { terminal: true }),
-					diagnostics:
-						tokenDiagnostics.length > 0
-							? [...tokenDiagnostics]
-							: [{ code: "token_budget_exhausted", message: reason }],
-					...(usage ? { usage } : {}),
-				};
-			};
-
 			let runContinuation: () => Promise<SubagentResult>;
 			let runAfterInitial: (reportStartIndex: number) => Promise<SubagentResult>;
+			let runWrapUp: () => Promise<SubagentResult>;
 			let runFinalization: () => Promise<SubagentResult>;
 			let reportRepairAttempted = false;
 			const completeFromParsedReport = async (
 				report: SubagentParsedReport,
 				lastAssistant: AssistantMessage | undefined,
+				rawReportForArtifact?: string,
 			): Promise<SubagentResult> => {
 				if (authorityRevoked || (options.isAuthorityStillValid && !(await options.isAuthorityStillValid()))) {
 					authorityRevoked = true;
@@ -8298,7 +9312,6 @@ export class NativeSubagentRunner {
 					}
 				}
 				const usage = observeUsage();
-				const budgetSummary = tokenBudgetSummary();
 				const candidateResult: SubagentResult = {
 					...base,
 					childSessionId: childSession!.sessionId,
@@ -8316,7 +9329,6 @@ export class NativeSubagentRunner {
 					...(report.payload ? { payload: report.payload } : {}),
 					observedTurns,
 					...(usage ? { usage } : {}),
-					...(budgetSummary ? { budget: budgetSummary } : {}),
 				};
 				let serializedResultBytes: number;
 				try {
@@ -8332,7 +9344,7 @@ export class NativeSubagentRunner {
 					return protocolFailureResult(
 						"truncated",
 						"The complete parent-facing result envelope exceeded the approved UTF-8 output budget.",
-						JSON.stringify(report),
+						rawReportForArtifact ?? JSON.stringify(report),
 					);
 				}
 				const completedResult: SubagentResult = {
@@ -8346,7 +9358,7 @@ export class NativeSubagentRunner {
 						return protocolFailureResult(
 							"truncated",
 							"The complete parent-facing result envelope exceeded the approved UTF-8 output budget.",
-							JSON.stringify(report),
+							rawReportForArtifact ?? JSON.stringify(report),
 						);
 					}
 				} catch {
@@ -8406,129 +9418,112 @@ export class NativeSubagentRunner {
 				);
 				return annotatedResult;
 			};
-			runTokenFinalization = async (): Promise<SubagentResult> => {
-				if (!tokenBudgetLedger) throw new Error("Token finalization requested without a token ledger.");
-				if (tokenFinalizationAttempted) {
-					return tokenFallbackResult("Token budget finalization was already attempted.", true);
-				}
-				tokenFinalizationAttempted = true;
-				// The plan forbids spending another model request when the route cannot
-				// honor a hard per-request output authority: such routes always take the
-				// deterministic parent-side terminal fallback instead of the finalizer.
-				if (tokenBudgetLedger.snapshot().hardCap !== "enforced") {
-					tokenWorkExhausted = true;
-					return tokenFallbackResult(
-						"The active provider route cannot honor a hard output authority, so no bounded finalization request was issued.",
-						true,
+			/**
+			 * Plain final-turn terminal ingestion: accept the child's natural final
+			 * assistant turn directly as the result. No JSON envelope, no parse or
+			 * repair call. Runtime failure precedence (authority, missing assistant
+			 * turn, error/aborted stop reason) matches the structured terminal path.
+			 */
+			const completeFromPlainFinalTurn = async (reportStartIndex: number): Promise<SubagentResult> => {
+				if (authorityRevoked || (options.isAuthorityStillValid && !(await options.isAuthorityStillValid()))) {
+					authorityRevoked = true;
+					return buildFailureResult(
+						new SubagentError(
+							"capability_denied",
+							"Current parent settings or trust no longer authorize accepting this child result.",
+						),
 					);
 				}
-				if (tokenBudgetLedger.phase === "work") tokenBudgetLedger.markExhausted();
-				tokenWorkExhausted = true;
-				if (!tokenBudgetLedger.enterFinalizing())
-					return tokenFallbackResult("Token work budget was exhausted.", true);
-				emitTokenBudgetEvent("finalizing");
-				// Reconcile immediately before spending reserve authority. This captures
-				// compaction/internal usage that may have landed after the work turn.
-				try {
-					tokenUsageReconciler?.reconcile(childSession!.getSessionStats());
-				} catch {
-					if (!tokenDiagnostics.some((entry) => entry.code === "token_usage_invalid"))
-						tokenDiagnostics.push({
-							code: "token_usage_invalid",
-							message: "Session token statistics could not be reconciled before finalization.",
-						});
-				}
-				const inputEstimate = estimateSubagentRequestTokens([
-					...childSession!.messages,
-					{ role: "user" as const, content: INTERACTIVE_FINAL_REPORT_PROMPT, timestamp: Date.now() },
-				]).inputTokens;
-				if (!tokenBudgetLedger.canStartFinalization(inputEstimate, 1_024)) {
-					tokenDiagnostics.push({
-						code: "token_finalization_unavailable",
-						message:
-							"The reserved token finalization capacity was unavailable; no additional model call was issued.",
-					});
-					return tokenFallbackResult(
-						"Token budget exhausted and the reserved finalization capacity was unavailable.",
-						true,
-					);
-				}
-				reportOnly = true;
-				supervisor?.setPhase("finalization");
-				try {
-					childSession!.setActiveToolsByName([]);
-				} catch {
-					// beforeTool remains an independent deny gate.
-				}
-				const reportStartIndex = childSession!.messages.length;
-				updatePresentation({
-					finalizationStarted: true,
-					finalizationMessageIndex: reportStartIndex,
-					protocolReportPending: true,
-				});
-				const turnsBefore = observedTurns;
-				const outcome = await awaitPrompt(
-					Promise.resolve().then(() =>
-						childSession!.prompt(INTERACTIVE_FINAL_REPORT_PROMPT, {
-							expandPromptTemplates: false,
-							source: "extension",
-						}),
-					),
-				);
-				if (observedTurns === turnsBefore) observedTurns += 1;
-				if (outcome.kind === "needs_time") return retainForExtension(runTokenFinalization);
-				if (
-					outcome.kind === "cancelled" ||
-					outcome.kind === "timed_out" ||
-					outcome.kind === "output_truncated" ||
-					outcome.kind === "tool_budget_exhausted"
-				) {
-					return controlledFailure(outcome.kind);
-				}
-				if (outcome.kind === "error") return tokenFallbackResult("Token budget finalization request failed.", true);
-				const rawReport = extractAssistantText(childSession!.messages, reportStartIndex);
-				const finalAssistant = [...childSession!.messages.slice(reportStartIndex)]
+				const lastAssistant = [...childSession!.messages.slice(reportStartIndex)]
 					.reverse()
 					.find((message) => message.role === "assistant") as AssistantMessage | undefined;
-				if (!finalAssistant)
-					return tokenFallbackResult("Token budget finalization returned no assistant report.", true);
-				const parsed = parseSubagentReportOutcome(rawReport, normalized.maxOutputBytes, normalized.outputSchema);
-				if (parsed.kind !== "valid")
-					return tokenFallbackResult("Token budget finalization returned an invalid report.", true);
-				const finalResult = await completeFromParsedReport(parsed.report, finalAssistant);
-				tokenBudgetLedger.settle();
-				return finalResult;
-			};
-			const ensureTokenWorkCapacity = async (pendingPrompt?: string): Promise<SubagentResult | undefined> => {
-				if (!tokenBudgetLedger || !tokenUsageReconciler || !childSession) return undefined;
-				try {
-					tokenUsageReconciler.reconcile(childSession.getSessionStats());
-				} catch {
-					if (!tokenDiagnostics.some((entry) => entry.code === "token_usage_invalid"))
-						tokenDiagnostics.push({
-							code: "token_usage_invalid",
-							message: "Session token statistics could not be reconciled.",
-						});
+				if (!lastAssistant) {
+					throw new SubagentError("malformed_result", "Child completed without a nonempty assistant answer.");
 				}
-				const inputEstimate =
-					estimateSubagentRequestTokens(
-						pendingPrompt
-							? [
-									...childSession.messages,
-									{ role: "user" as const, content: pendingPrompt, timestamp: Date.now() },
-								]
-							: childSession.messages,
-					).inputTokens ?? 0;
-				const snapshot = tokenBudgetLedger.snapshot();
-				if (
-					tokenBudgetLedger.canStartWork(inputEstimate) &&
-					snapshot.chargedTokens + inputEstimate + 1_024 <= snapshot.workPhaseLimit
-				)
-					return undefined;
-				tokenBudgetLedger.markExhausted();
-				tokenWorkExhausted = true;
-				emitTokenBudgetEvent("work_exhausted");
-				return runTokenFinalization();
+				if (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted") {
+					throw new SubagentError(
+						"child_protocol_failure",
+						`Child ended with stop reason ${lastAssistant.stopReason}.`,
+					);
+				}
+				const rawAnswer = extractAssistantText(childSession!.messages, reportStartIndex);
+				observedOutputBytes = Math.max(observedOutputBytes, Buffer.byteLength(rawAnswer));
+				if (rawAnswer.trim().length === 0) {
+					return protocolFailureResult(
+						"missing",
+						"Child completed without a nonempty final assistant answer.",
+						rawAnswer,
+					);
+				}
+				const answer = truncateSubagentOutput(normalizePlainFinalAnswer(rawAnswer), normalized.maxOutputBytes);
+				const usage = observeUsage();
+				const candidateResult: SubagentResult = {
+					...base,
+					childSessionId: childSession!.sessionId,
+					status: "completed",
+					summary: answer.text,
+					observedOutputBytes: Buffer.byteLength(answer.text, "utf8"),
+					partial: false,
+					truncated: answer.truncated,
+					diagnostics: answer.truncated
+						? [{ code: "output_truncated", message: "Child final answer was capped to the output budget." }]
+						: [],
+					// Runtime-owned bounded telemetry for plain answers: records the
+					// touched-path view and the plain terminal state. The "plain"
+					// status is filtered out of parent-facing artifact rows.
+					workArtifact: buildWorkArtifact({ status: "plain" }, { terminal: true }),
+					observedTurns,
+					...(usage ? { usage } : {}),
+				};
+				const completedResult: SubagentResult = candidateResult;
+				try {
+					await dispatchSubagentHookDecision(
+						options.hookRuntime,
+						"subagent.beforeAccept",
+						{
+							status: completedResult.status,
+							summary: completedResult.summary,
+							evidencePaths: [],
+							observedOutputBytes: completedResult.observedOutputBytes,
+						},
+						options.signal,
+					);
+				} catch (error) {
+					const failure =
+						error instanceof SubagentError ? error : new SubagentError("capability_denied", String(error));
+					const rejectedResult: SubagentResult = {
+						...completedResult,
+						status: "verification_failed",
+						diagnostics: [{ code: failure.code, message: failure.message }],
+					};
+					updatePresentation({
+						finalizationStarted: false,
+						protocolReportPending: false,
+						finalResult: { status: "verification_failed", verified: false, diagnostic: failure.message },
+					});
+					emit("subagent_failed", "verification_failed");
+					return rejectedResult;
+				}
+				const verification = verifySubagentResult(completedResult, normalized);
+				const annotatedResult: SubagentResult = verification.requirementSummary
+					? { ...completedResult, requirementStates: verification.requirementSummary.states }
+					: completedResult;
+				// No finalReportMessageIndex: the plain answer stays visible in the child view.
+				updatePresentation({
+					finalizationStarted: false,
+					protocolReportPending: false,
+					finalResult: {
+						status: verification.verified ? "completed" : "verification_failed",
+						verified: verification.verified,
+						summary: answer.text,
+						...(!verification.verified ? { diagnostic: verification.reason } : {}),
+					},
+				});
+				emit(
+					verification.verified ? "subagent_completed" : "subagent_failed",
+					verification.verified ? "completed" : "verification_failed",
+				);
+				return annotatedResult;
 			};
 			/**
 			 * A malformed/truncated/missing final envelope after real work becomes a
@@ -8544,6 +9539,8 @@ export class NativeSubagentRunner {
 				const candidates = [...extractCandidateEvidencePaths(rawReport)]
 					.filter((path, index, all) => all.indexOf(path) === index)
 					.slice(0, CANDIDATE_EVIDENCE_PATH_LIMIT);
+				const reportArtifact = spillAssistantOutput(rawReport, "application/json");
+				const spillDiagnostic = reportSpillDiagnostic(rawReport, reportArtifact);
 				const artifact = buildWorkArtifact(
 					{ status: protocolStatus, diagnostic },
 					{
@@ -8555,8 +9552,12 @@ export class NativeSubagentRunner {
 				const usage = observeUsage();
 				const failureSummary =
 					touchedPaths.size > 0
-						? `Child work was observed (${touchedPaths.size} touched path${touchedPaths.size === 1 ? "" : "s"}) but the final report failed the bounded report protocol.`
-						: "Child completed without a valid bounded final report; observed work was preserved as a bounded artifact.";
+						? structuredReportMode
+							? `Child work was observed (${touchedPaths.size} touched path${touchedPaths.size === 1 ? "" : "s"}) but the final report failed the bounded report protocol.`
+							: `Child work was observed (${touchedPaths.size} touched path${touchedPaths.size === 1 ? "" : "s"}) but the final answer failed the plain final-turn ingestion.`
+						: structuredReportMode
+							? "Child completed without a valid bounded final report; observed work was preserved as a bounded artifact."
+							: "Child completed without a nonempty final assistant answer; observed work was preserved as a bounded artifact.";
 				updatePresentation({
 					finalizationStarted: false,
 					protocolReportPending: false,
@@ -8571,7 +9572,11 @@ export class NativeSubagentRunner {
 					observedOutputBytes,
 					partial: false,
 					workArtifact: artifact,
-					diagnostics: [{ code: "report_protocol_failure", message: diagnostic }],
+					...(reportArtifact ? { reportArtifact } : {}),
+					diagnostics: [
+						{ code: "report_protocol_failure", message: diagnostic },
+						...(spillDiagnostic ? [spillDiagnostic] : []),
+					],
 					...(usage ? { usage } : {}),
 				};
 			};
@@ -8601,7 +9606,7 @@ export class NativeSubagentRunner {
 				}
 				const outcome = parseSubagentReportOutcome(rawReport, normalized.maxOutputBytes, normalized.outputSchema);
 				if (outcome.kind === "valid") {
-					return await completeFromParsedReport(outcome.report, lastAssistant);
+					return await completeFromParsedReport(outcome.report, lastAssistant, rawReport);
 				}
 				return protocolFailureResult(
 					outcome.kind === "truncated" ? "truncated" : "malformed",
@@ -8619,10 +9624,6 @@ export class NativeSubagentRunner {
 				reportStartIndex: number,
 				preserved: SubagentResult,
 			): Promise<SubagentResult> => {
-				if (tokenBudgetLedger && tokenBudgetLedger.phase !== "work") {
-					tokenWorkExhausted = true;
-					return runTokenFinalization();
-				}
 				const session = childSession!;
 				const previousTools = (() => {
 					try {
@@ -8638,8 +9639,6 @@ export class NativeSubagentRunner {
 					} catch {
 						// The independent beforeTool guard denies dispatch even if SDK disabling fails.
 					}
-					const turnLimit = chargeTurn("report repair");
-					if (turnLimit) return turnLimit;
 					const turnsBefore = observedTurns;
 					const repairStartIndex = session.messages.length;
 					updatePresentation({ finalizationStarted: true, protocolReportPending: true });
@@ -8656,8 +9655,7 @@ export class NativeSubagentRunner {
 					if (
 						outcome.kind === "cancelled" ||
 						outcome.kind === "timed_out" ||
-						outcome.kind === "output_truncated" ||
-						outcome.kind === "tool_budget_exhausted"
+						outcome.kind === "output_truncated"
 					) {
 						return controlledFailure(outcome.kind);
 					}
@@ -8684,7 +9682,7 @@ export class NativeSubagentRunner {
 						const lastAssistant = [...session.messages.slice(repairStartIndex)]
 							.reverse()
 							.find((message) => message.role === "assistant") as AssistantMessage | undefined;
-						return await completeFromParsedReport(repairOutcome.report, lastAssistant);
+						return await completeFromParsedReport(repairOutcome.report, lastAssistant, rawRepair);
 					}
 					return {
 						...preserved,
@@ -8713,37 +9711,59 @@ export class NativeSubagentRunner {
 					(diagnostic) => diagnostic.code === "report_protocol_failure",
 				);
 				if (!protocolFailed || reportRepairAttempted) return parsed;
-				if (tokenBudgetLedger && tokenBudgetLedger.phase !== "work") {
-					tokenWorkExhausted = true;
-					return runTokenFinalization();
-				}
 				reportRepairAttempted = true;
 				return attemptReportRepair(reportStartIndex, parsed);
 			};
+			runWrapUp = async (): Promise<SubagentResult> => {
+				wrapUpPromptStarted = true;
+				reportOnly = true;
+				supervisor?.setPhase("wrapping_up");
+				try {
+					childSession!.setActiveToolsByName([]);
+				} catch {
+					// The independent beforeTool guard still denies any wrap-up tool dispatch.
+				}
+				const turnsBefore = observedTurns;
+				const wrapUpStartIndex = childSession!.messages.length;
+				updatePresentation({ wrapUpMessageIndex: wrapUpStartIndex });
+				const outcome = await awaitPrompt(
+					childSession!.prompt(SUBAGENT_WRAP_UP_PROMPT, {
+						expandPromptTemplates: false,
+						source: "extension",
+					}),
+				);
+				if (observedTurns === turnsBefore) observedTurns += 1;
+				if (outcome.kind === "needs_time") return retainForExtension(runWrapUp);
+				if (outcome.kind === "cancelled" || outcome.kind === "timed_out" || outcome.kind === "output_truncated") {
+					return controlledFailure(outcome.kind);
+				}
+				if (outcome.kind === "error") throw classifySubagentFailure(outcome.error, "runtime", childToolFailed);
+				return runAfterInitial(wrapUpStartIndex);
+			};
 			runFinalization = async (): Promise<SubagentResult> => {
-				const turnLimit = chargeTurn("final report");
-				if (turnLimit) return turnLimit;
 				const turnsBefore = observedTurns;
 				supervisor?.setPhase("finalization");
 				const finalReportStartIndex = childSession!.messages.length;
 				updatePresentation({
 					finalizationStarted: true,
 					finalizationMessageIndex: finalReportStartIndex,
-					protocolReportPending: true,
+					...(structuredReportMode ? { protocolReportPending: true } : {}),
 				});
 				const finalOutcome = await awaitPrompt(
-					childSession!.prompt(INTERACTIVE_FINAL_REPORT_PROMPT, {
-						expandPromptTemplates: false,
-						source: "extension",
-					}),
+					childSession!.prompt(
+						structuredReportMode ? INTERACTIVE_FINAL_REPORT_PROMPT : INTERACTIVE_PLAIN_FINAL_PROMPT,
+						{
+							expandPromptTemplates: false,
+							source: "extension",
+						},
+					),
 				);
 				if (observedTurns === turnsBefore) observedTurns += 1;
 				if (finalOutcome.kind === "needs_time") return retainForExtension(runFinalization);
 				if (
 					finalOutcome.kind === "cancelled" ||
 					finalOutcome.kind === "timed_out" ||
-					finalOutcome.kind === "output_truncated" ||
-					finalOutcome.kind === "tool_budget_exhausted"
+					finalOutcome.kind === "output_truncated"
 				) {
 					return controlledFailure(finalOutcome.kind);
 				}
@@ -8753,10 +9773,14 @@ export class NativeSubagentRunner {
 				if (!liveControl?.markFinalReportReceived()) {
 					throw new SubagentError(
 						"child_protocol_failure",
-						"Child final report was not accepted by its control state.",
+						structuredReportMode
+							? "Child final report was not accepted by its control state."
+							: "Child final answer was not accepted by its control state.",
 					);
 				}
-				return finalizeReport(finalReportStartIndex);
+				return structuredReportMode
+					? finalizeReport(finalReportStartIndex)
+					: completeFromPlainFinalTurn(finalReportStartIndex);
 			};
 			runAfterInitial = async (reportStartIndex: number): Promise<SubagentResult> => {
 				if (authorityRevoked) {
@@ -8766,12 +9790,6 @@ export class NativeSubagentRunner {
 							"Current parent settings or trust revoked this child before its next safe boundary.",
 						),
 					);
-				}
-				if (budgetExhausted === "tool-calls") {
-					return controlledFailure("tool_budget_exhausted");
-				}
-				if (tokenBudgetLedger?.phase === "exhausted" || tokenBudgetLedger?.phase === "finalizing") {
-					return runTokenFinalization();
 				}
 				if (liveControl && (liveControl.isControlled() || liveControl.hasSteered())) {
 					if (liveControl.isControlled()) supervisor?.pauseForControlledWait();
@@ -8786,8 +9804,7 @@ export class NativeSubagentRunner {
 					}
 					supervisor?.resumeFromControlledWait();
 				}
-				const tokenBoundary = await ensureTokenWorkCapacity(INTERACTIVE_FINAL_REPORT_PROMPT);
-				if (tokenBoundary) return tokenBoundary;
+				if (wrapUpRequested && !wrapUpPromptStarted) return runWrapUp();
 				if (liveControl?.hasSteered()) {
 					if (liveControl.getState() === "working") {
 						if (!liveControl.beginFinalization() || !liveControl.requestFinalReport()) {
@@ -8801,7 +9818,9 @@ export class NativeSubagentRunner {
 					}
 					return runFinalization();
 				}
-				return finalizeReport(reportStartIndex);
+				return structuredReportMode
+					? finalizeReport(reportStartIndex)
+					: completeFromPlainFinalTurn(reportStartIndex);
 			};
 			runContinuation = async (): Promise<SubagentResult> => {
 				if (authorityRevoked) {
@@ -8813,52 +9832,26 @@ export class NativeSubagentRunner {
 					);
 				}
 				supervisor?.setPhase("working");
-				const tokenBoundary = await ensureTokenWorkCapacity(SUBAGENT_EXTENSION_PROMPT);
-				if (tokenBoundary) return tokenBoundary;
-				const turnLimit = chargeTurn("continuation prompt");
-				if (turnLimit) return turnLimit;
+				const continuationPrompt = structuredReportMode
+					? SUBAGENT_EXTENSION_PROMPT
+					: SUBAGENT_EXTENSION_PROMPT_PLAIN;
 				const turnsBefore = observedTurns;
 				const reportStartIndex = childSession!.messages.length;
 				const outcome = await awaitPrompt(
-					childSession!.prompt(SUBAGENT_EXTENSION_PROMPT, {
+					childSession!.prompt(continuationPrompt, {
 						expandPromptTemplates: false,
 						source: "extension",
 					}),
 				);
 				if (observedTurns === turnsBefore) observedTurns += 1;
 				if (outcome.kind === "needs_time") return retainForExtension(runContinuation);
-				if (
-					outcome.kind === "cancelled" ||
-					outcome.kind === "timed_out" ||
-					outcome.kind === "output_truncated" ||
-					outcome.kind === "tool_budget_exhausted"
-				) {
+				if (outcome.kind === "cancelled" || outcome.kind === "timed_out" || outcome.kind === "output_truncated") {
 					return controlledFailure(outcome.kind);
 				}
 				if (outcome.kind === "error") {
 					throw classifySubagentFailure(outcome.error, "runtime", childToolFailed);
 				}
 				return runAfterInitial(reportStartIndex);
-			};
-			const chargeTurn = (label: string): SubagentResult | undefined => {
-				if (observedTurns >= maxTurns) {
-					budgetExhausted = "turns";
-					return {
-						...base,
-						childSessionId: childSession!.sessionId,
-						status: "failed",
-						summary: `Child exceeded its bounded turn budget (${maxTurns} turns including the reserved final report).`,
-						observedOutputBytes,
-						partial: true,
-						diagnostics: [
-							{
-								code: "batch_budget_exhausted",
-								message: `Turn budget exhausted before ${label}; no further model turn was consumed.`,
-							},
-						],
-					};
-				}
-				return undefined;
 			};
 			const runInitial = async (): Promise<SubagentResult> => {
 				if (authorityRevoked) {
@@ -8869,10 +9862,6 @@ export class NativeSubagentRunner {
 						),
 					);
 				}
-				const tokenBoundary = await ensureTokenWorkCapacity(created.prompt);
-				if (tokenBoundary) return tokenBoundary;
-				const turnLimit = chargeTurn("initial prompt");
-				if (turnLimit) return turnLimit;
 				const turnsBefore = observedTurns;
 				const reportStartIndex = childSession!.messages.length;
 				if (presentation?.handoffMessageIndex !== reportStartIndex) {
@@ -8886,12 +9875,7 @@ export class NativeSubagentRunner {
 				);
 				if (observedTurns === turnsBefore) observedTurns += 1;
 				if (outcome.kind === "needs_time") return retainForExtension(runContinuation);
-				if (
-					outcome.kind === "cancelled" ||
-					outcome.kind === "timed_out" ||
-					outcome.kind === "output_truncated" ||
-					outcome.kind === "tool_budget_exhausted"
-				) {
+				if (outcome.kind === "cancelled" || outcome.kind === "timed_out" || outcome.kind === "output_truncated") {
 					return controlledFailure(outcome.kind);
 				}
 				if (outcome.kind === "error") {
@@ -8899,22 +9883,20 @@ export class NativeSubagentRunner {
 				}
 				return runAfterInitial(reportStartIndex);
 			};
-			return decorateSubagentResult(await runInitial());
+			const initialResult = decorateSubagentResult(await runInitial());
+			settledTerminalResult = initialResult;
+			return initialResult;
 		} catch (error) {
 			const failure = classifySubagentFailure(error, childSession ? "runtime" : "startup", childToolFailed);
-			const retrySafeStartup =
-				!childSession &&
-				observedTurns === 0 &&
-				dispatchedToolCalls === 0 &&
-				reservedToolCalls === 0 &&
-				!options.unsafeHostExec &&
-				failure.retryable;
+			const retrySafeStartup = !childSession && observedTurns === 0 && !options.unsafeHostExec && failure.retryable;
 			const diagnostic = {
 				code: failure.code,
 				message: failure.message,
 				...(retrySafeStartup ? { retryable: true } : {}),
 			};
 			const assistantText = childSession ? observeAssistantText() : "";
+			const reportArtifact = childSession ? spillAssistantOutput(assistantText) : undefined;
+			const spillDiagnostic = childSession ? reportSpillDiagnostic(assistantText, reportArtifact) : undefined;
 			const usage = observeUsage();
 			const status = control === "cancelled" ? "cancelled" : control === "timed_out" ? "timed_out" : "failed";
 			if (childSession) {
@@ -8932,7 +9914,7 @@ export class NativeSubagentRunner {
 						: "subagent_failed",
 				status,
 			);
-			return decorateSubagentResult({
+			const failedResult = decorateSubagentResult({
 				...base,
 				childSessionId: childSession?.sessionId,
 				retrySafeStartup,
@@ -8953,12 +9935,25 @@ export class NativeSubagentRunner {
 							),
 						}
 					: {}),
-				diagnostics: [diagnostic],
+				...(reportArtifact ? { reportArtifact } : {}),
+				diagnostics: [diagnostic, ...(spillDiagnostic ? [spillDiagnostic] : [])],
 				...(usage ? { usage } : {}),
 			});
+			settledTerminalResult = failedResult;
+			return failedResult;
 		} finally {
 			if (timeout) globalThis.clearTimeout(timeout);
 			await observeTerminalHook();
+			if (settledTerminalResult && publicManagementEnabled) {
+				// Publish before supervisor teardown so a concurrent management wait
+				// never observes terminal state without a retained result.
+				await this.settleManagedRun(
+					runId,
+					normalized.parentSessionId,
+					settledTerminalResult,
+					options.onManagedResult,
+				);
+			}
 			if (supervisor?.stateValue !== "awaiting_extension") await flushSubagentHookObservations(options.hookRuntime);
 			if (supervisor?.stateValue !== "awaiting_extension") await cleanupTerminalSession();
 		}
@@ -8971,8 +9966,6 @@ export interface SubagentRecoveryHooks {
 	getStopReason?: () => SubagentRecoveryStopReason | undefined;
 	beforeAttempt?: (attempt: SubagentAttemptNumber, request: NormalizedSubagentRequest) => boolean;
 	afterAttempt?: (attempt: SubagentAttemptNumber, result: SubagentResult) => void;
-	tokenBudgetLedger?: TokenBudgetLedger;
-	hardCap?: "enforced" | "aggregate-soft";
 }
 
 export async function runSubagentWithRecovery(
@@ -8982,52 +9975,22 @@ export async function runSubagentWithRecovery(
 		attempt: SubagentAttemptNumber,
 		request: NormalizedSubagentRequest,
 		activeTools: readonly string[],
-		tokenBudgetLedger?: TokenBudgetLedger,
 	) => Promise<SubagentResult>,
 	hooks: SubagentRecoveryHooks = {},
 ): Promise<SubagentResult> {
 	const attempts: SubagentAttemptSummary[] = [];
-	const tokenBudgetLedger =
-		hooks.tokenBudgetLedger ??
-		(normalized.execution.maxTotalTokens !== undefined
-			? new TokenBudgetLedger(normalized.execution.maxTotalTokens, hooks.hardCap)
-			: undefined);
 	const aggregate = batchUsage();
 	let hasUsage = false;
-	let tokenWorkExhausted = false;
 	let totalObservedOutputBytes = 0;
 	let totalTurns = 0;
 	const deadline = Date.now() + normalized.timeoutMs;
 	let currentRequest = normalized;
 
 	const finalize = (result: SubagentResult): SubagentResult => {
-		if (result.status !== "needs_time") tokenBudgetLedger?.settle();
 		return {
 			...result,
 			...(normalized.scope.targets?.length ? { scopeTargets: [...normalized.scope.targets] } : {}),
 			...(hasUsage ? { usage: aggregate } : {}),
-			...(tokenBudgetLedger
-				? {
-						budget: (() => {
-							const snapshot = tokenBudgetLedger.snapshot();
-							return {
-								maxTotalTokens: snapshot.maxTotalTokens,
-								workPhaseLimit: snapshot.workPhaseLimit,
-								reportReserveTokens: snapshot.reportReserveTokens,
-								chargedTokens: snapshot.chargedTokens,
-								remainingTokens: snapshot.remainingTokens,
-								inputTokens: snapshot.inputTokens,
-								outputTokens: snapshot.outputTokens,
-								cacheReadTokens: snapshot.cacheReadTokens,
-								cacheWriteTokens: snapshot.cacheWriteTokens,
-								overshootTokens: snapshot.overshootTokens,
-								accounting: snapshot.accounting,
-								exhausted: tokenWorkExhausted || snapshot.chargedTokens > snapshot.workPhaseLimit,
-								hardCap: snapshot.hardCap,
-							};
-						})(),
-					}
-				: {}),
 			observedTurns: totalTurns,
 			...(currentRequest.modelCandidateSkips ? { modelCandidateSkips: currentRequest.modelCandidateSkips } : {}),
 			recovery: Object.freeze({
@@ -9095,25 +10058,24 @@ export async function runSubagentWithRecovery(
 				const remainingTime = deadline - Date.now();
 				if (remainingTime <= 0) return finalize(stoppedResult("timed_out"));
 				const remainingOutput = normalized.maxOutputBytes - totalObservedOutputBytes;
-				if (remainingOutput < 1024 || totalTurns >= normalized.execution.maxTurns)
-					throw new SubagentError("batch_budget_exhausted", "No aggregate budget remains for startup recovery.");
+				if (remainingOutput < 1024)
+					throw new SubagentError(
+						"batch_budget_exhausted",
+						"No bounded output capacity remains for startup recovery.",
+					);
 				currentRequest = {
 					...normalized,
 					timeoutMs: remainingTime,
 					maxOutputBytes: remainingOutput,
 					execution: Object.freeze({
 						...normalized.execution,
-						maxTurns: normalized.execution.maxTurns - totalTurns,
 						maxOutputBytes: remainingOutput,
 					}),
 				};
 				if (normalized.resolveStartupFallback)
 					currentRequest.retryModel = normalized.resolveStartupFallback(currentRequest);
 			}
-			if (tokenBudgetLedger && !tokenBudgetLedger.canStartWork(0)) {
-				throw new SubagentError("token_budget_exhausted", "No token capacity remains for startup recovery.");
-			}
-			result = await runAttempt(attempt, currentRequest, parentActiveTools, tokenBudgetLedger);
+			result = await runAttempt(attempt, currentRequest, parentActiveTools);
 		} catch (error) {
 			const failure = classifySubagentFailure(error, "runtime");
 			result = {
@@ -9137,7 +10099,10 @@ export async function runSubagentWithRecovery(
 		const attemptSummary = {
 			attempt,
 			status: result.status,
-			...(result.status !== "completed" && result.diagnostics[0]?.code
+			...(result.status !== "completed" &&
+			result.diagnostics[0]?.code &&
+			result.diagnostics[0].code !== "report_spilled" &&
+			result.diagnostics[0].code !== "report_artifact_failure"
 				? { failureCode: result.diagnostics[0].code }
 				: {}),
 			observedOutputBytes: result.observedOutputBytes,
@@ -9147,21 +10112,9 @@ export async function runSubagentWithRecovery(
 		totalObservedOutputBytes += result.observedOutputBytes;
 		totalTurns += result.observedTurns ?? 0;
 		hooks.afterAttempt?.(attempt, result);
-		if (result.budget?.exhausted) tokenWorkExhausted = true;
 		if (result.usage) {
 			addBatchUsage(aggregate, result.usage);
 			hasUsage = true;
-			if (tokenBudgetLedger && !result.budget) {
-				tokenBudgetLedger.charge(
-					normalizeTokenUsage(undefined, {
-						inputTokens: result.usage.inputTokens,
-						outputTokens: result.usage.outputTokens,
-						cacheReadTokens: result.usage.cacheReadTokens,
-						cacheWriteTokens: result.usage.cacheWriteTokens,
-						cost: result.usage.cost,
-					}),
-				);
-			}
 		}
 		const stoppedAfterAttempt = hooks.getStopReason?.();
 		if (stoppedAfterAttempt)
@@ -9194,6 +10147,7 @@ export function createSubagentLaunchProvenance(
 			canonicalPath: request.profile.canonicalPath,
 			sourceHash: request.profile.sourceHash,
 			unsafeHostExec: request.profile.unsafeHostExec === true,
+			...(request.profile.color ? { color: request.profile.color } : {}),
 		},
 		resources: {
 			skills: [...request.resources.skills],
@@ -9206,6 +10160,7 @@ export function createSubagentLaunchProvenance(
 		...(request.modelCandidates ? { modelCandidates: [...request.modelCandidates] } : {}),
 		...(request.modelCandidateSkips ? { modelCandidateSkips: [...request.modelCandidateSkips] } : {}),
 		...(request.selectedMcpTools ? { mcpTools: [...request.selectedMcpTools] } : {}),
+		...(request.selectedAdapterIds ? { adapterIds: [...request.selectedAdapterIds] } : {}),
 		scopeRoots: [...request.scope.roots],
 		scopeTargets: [...(request.scope.targets ?? [])],
 		execution: {
@@ -9215,10 +10170,9 @@ export function createSubagentLaunchProvenance(
 			sources: {
 				thinking: request.iceContract.sources.thinking,
 				timeoutMs: request.iceContract.sources.timeoutMs,
-				maxTurns: request.iceContract.sources.maxTurns,
-				maxToolCalls: request.iceContract.sources.maxToolCalls,
 				maxOutputBytes: request.iceContract.sources.maxOutputBytes,
-				maxTotalTokens: request.iceContract.sources.maxTotalTokens,
+				temperature: request.iceContract.sources.temperature,
+				topP: request.iceContract.sources.topP,
 			},
 			restrictionsApplied: [...request.iceContract.restrictionsApplied],
 		},
@@ -9238,16 +10192,20 @@ export function createSubagentLaunchProvenance(
 interface ResolvedBatchConfiguration {
 	concurrency: number;
 	totalBudgetBytes: number;
-	totalTokenBudget?: number;
 }
 
 function resolveBatchConfiguration(options: SubagentBatchRunOptions): ResolvedBatchConfiguration {
-	const concurrency = options.concurrency ?? SUBAGENT_BATCH_LIMITS.defaultConcurrency;
-	if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > SUBAGENT_BATCH_LIMITS.maxConcurrency) {
+	if (Object.hasOwn(options, "totalTokenBudget")) {
 		throw new SubagentError(
 			"malformed_result",
-			`Batch concurrency must be between 1 and ${SUBAGENT_BATCH_LIMITS.maxConcurrency}.`,
+			'"totalTokenBudget" was removed; use per-task timeoutMs/maxOutputBytes and batch concurrency.',
 		);
+	}
+	const maxAllowed = options.concurrencyPolicy?.maxConcurrency ?? SUBAGENT_BATCH_LIMITS.maxConcurrency;
+	const defaultConcurrency = options.concurrencyPolicy?.defaultConcurrency ?? SUBAGENT_BATCH_LIMITS.defaultConcurrency;
+	const concurrency = options.concurrency ?? defaultConcurrency;
+	if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > maxAllowed) {
+		throw new SubagentError("malformed_result", `Batch concurrency must be between 1 and ${maxAllowed}.`);
 	}
 	const totalBudgetBytes = options.totalBudgetBytes ?? SUBAGENT_BATCH_LIMITS.defaultBudgetBytes;
 	if (
@@ -9257,22 +10215,10 @@ function resolveBatchConfiguration(options: SubagentBatchRunOptions): ResolvedBa
 	) {
 		throw new SubagentError("malformed_result", "Batch budget is outside the bounded output budget.");
 	}
-	if (
-		options.totalTokenBudget !== undefined &&
-		(!Number.isSafeInteger(options.totalTokenBudget) ||
-			options.totalTokenBudget < SUBAGENT_BATCH_LIMITS.minTokenBudget ||
-			options.totalTokenBudget > SUBAGENT_BATCH_LIMITS.maxTokenBudget)
-	) {
-		throw new SubagentError("malformed_result", "Batch token budget is outside the bounded token budget.");
-	}
 	if (options.timeoutMs !== undefined && (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0)) {
 		throw new SubagentError("malformed_result", "Batch timeout must be a positive finite number.");
 	}
-	return {
-		concurrency,
-		totalBudgetBytes,
-		...(options.totalTokenBudget !== undefined ? { totalTokenBudget: options.totalTokenBudget } : {}),
-	};
+	return { concurrency, totalBudgetBytes };
 }
 
 function preflightModel(task: ResolvedSubagentBatchTask): SubagentLaunchPreflightTask["model"] {
@@ -9309,30 +10255,14 @@ export function buildSubagentLaunchPreflight(
 	options: SubagentBatchRunOptions & { batchId?: string } = {},
 ): SubagentLaunchPreflight {
 	validateResolvedBatchTasks(tasks);
-	const { concurrency, totalBudgetBytes, totalTokenBudget } = resolveBatchConfiguration(options);
+	const { concurrency, totalBudgetBytes } = resolveBatchConfiguration(options);
 	let reservedOutputBytes = 0;
-	let reservedTokenBudget = 0;
 	const preflightTasks = tasks.map((task) => {
 		if (!Number.isInteger(task.request.maxOutputBytes) || task.request.maxOutputBytes <= 0) {
 			throw new SubagentError("malformed_result", `Invalid output reservation for task ${task.id}.`);
 		}
 		if (task.request.maxOutputBytes > totalBudgetBytes) {
 			throw new SubagentError("batch_budget_exhausted", `Batch budget cannot reserve task ${task.id}.`);
-		}
-		if (totalTokenBudget !== undefined) {
-			if (task.request.execution.maxTotalTokens === undefined) {
-				throw new SubagentError(
-					"batch_token_budget_exhausted",
-					`Batch token budgeting requires task ${task.id} to resolve maxTotalTokens.`,
-				);
-			}
-			if (task.request.execution.maxTotalTokens > totalTokenBudget) {
-				throw new SubagentError(
-					"batch_token_budget_exhausted",
-					`Batch token budget cannot reserve task ${task.id}.`,
-				);
-			}
-			reservedTokenBudget += task.request.execution.maxTotalTokens;
 		}
 		revalidateSubagentProfile(task.request.profile);
 		revalidateSubagentResources(task.request.resources);
@@ -9360,6 +10290,7 @@ export function buildSubagentLaunchPreflight(
 				...(task.request.modelCandidateSkips ? { skipped: [...task.request.modelCandidateSkips] } : {}),
 			},
 			...(task.request.selectedMcpTools ? { mcpTools: [...task.request.selectedMcpTools] } : {}),
+			...(task.request.selectedAdapterIds ? { adapterIds: [...task.request.selectedAdapterIds] } : {}),
 			scopeRoots: [...task.request.scope.roots],
 			scopeTargets: [...(task.request.scope.targets ?? [])],
 			tools,
@@ -9371,12 +10302,11 @@ export function buildSubagentLaunchPreflight(
 			execution: {
 				thinking: task.request.execution.thinking,
 				timeoutMs: task.request.timeoutMs,
-				maxTurns: task.request.execution.maxTurns,
-				maxToolCalls: task.request.execution.maxToolCalls,
 				maxOutputBytes: task.request.execution.maxOutputBytes,
-				...(task.request.execution.maxTotalTokens !== undefined
-					? { maxTotalTokens: task.request.execution.maxTotalTokens }
+				...(task.request.execution.temperature !== undefined
+					? { temperature: task.request.execution.temperature }
 					: {}),
+				...(task.request.execution.topP !== undefined ? { topP: task.request.execution.topP } : {}),
 				tools: task.request.execution.tools,
 			},
 			...(task.request.outputSchema
@@ -9440,15 +10370,6 @@ export function buildSubagentLaunchPreflight(
 			totalOutputBytes: totalBudgetBytes,
 			reservedOutputBytes,
 			maxPotentialOutputBytes: reservedOutputBytes * 2,
-			...(totalTokenBudget !== undefined
-				? {
-						tokens: {
-							total: totalTokenBudget,
-							reserved: reservedTokenBudget,
-							maxPotential: reservedTokenBudget,
-						},
-					}
-				: {}),
 		},
 		recovery: options.unsafeHostExec
 			? { maxAttempts: 1, sameModel: true, retryableFailures: [] }
@@ -9469,9 +10390,6 @@ export function formatSubagentLaunchDigest(preflight: SubagentLaunchPreflight, m
 		`Launch preflight: ${preflight.taskCount} tasks`,
 		`concurrency: ${preflight.concurrency}`,
 		`output budget: ${preflight.budget.reservedOutputBytes}/${preflight.budget.totalOutputBytes} bytes reserved (max potential ${preflight.budget.maxPotentialOutputBytes})`,
-		preflight.budget.tokens
-			? `token budget: ${preflight.budget.tokens.reserved}/${preflight.budget.tokens.total} tokens reserved (max potential ${preflight.budget.tokens.maxPotential})`
-			: undefined,
 		`recovery: maxAttempts=${preflight.recovery.maxAttempts} sameModel=${preflight.recovery.sameModel} retryable=${preflight.recovery.retryableFailures.join(",")}`,
 		...preflight.tasks.flatMap((task) => {
 			const model = task.model.resolved ?? "unresolved";
@@ -9495,8 +10413,8 @@ export function formatSubagentLaunchDigest(preflight: SubagentLaunchPreflight, m
 					? `  targets: ${task.scopeTargets.map((target) => relative(task.cwd, target) || ".").join(", ")}`
 					: undefined,
 				`  tools: ${task.tools.join(", ")}`,
-				`  execution: thinking=${task.execution.thinking} timeout=${task.execution.timeoutMs}ms turns=${task.execution.maxTurns} tools=${task.execution.maxToolCalls} output=${task.execution.maxOutputBytes} bytes${
-					task.execution.maxTotalTokens !== undefined ? ` tokens=${task.execution.maxTotalTokens}` : ""
+				`  execution: thinking=${task.execution.thinking} timeout=${task.execution.timeoutMs}ms output=${task.execution.maxOutputBytes} bytes${task.execution.temperature !== undefined ? ` temperature=${task.execution.temperature}` : ""}${
+					task.execution.topP !== undefined ? ` topP=${task.execution.topP}` : ""
 				}`,
 				task.outputSchema
 					? `  output schema: ${task.outputSchema.schemaBytes} bytes, payload <= ${task.outputSchema.maxPayloadBytes} bytes`
@@ -9509,53 +10427,6 @@ export function formatSubagentLaunchDigest(preflight: SubagentLaunchPreflight, m
 		.filter((line): line is string => line !== undefined)
 		.join("\n");
 	return truncateSubagentOutput(redactCredentialText(lines), maxBytes).text;
-}
-
-class SubagentBatchTokenBudgetLedger {
-	private readonly total: number;
-	private reserved = 0;
-	private charged = 0;
-	private released = 0;
-	private overshoot = 0;
-	private accounting: "provider" | "estimated" | "mixed" = "estimated";
-	private hasAccounting = false;
-
-	constructor(total: number) {
-		this.total = total;
-	}
-
-	get remaining(): number {
-		return Math.max(0, this.total - this.reserved - this.charged);
-	}
-
-	reserve(amount: number): boolean {
-		if (amount > this.remaining) return false;
-		this.reserved += amount;
-		return true;
-	}
-
-	reconcile(reservation: number, actual: number, accounting: "provider" | "estimated" | "mixed" = "estimated"): void {
-		this.reserved = Math.max(0, this.reserved - reservation);
-		this.charged += Math.max(0, actual);
-		this.released += Math.max(0, reservation - Math.max(0, actual));
-		this.overshoot += Math.max(0, Math.max(0, actual) - reservation);
-		if (!this.hasAccounting) {
-			this.accounting = accounting;
-			this.hasAccounting = true;
-		} else if (this.accounting !== accounting) this.accounting = "mixed";
-	}
-
-	snapshot(): NonNullable<SubagentBatchBudget["tokens"]> {
-		return {
-			total: this.total,
-			reserved: this.reserved,
-			charged: this.charged,
-			remaining: this.remaining,
-			released: this.released,
-			overshoot: this.overshoot,
-			accounting: this.accounting,
-		};
-	}
 }
 
 class SubagentBatchBudgetLedger {
@@ -9693,10 +10564,8 @@ export async function runResolvedSubagentBatch(
 	});
 	const concurrency = preflight.concurrency;
 	const totalBudgetBytes = preflight.budget.totalOutputBytes;
+	const admission = options.admission;
 	const budget = new SubagentBatchBudgetLedger(totalBudgetBytes);
-	const tokenBudget = preflight.budget.tokens
-		? new SubagentBatchTokenBudgetLedger(preflight.budget.tokens.total)
-		: undefined;
 	const controller = new AbortController();
 	const items: Array<SubagentBatchItemResult | undefined> = new Array(tasks.length);
 	const diagnostics: SubagentDiagnostic[] = [];
@@ -9727,6 +10596,7 @@ export async function runResolvedSubagentBatch(
 			finished = true;
 			if (timeout) clearTimeout(timeout);
 			removeAbortListener?.();
+			removeAdmissionListener?.();
 			const completedItems = items as SubagentBatchItemResult[];
 			resolveBatch({
 				batchId,
@@ -9734,10 +10604,7 @@ export async function runResolvedSubagentBatch(
 				preflight,
 				items: completedItems,
 				usage,
-				budget: {
-					...budget.snapshot(),
-					...(tokenBudget ? { tokens: tokenBudget.snapshot() } : {}),
-				},
+				budget: budget.snapshot(),
 				diagnostics,
 			});
 		};
@@ -9762,6 +10629,10 @@ export async function runResolvedSubagentBatch(
 			settled++;
 		};
 
+		// Wake this batch's pump when shared admission capacity is released elsewhere
+		// (for example by a background job settling or a batch slot freeing up).
+		const removeAdmissionListener = admission ? admission.onRelease(() => pump()) : undefined;
+
 		const pump = (): void => {
 			if (finished) return;
 			if (stopReason || failFastTriggered) {
@@ -9784,23 +10655,13 @@ export async function runResolvedSubagentBatch(
 			}
 
 			while (active < concurrency && nextIndex < tasks.length) {
+				if (admission && !admission.tryAcquire()) break;
 				const task = tasks[nextIndex]!;
 				const reservation = task.request.maxOutputBytes;
-				const tokenReservation = task.request.execution.maxTotalTokens;
 				if (!budget.reserve(reservation)) {
+					admission?.release();
 					if (active > 0) break;
 					markQueued(nextIndex++, "failed", "batch_budget_exhausted", "Batch budget cannot reserve this task.");
-					continue;
-				}
-				if (tokenBudget && tokenReservation !== undefined && !tokenBudget.reserve(tokenReservation)) {
-					budget.reconcile(reservation, 0);
-					if (active > 0) break;
-					markQueued(
-						nextIndex++,
-						"failed",
-						"batch_token_budget_exhausted",
-						"Batch token budget cannot reserve this task.",
-					);
 					continue;
 				}
 				const index = nextIndex++;
@@ -9818,52 +10679,29 @@ export async function runResolvedSubagentBatch(
 							attempt: 1 | 2,
 							request: NormalizedSubagentRequest,
 							activeTools: readonly string[],
-							tokenBudgetLedger?: TokenBudgetLedger,
 						) =>
 							runner.runResolved(request, activeTools, {
-								tokenBudgetLedger,
 								model: request.retryModel ?? task.model,
 								modelRuntime: options.modelRuntime,
+								settingsManager: options.settingsManager,
 								projectTrusted: request.projectTrusted,
 								unsafeHostExec: options.unsafeHostExec,
 								taskId: task.id,
 								signal: controller.signal,
 								isAuthorityStillValid: () => options.isAuthorityStillValid?.(request, task.hookRuntime) ?? true,
 								batchId,
+								management: "internal",
 								attempt,
 								hookRuntime: task.hookRuntime,
 								onEvent: (event) => options.onEvent?.({ ...event, taskId: task.id }),
 							});
 						return options.unsafeHostExec
-							? runAttempt(
-									1,
-									task.request,
-									parentActiveTools,
-									tokenReservation !== undefined
-										? new TokenBudgetLedger(
-												tokenReservation,
-												task.model && SUBAGENT_HARD_CAP_APIS.has(task.model.api)
-													? "enforced"
-													: "aggregate-soft",
-											)
-										: undefined,
-								)
+							? runAttempt(1, task.request, parentActiveTools)
 							: runSubagentWithRecovery(task.request, parentActiveTools, runAttempt, {
-									tokenBudgetLedger:
-										tokenReservation !== undefined
-											? new TokenBudgetLedger(
-													tokenReservation,
-													task.model && SUBAGENT_HARD_CAP_APIS.has(task.model.api)
-														? "enforced"
-														: "aggregate-soft",
-												)
-											: undefined,
 									getStopReason: () => {
 										if (stopReason) return stopReason;
 										return failFastTriggered ? "fail_fast" : undefined;
 									},
-									hardCap:
-										task.model && SUBAGENT_HARD_CAP_APIS.has(task.model.api) ? "enforced" : "aggregate-soft",
 									beforeAttempt: (attempt) => attempt === 1 || budget.reserve(reservation),
 									afterAttempt: (_attempt, result) =>
 										budget.reconcile(reservation, result.observedOutputBytes),
@@ -9872,19 +10710,6 @@ export async function runResolvedSubagentBatch(
 					.then(
 						(result) => {
 							if (options.unsafeHostExec) budget.reconcile(reservation, result.observedOutputBytes);
-							if (tokenBudget && tokenReservation !== undefined) {
-								const actual =
-									result.budget?.chargedTokens ??
-									(result.usage
-										? result.usage.inputTokens + result.usage.outputTokens + result.usage.cacheWriteTokens
-										: 0);
-								tokenBudget.reconcile(tokenReservation, actual, result.budget?.accounting ?? "estimated");
-								if (result.budget?.exhausted)
-									diagnostics.push({
-										code: "batch_token_budget_exhausted",
-										message: `${task.id}: token work budget exhausted.`,
-									});
-							}
 							const verification =
 								result.status === "needs_time"
 									? pendingSubagentVerification(result)
@@ -9917,9 +10742,6 @@ export async function runResolvedSubagentBatch(
 						},
 						(error: unknown) => {
 							if (options.unsafeHostExec) budget.reconcile(reservation, 0);
-							if (tokenBudget && tokenReservation !== undefined) {
-								tokenBudget.reconcile(tokenReservation, 0);
-							}
 							const failure = classifySubagentFailure(error, "runtime");
 							const result = batchTaskResult(task, "failed", failure.code, failure.message, failure.retryable);
 							items[index] = batchItem(task, result);
@@ -9933,6 +10755,7 @@ export async function runResolvedSubagentBatch(
 					)
 					.finally(() => {
 						active--;
+						admission?.release();
 						settled++;
 						pump();
 					});
@@ -10042,7 +10865,12 @@ export function resolveReviewTask(
 	return {
 		id: task.id,
 		dimension: task.dimension,
-		request: { ...baseRequest, readOnlyReview: true, task: reviewTaskPrompt(task, evidence) },
+		request: {
+			...baseRequest,
+			readOnlyReview: true,
+			reportMode: "structured_report",
+			task: reviewTaskPrompt(task, evidence),
+		},
 	};
 }
 
@@ -10062,6 +10890,11 @@ export async function runResolvedReviewBatch(
 		}
 		if (!REVIEW_DIMENSIONS.includes(task.dimension)) {
 			throw new SubagentError("malformed_result", `Unknown review dimension: ${task.dimension}`);
+		}
+		// Reviewers always ingest through the strict JSON report protocol, even when
+		// a hand-built task arrived normalized as a plain delegation.
+		if (task.request.reportMode !== "structured_report") {
+			task.request = { ...task.request, readOnlyReview: true, reportMode: "structured_report" };
 		}
 	}
 	const batch = await runResolvedSubagentBatch(tasks, parentActiveTools, runner, options);
@@ -10296,22 +11129,21 @@ const subagentExecutionParameters = Type.Object(
 			]),
 		),
 		tools: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 32 }), { maxItems: 7 })),
-		maxTurns: Type.Optional(Type.Integer({ minimum: 1, maximum: 64 })),
-		maxToolCalls: Type.Optional(Type.Integer({ minimum: 0, maximum: 512 })),
 		maxOutputBytes: Type.Optional(Type.Integer({ minimum: 1024, maximum: 65536 })),
-		maxTotalTokens: Type.Optional(
-			Type.Integer({
-				minimum: SUBAGENT_EXECUTION_LIMITS.minTotalTokens,
-				maximum: SUBAGENT_EXECUTION_LIMITS.maxTotalTokens,
-				description:
-					"Soft cumulative input + output + cache-write token limit; cache reads are reported separately.",
+		temperature: Type.Optional(
+			Type.Number({
+				minimum: SUBAGENT_EXECUTION_LIMITS.minTemperature,
+				maximum: SUBAGENT_EXECUTION_LIMITS.maxTemperature,
 			}),
+		),
+		topP: Type.Optional(
+			Type.Number({ minimum: SUBAGENT_EXECUTION_LIMITS.minTopP, maximum: SUBAGENT_EXECUTION_LIMITS.maxTopP }),
 		),
 	},
 	{
 		additionalProperties: false,
 		description:
-			"Bounded per-call execution request. Thinking never changes the model route; tools narrow profile capabilities; budgets are enforced by the runtime, never by prompt text.",
+			"Per-call execution request. Thinking never changes the model route; tools narrow profile capabilities; output and timeout limits are enforced by the runtime, never by prompt text.",
 	},
 );
 
@@ -10347,11 +11179,35 @@ const delegateParameters = Type.Object(
 );
 
 const delegateAsyncParameters = delegateParameters;
+
+/**
+ * The foreground `delegate` tool accepts one extra control-plane option: a
+ * managed launch that returns a retained handle at admission. The durable async
+ * job surface keeps its own acceptance contract and does not expose it.
+ */
+const delegateForegroundParameters = Type.Object(
+	{
+		...delegateParameters.properties,
+		background: Type.Optional(
+			Type.Boolean({
+				description:
+					"Return a retained managed handle as soon as the child is admitted instead of blocking until it finishes. The same run ID, child session, model, profile, scope, and tool authority continue; manage the run with manage_subagent.",
+			}),
+		),
+	},
+	{ additionalProperties: false },
+);
 const listSubagentProfilesParameters = Type.Object({
 	query: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
 });
 const subagentJobParameters = Type.Object({
-	jobId: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$" }),
+	jobId: Type.String({
+		minLength: 1,
+		maxLength: 128,
+		pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+		description:
+			"Bare durable job identifier from delegate_async details.accepted.jobId. Do not pass resultRef values such as job:<id>, a foreground runId, batchId, or taskId.",
+	}),
 });
 
 const manageSubagentParameters = Type.Object(
@@ -10359,21 +11215,34 @@ const manageSubagentParameters = Type.Object(
 		runId: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$" }),
 		action: Type.Union([
 			Type.Literal("inspect"),
+			Type.Literal("peek"),
+			Type.Literal("wait"),
 			Type.Literal("extend"),
 			Type.Literal("follow_up"),
 			Type.Literal("stop"),
+			Type.Literal("detach"),
+			Type.Literal("resume"),
+			Type.Literal("delete"),
 		]),
 		additionalMs: Type.Optional(Type.Integer({ minimum: 1_000, maximum: SUBAGENT_PROFILE_LIMITS.maxTimeoutMs })),
 		requestId: Type.Optional(
 			Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$" }),
 		),
 		message: Type.Optional(Type.String({ minLength: 1, maxLength: 8 * 1024 })),
+		waitMs: Type.Optional(
+			Type.Integer({
+				minimum: 1,
+				maximum: SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS,
+				description:
+					"Bounded management wait window. Expiry reports the current state with waitExpired; it never marks the child timed_out.",
+			}),
+		),
 		wait: Type.Optional(Type.Boolean()),
 	},
 	{
 		additionalProperties: false,
 		description:
-			"Inspect, extend, follow up, or stop the same retained ICE subagent. Follow-up requires a stable requestId and is rejected while a user has takeover control.",
+			"Inspect, peek, wait, extend, follow up, detach, stop, resume, or delete the same ICE subagent through one phase-aware lifecycle. Use the foreground runId returned by delegate: details.managed.runId for a live background launch, or details.result.runId for a retained terminal result. Do not pass a durable jobId, resultRef such as job:<id>, batchId, or taskId. Peek returns the latest bounded snapshot immediately; wait blocks the parent tool call for at most waitMs until a terminal or attention state. Detach retains the same live child under management so the parent can continue other work; it never spends the extension reserve. Follow-up requires a stable requestId and is rejected while a user has takeover control. Resume continues a retained completed child in its original session and authority; delete forgets a retained reusable session idempotently. Managed terminal observations outlive reusable sessions for peek/wait. Resume is valid only for retained completed children; delete is owner-scoped and idempotent.",
 	},
 );
 
@@ -10433,9 +11302,6 @@ const delegateBatchParameters = Type.Object({
 	tasks: Type.Array(delegateBatchTaskParameters, { minItems: 1, maxItems: SUBAGENT_BATCH_LIMITS.maxTasks }),
 	concurrency: Type.Optional(Type.Integer({ minimum: 1, maximum: SUBAGENT_BATCH_LIMITS.maxConcurrency })),
 	totalBudgetBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: SUBAGENT_BATCH_LIMITS.defaultBudgetBytes })),
-	totalTokenBudget: Type.Optional(
-		Type.Integer({ minimum: SUBAGENT_BATCH_LIMITS.minTokenBudget, maximum: SUBAGENT_BATCH_LIMITS.maxTokenBudget }),
-	),
 	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 * 60 * 1000 })),
 	failFast: Type.Optional(Type.Boolean()),
 });
@@ -10471,9 +11337,6 @@ const reviewBatchParameters = Type.Object({
 	tasks: Type.Array(reviewTaskParameters, { minItems: 1, maxItems: SUBAGENT_BATCH_LIMITS.maxTasks }),
 	concurrency: Type.Optional(Type.Integer({ minimum: 1, maximum: SUBAGENT_BATCH_LIMITS.maxConcurrency })),
 	totalBudgetBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: SUBAGENT_BATCH_LIMITS.defaultBudgetBytes })),
-	totalTokenBudget: Type.Optional(
-		Type.Integer({ minimum: SUBAGENT_BATCH_LIMITS.minTokenBudget, maximum: SUBAGENT_BATCH_LIMITS.maxTokenBudget }),
-	),
 	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 * 60 * 1000 })),
 	failFast: Type.Optional(Type.Boolean()),
 });
@@ -10493,8 +11356,13 @@ type DelegateToolResult =
 			launch: SubagentLaunchProvenance;
 			progress?: SubagentProgressSnapshot;
 	  }
+	| {
+			managed: SubagentManagedHandle;
+			observation?: SubagentManagedObservation;
+			launch: SubagentLaunchProvenance;
+	  }
 	| SubagentToolErrorDetails;
-type DelegateTool = ToolDefinition<typeof delegateParameters, DelegateToolResult | undefined>;
+type DelegateTool = ToolDefinition<typeof delegateForegroundParameters, DelegateToolResult | undefined>;
 
 type DelegateAsyncTool = ToolDefinition<
 	typeof delegateAsyncParameters,
@@ -10517,9 +11385,12 @@ type SubagentJobTool = ToolDefinition<typeof subagentJobParameters, { inspection
 type ManageSubagentTool = ToolDefinition<
 	typeof manageSubagentParameters,
 	| {
-			action: "inspect" | "extend" | "follow_up" | "stop";
+			action: "inspect" | "peek" | "wait" | "extend" | "follow_up" | "stop" | "detach" | "resume" | "delete";
+			resumedFromRunId?: string;
+			deleted?: { runId: string; deleted: boolean };
 			runId: string;
 			attention?: SubagentRuntimeAttention;
+			observation?: SubagentManagedObservation;
 			result?: SubagentResult;
 			followUp?: { runId: string; status: "queued" | "duplicate" };
 	  }
@@ -10626,8 +11497,11 @@ function formatRuntimeAttention(attention: SubagentRuntimeAttention): string {
 	const activities = attention.lastActivities.slice(-3);
 	const suggestedMs = Math.min(attention.remainingExtendableMs, attention.phase === "finalization" ? 30_000 : 60_000);
 	return [
-		`Runtime attention: ${attention.phase} · ${attention.activeElapsedMs}/${attention.activeBudgetMs} ms used.`,
+		`Runtime attention: ${attention.phase} · ${attention.activeElapsedMs}/${attention.activeBudgetMs} ms used (initial ${attention.initialTimeoutMs} ms, ${attention.extensionCount} extension${attention.extensionCount === 1 ? "" : "s"}, +${attention.totalExtendedMs} ms).`,
 		`Remaining extendable time: ${attention.remainingExtendableMs} ms.${suggestedMs >= 1_000 ? ` Suggested extension: ${suggestedMs} ms.` : ""}`,
+		attention.remainingRetentionMs !== undefined
+			? `Remaining detach retention: ${attention.remainingRetentionMs} ms (separate from the extension reserve).`
+			: undefined,
 		attention.progressAgeMs !== undefined ? `Last progress: ${attention.progressAgeMs} ms ago.` : undefined,
 		attention.repeatedFailure
 			? `Advisory: the same action failed ${attention.repeatedFailure.count} times recently ("${attention.repeatedFailure.action}"); inspect before extending.`
@@ -10643,11 +11517,42 @@ function formatRuntimeAttention(attention: SubagentRuntimeAttention): string {
 		.join("\n");
 }
 
+/**
+ * Render a bounded management observation. `waitExpired` describes only the
+ * parent management window and is never presented as a child timeout.
+ */
+function formatManagedObservation(observation: SubagentManagedObservation): string {
+	const lines = [`Subagent ${observation.runId} is ${observation.childState}.`];
+	if (observation.waitExpired) {
+		lines.push(
+			"Management wait expired while the child was still running; the child did not time out and remains retained.",
+		);
+	}
+	if (observation.result) {
+		lines.push(
+			`Terminal result: ${observation.result.status} · ${observation.result.summary}`,
+			...(observation.result.partial ? ["The result is partial; treat it as unverified evidence."] : []),
+		);
+	}
+	if (observation.attention) {
+		lines.push(formatRuntimeAttention(observation.attention));
+		if (!observation.terminal) {
+			lines.push(
+				`Use manage_subagent with runId ${observation.runId} to peek, wait, extend, detach, or stop the same retained child.`,
+			);
+		}
+	}
+	return truncateSubagentOutput(redactCredentialText(lines.join("\n")), 16 * 1024).text;
+}
+
 function formatToolResult(result: SubagentResult, verification: SubagentVerification): string {
 	const requirementRows = formatSubagentRequirementSummary(verification.requirementSummary);
 	const artifact = result.workArtifact;
 	const artifactRows =
-		artifact && artifact.reportProtocol.status !== "valid" && result.status !== "needs_time"
+		artifact &&
+		artifact.reportProtocol.status !== "valid" &&
+		artifact.reportProtocol.status !== "plain" &&
+		result.status !== "needs_time"
 			? [
 					"Preserved work artifact (runtime-owned, unverified):",
 					`report protocol: ${artifact.reportProtocol.status}${artifact.reportProtocol.diagnostic ? ` — ${artifact.reportProtocol.diagnostic}` : ""}`,
@@ -10663,16 +11568,28 @@ function formatToolResult(result: SubagentResult, verification: SubagentVerifica
 						: []),
 				]
 			: [];
+	const modeRow =
+		result.reportMode === "plain_final_turn"
+			? "Report mode: plain final assistant turn (no structured report or evidence verification)."
+			: result.reportMode === "structured_report"
+				? "Report mode: bounded structured JSON report."
+				: undefined;
 	const text = [
 		`Subagent ${result.status} (${result.profile}, ${result.runId}).`,
 		result.summary,
+		modeRow,
 		result.status === "needs_time"
 			? "Parent verification: pending; the retained child is not terminal."
 			: verification.verified
-				? "Parent verification: passed."
+				? verification.kind === "plain_bounds"
+					? "Parent verification: plain answer accepted (lineage and output bound only; no structured verification)."
+					: "Parent verification: passed."
 				: `Parent verification: failed. ${verification.reason}`,
 		...(requirementRows.length > 0 ? [requirementRows.join("\n")] : []),
 		...(artifactRows.length > 0 ? [artifactRows.join("\n")] : []),
+		result.reportArtifact
+			? `Oversized report capture: ${result.reportArtifact.path} (${result.reportArtifact.originalBytes} bytes${result.reportArtifact.truncated ? ", artifact truncated" : ""}).`
+			: undefined,
 		result.attention ? formatRuntimeAttention(result.attention) : undefined,
 		verification.unresolvedClaims.length > 0
 			? `Unresolved claims for parent synthesis: ${verification.unresolvedClaims.join(" | ")}`
@@ -10696,16 +11613,16 @@ function formatSubagentJobInspection(inspection: SubagentJobInspection): string 
 				? `The same child run is retained as ${inspection.job.runId}; inspect/extend/stop it instead of launching a duplicate.`
 				: undefined,
 			inspection.queuePosition !== undefined ? `Queue position: ${inspection.queuePosition}.` : undefined,
+			inspection.budget?.ownerActiveJobs !== undefined &&
+			inspection.budget.ownerQueuedJobs !== undefined &&
+			inspection.budget.ownerActiveJobsCap !== undefined
+				? `Admission: active=${inspection.budget.ownerActiveJobs}, queued=${inspection.budget.ownerQueuedJobs}, cap=${inspection.budget.ownerActiveJobsCap}.`
+				: undefined,
 			inspection.budget
 				? `Output reservation: ${inspection.budget.reservedOutputBytes}/${inspection.budget.ownerBudgetBytes} bytes.`
 				: undefined,
-			inspection.budget?.resolvedMaxTotalTokens !== undefined
-				? inspection.budget.chargedTokens !== undefined && inspection.budget.remainingTokens !== undefined
-					? `Token usage (last persisted boundary): ${inspection.budget.chargedTokens}/${inspection.budget.resolvedMaxTotalTokens} charged; ${inspection.budget.remainingTokens} remaining.`
-					: `Token ceiling: ${inspection.budget.resolvedMaxTotalTokens}; usage is not persisted at a safe boundary.`
-				: undefined,
 			inspection.job.contract
-				? `Accepted contract: thinking=${inspection.job.contract.thinking}, timeout=${inspection.job.contract.timeoutMs}ms, turns=${inspection.job.contract.maxTurns}, tool calls=${inspection.job.contract.maxToolCalls}, output=${inspection.job.contract.maxOutputBytes} bytes, tools=${inspection.job.contract.tools.join(",") || "none"}.`
+				? `Accepted contract: thinking=${inspection.job.contract.thinking}, timeout=${inspection.job.contract.timeoutMs}ms, output=${inspection.job.contract.maxOutputBytes} bytes, tools=${inspection.job.contract.tools.join(",") || "none"}.`
 				: undefined,
 			`Result ref: ${inspection.job.resultRef}.`,
 			result?.summary,
@@ -10717,7 +11634,9 @@ function formatSubagentJobInspection(inspection: SubagentJobInspection): string 
 			result?.verification
 				? `Verification: ${result.verification.verified ? "passed" : "failed"}. ${result.verification.reason}`
 				: undefined,
-			result?.workArtifact && result.workArtifact.reportProtocol.status !== "valid"
+			result?.workArtifact &&
+			result.workArtifact.reportProtocol.status !== "valid" &&
+			result.workArtifact.reportProtocol.status !== "plain"
 				? [
 						`Preserved work artifact: report protocol ${result.workArtifact.reportProtocol.status}${result.workArtifact.reportProtocol.diagnostic ? ` — ${result.workArtifact.reportProtocol.diagnostic}` : ""}.`,
 						result.workArtifact.touchedPaths.length > 0
@@ -10726,6 +11645,9 @@ function formatSubagentJobInspection(inspection: SubagentJobInspection): string 
 					]
 						.filter((part): part is string => part !== undefined)
 						.join(" ")
+				: undefined,
+			result?.reportArtifact
+				? `Oversized report capture: ${result.reportArtifact.path} (${result.reportArtifact.originalBytes} bytes${result.reportArtifact.truncated ? ", artifact truncated" : ""}).`
 				: undefined,
 			result && result.diagnostics.length > 0
 				? `Diagnostics: ${result.diagnostics.map((diagnostic) => diagnostic.code).join(", ")}.`
@@ -10741,9 +11663,6 @@ function formatBatchToolResult(result: SubagentBatchResult): string {
 		formatSubagentLaunchDigest(result.preflight),
 		`Subagent batch ${result.status} (${result.batchId}).`,
 		`Budget: ${result.budget.consumed}/${result.budget.total} output bytes consumed; ${result.budget.released} released.`,
-		result.budget.tokens
-			? `Token budget: ${result.budget.tokens.charged}/${result.budget.tokens.total} charged; ${result.budget.tokens.remaining} remaining; ${result.budget.tokens.overshoot} overshoot${result.budget.tokens.accounting === "provider" ? "" : " ~"}.`
-			: undefined,
 		...result.items.map(
 			(item) =>
 				`Task ${item.taskId}: ${item.result.status}; verification ${item.verification.verified ? "passed" : "failed"}.\n${item.result.summary}`,
@@ -10758,9 +11677,6 @@ function formatReviewBatchToolResult(result: ReviewBatchResult): string {
 		formatSubagentLaunchDigest(result.preflight),
 		`Reviewer batch ${result.status} (${result.batchId}).`,
 		`Budget: ${result.budget.consumed}/${result.budget.total} output bytes consumed; ${result.budget.released} released.`,
-		result.budget.tokens
-			? `Token budget: ${result.budget.tokens.charged}/${result.budget.tokens.total} charged; ${result.budget.tokens.remaining} remaining; ${result.budget.tokens.overshoot} overshoot${result.budget.tokens.accounting === "provider" ? "" : " ~"}.`
-			: undefined,
 		...result.reviewers.map((reviewer) => {
 			const findings = reviewer.findings.map(
 				(finding) =>
@@ -11544,6 +12460,17 @@ class SubagentObservatoryView extends Container {
 		return this.jobs?.list().map(projectDurableSubagentJob) ?? [];
 	}
 
+	private colorForObservatoryRow(row: string): IceAgentViewColor | undefined {
+		for (const snapshot of [...this.store.getState().active, ...this.store.getState().recent]) {
+			if (!snapshot.color) continue;
+			const identifiers = [snapshot.taskId, snapshot.role, snapshot.runId?.slice(0, 6)].filter(
+				(value): value is string => value !== undefined && value.length > 0,
+			);
+			if (identifiers.some((identifier) => row.includes(` ${identifier} `))) return snapshot.color;
+		}
+		return undefined;
+	}
+
 	private entryKeys(): readonly string[] {
 		const durableJobs = this.durableJobs();
 		return Object.freeze([
@@ -11629,6 +12556,7 @@ class SubagentObservatoryView extends Container {
 					...(this.inspectionNotice ? ["", `! ${this.inspectionNotice}`] : []),
 				];
 		for (const [index, row] of rows.entries()) {
+			const profileColor = this.colorForObservatoryRow(row);
 			const color =
 				index === 0
 					? "accent"
@@ -11638,7 +12566,7 @@ class SubagentObservatoryView extends Container {
 							? "muted"
 							: row === "VERIFICATION FAILED" || row.startsWith("! ")
 								? "error"
-								: "text";
+								: (profileColor ?? "text");
 			this.addChild(new Text(this.theme.fg(color, row), 1, 0));
 		}
 		this.tui.requestRender();
@@ -11797,6 +12725,22 @@ function getParentSettingsManager(ctx: ExtensionContext): SettingsManager {
 	);
 }
 
+export function resolveSubagentConcurrencyPolicyFromSettings(
+	settingsManager: SettingsManager,
+): ResolvedSubagentConcurrencyPolicy {
+	try {
+		const global = parseIceSettings(settingsManager.getGlobalSettings().ice);
+		const project = parseIceSettings(settingsManager.getProjectSettings().ice);
+		return resolveSubagentConcurrencyPolicy({
+			global: global.subagents,
+			project: project.subagents,
+			projectTrusted: settingsManager.isProjectTrusted(),
+		});
+	} catch {
+		return resolveSubagentConcurrencyPolicy({});
+	}
+}
+
 export function formatIceSubagentSettingsSummary(settingsManager: SettingsManager, projectTrusted: boolean): string {
 	const lines = ["ICE subagent policy", ""];
 	try {
@@ -11818,6 +12762,17 @@ export function formatIceSubagentSettingsSummary(settingsManager: SettingsManage
 		lines.push(
 			`routing: ${global.subagents.modelSelection.mode === "configured" ? "configured candidates enabled" : "inherit-parent only"} · global-first ice policy`,
 		);
+		const concurrencyPolicy = resolveSubagentConcurrencyPolicy({
+			global: global.subagents,
+			project: project.subagents,
+			projectTrusted: effectiveProjectTrusted,
+		});
+		lines.push(
+			`concurrency: default=${concurrencyPolicy.defaultConcurrency} [${concurrencyPolicy.sources.default}] · cap=${concurrencyPolicy.maxConcurrency} [${concurrencyPolicy.sources.max}] · shared batch/job admission (limits ${SUBAGENT_CONCURRENCY_LIMITS.min}-${SUBAGENT_CONCURRENCY_LIMITS.hardCap})${concurrencyPolicy.diagnostics.length > 0 ? ` · ${concurrencyPolicy.diagnostics.join("; ")}` : ""}`,
+		);
+		lines.push(
+			`budgets: hard maximum ${ICE_SUBAGENT_SETTINGS_LIMITS.maxTimeoutMs} ms per child · management wait default ${SUBAGENT_MANAGEMENT_WAIT_DEFAULT_MS} ms (max ${SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS} ms) · detach retention ${SUBAGENT_DETACH_RETENTION_MS} ms (separate from the extension reserve); a wait expiry is not a child timeout`,
+		);
 		lines.push("");
 		for (const role of contractRoles.slice(0, 12)) {
 			const contract = resolveIceSubagentContract({
@@ -11829,12 +12784,12 @@ export function formatIceSubagentSettingsSummary(settingsManager: SettingsManage
 			});
 			const values = [
 				`thinking=${contract.values.thinking} [${contract.sources.thinking}]`,
-				`turns=${contract.values.maxTurns} [${contract.sources.maxTurns}]`,
-				`toolCalls=${contract.values.maxToolCalls} [${contract.sources.maxToolCalls}]`,
+				`timeout=${contract.values.timeoutMs}ms [${contract.sources.timeoutMs}]`,
 				`output=${contract.values.maxOutputBytes} [${contract.sources.maxOutputBytes}]`,
-				...(contract.values.maxTotalTokens !== undefined
-					? [`tokens=${contract.values.maxTotalTokens} [${contract.sources.maxTotalTokens}]`]
+				...(contract.values.temperature !== undefined
+					? [`temperature=${contract.values.temperature} [${contract.sources.temperature}]`]
 					: []),
+				...(contract.values.topP !== undefined ? [`topP=${contract.values.topP} [${contract.sources.topP}]`] : []),
 			];
 			lines.push(`${role}: ${contract.denied ? `denied (${contract.denied.code})` : values.join(" · ")}`);
 		}
@@ -11890,6 +12845,8 @@ function applyIceProfileSettingsSummary(
 				thinking: profile.effectiveThinkingLevel,
 				timeoutMs: profile.effectiveTimeoutMs,
 				maxOutputBytes: profile.effectiveMaxOutputBytes,
+				temperature: profile.requestedTemperature,
+				topP: profile.requestedTopP,
 			},
 		});
 		const diagnostics = [
@@ -11901,12 +12858,9 @@ function applyIceProfileSettingsSummary(
 			...profile,
 			effectiveThinkingLevel: contract.values.thinking,
 			effectiveTimeoutMs: contract.values.timeoutMs,
-			effectiveMaxTurns: contract.values.maxTurns,
-			effectiveMaxToolCalls: contract.values.maxToolCalls,
 			effectiveMaxOutputBytes: contract.values.maxOutputBytes,
-			...(contract.values.maxTotalTokens !== undefined
-				? { effectiveMaxTotalTokens: contract.values.maxTotalTokens }
-				: {}),
+			...(contract.values.temperature !== undefined ? { effectiveTemperature: contract.values.temperature } : {}),
+			...(contract.values.topP !== undefined ? { effectiveTopP: contract.values.topP } : {}),
 			effectiveSettingSources: Object.freeze({ ...contract.sources }),
 			profileDiagnostics: Object.freeze(diagnostics),
 			...(contract.denied ? { availability: "invalid" as const } : {}),
@@ -11946,25 +12900,14 @@ function isCurrentSubagentAuthorityValid(
 				role: normalized.role,
 				thinking: normalized.execution.thinking,
 				timeoutMs: normalized.timeoutMs,
-				maxTurns: normalized.execution.maxTurns,
-				maxToolCalls: normalized.execution.maxToolCalls,
 				maxOutputBytes: normalized.execution.maxOutputBytes,
-				...(normalized.execution.maxTotalTokens !== undefined &&
-				normalized.iceContract.sources.maxTotalTokens === "call"
-					? { maxTotalTokens: normalized.execution.maxTotalTokens }
-					: {}),
 			},
 		});
 		if (
 			contract.denied ||
 			!contract.enabled ||
 			contract.values.timeoutMs < normalized.timeoutMs ||
-			contract.values.maxTurns < normalized.execution.maxTurns ||
-			contract.values.maxToolCalls < normalized.execution.maxToolCalls ||
-			contract.values.maxOutputBytes < normalized.execution.maxOutputBytes ||
-			(normalized.execution.maxTotalTokens !== undefined &&
-				(contract.values.maxTotalTokens === undefined ||
-					contract.values.maxTotalTokens < normalized.execution.maxTotalTokens))
+			contract.values.maxOutputBytes < normalized.execution.maxOutputBytes
 		)
 			return false;
 		const acceptedTools = (normalized.execution.tools ?? normalized.profile.requestedTools).filter(
@@ -12208,6 +13151,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	}
 	const subYoloEnabled = (): boolean => flagEnabled(ice, "sub-yolo");
 	const agentDir = options.agentDir ?? getAgentDir();
+	const subagentArtifactRoot = join(agentDir, "artifacts", "subagent");
 	const registeredMcpProxy: IceSubagentMcpAdapter = {
 		getIdentity: () => parentMcpAdapters.get(ice.events),
 		listAuthorizedTools: () => parentMcpAdapters.get(ice.events)?.listAuthorizedTools() ?? [],
@@ -12252,6 +13196,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	options.agentViewBridge?.connectLiveSessions(liveSessions);
 	const runner = new NativeSubagentRunner({
 		agentDir,
+		artifactRoot: subagentArtifactRoot,
 		liveSessionRegistry: liveSessions,
 		agentViewBridge: options.agentViewBridge,
 		supervisorRegistry,
@@ -12315,16 +13260,17 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 			finalStatus: result.status,
 			reportProtocolStatus:
 				result.workArtifact?.reportProtocol.status ?? (result.status === "completed" ? "valid" : "missing"),
-			verificationPassed: verification.verified && result.status === "completed",
+			verificationPassed: verification.structuredVerified === true && result.status === "completed",
 			requiredCriteriaTotal,
 			requiredCriteriaSatisfied:
 				verification.requirementSummary?.requiredSatisfied ?? (verification.verified ? requiredCriteriaTotal : 0),
 			parentSteeringCount: attention?.steering ?? 0,
-			budget: result.budget,
+			usage: result.usage,
 		});
 		attentionLedger.delete(runId);
 	};
 	let jobs: SubagentJobRegistry | undefined;
+	let subagentAdmission: SubagentConcurrencyAdmission | undefined;
 	let parentBusy = false;
 	let shuttingDown = false;
 	type ParentRunState = {
@@ -12406,6 +13352,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	const delegateWrite: DelegateWriteTool = {
 		name: "delegate_write",
 		label: "delegate_write",
+		executionMode: "sequential",
 		description:
 			"Run one foreground ICE writer. Normal mode uses a clean detached Git worktree and returns an immutable bounded patch proposal. Explicit --sub-yolo uses the trusted parent workspace directly, including dirty files, and may use Bash; it provides no isolation, rollback, or patch proposal. The child always uses the current parent model.",
 		promptSnippet: "Delegate one bounded writer (isolated normally, direct in YOLO)",
@@ -12997,14 +13944,58 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 		name: "manage_subagent",
 		label: "manage_subagent",
 		description:
-			"Inspect, extend, follow up, or stop the same retained ICE child. Follow-up queues bounded untrusted task data through Ice steering, requires a stable requestId, and is rejected while a user has takeover control. Extend preserves run ID, child session, model, profile, scope, tool authority, and output budget; historical and terminal children cannot be revived.",
-		promptSnippet: "Inspect or manage a retained subagent timeout",
+			"Inspect, peek, wait for, extend, follow up, detach, stop, resume, or delete the same ICE child through one phase-aware lifecycle. Use the foreground runId returned by delegate: details.managed.runId for a live background launch, or details.result.runId for a retained terminal result. Do not pass a durable jobId, resultRef such as job:<id>, batchId, or taskId. Peek returns the latest bounded snapshot immediately. Wait blocks this tool call for at most waitMs until a terminal or attention state; a wait expiry reports the current state and never marks the child timed_out. Detach retains the same live child under management so the parent can continue other work. Follow-up queues bounded untrusted task data through Ice steering, requires a stable requestId, and is rejected while a user has takeover control. Extend preserves run ID, child session, model, profile, scope, tool authority, and output budget. Resume continues a retained completed child in its original session and authority; delete forgets a retained reusable session idempotently, while managed terminal observations stay peekable.",
+		promptSnippet: "Peek, wait for, resume, delete, or manage a retained subagent timeout",
 		parameters: manageSubagentParameters,
 		renderCall: (args, theme, context) => renderObservatoryCall("manage_subagent", args, theme, context),
 		renderResult: (result, options, theme, context) => renderObservatoryResult(result, options, theme, context),
 		execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
 			const parentSessionId = ctx.sessionManager.getSessionId();
 			try {
+				if (params.action === "peek") {
+					const observation = runner.peekRuntime(params.runId, parentSessionId);
+					if (!observation)
+						throw new SubagentError(
+							"child_protocol_failure",
+							"The selected subagent is not a live retained run owned by this parent session.",
+						);
+					return {
+						content: [{ type: "text", text: formatManagedObservation(observation) }],
+						details: { action: "peek" as const, runId: params.runId, observation },
+						isError: false,
+					};
+				}
+				if (params.action === "wait") {
+					const observation = await runner.waitRuntime(
+						params.runId,
+						parentSessionId,
+						params.waitMs ?? SUBAGENT_MANAGEMENT_WAIT_DEFAULT_MS,
+						_signal,
+					);
+					return {
+						content: [{ type: "text", text: formatManagedObservation(observation) }],
+						details: { action: "wait" as const, runId: params.runId, observation },
+						isError: false,
+					};
+				}
+				if (params.action === "detach") {
+					const observation = runner.detachRuntime(params.runId, parentSessionId);
+					if (!observation)
+						throw new SubagentError(
+							"child_protocol_failure",
+							"The selected subagent is not a live retained run that can be detached.",
+						);
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Detached retained subagent ${params.runId}; it keeps the same run ID, child session, model, scope, and tool authority, and it does not spend the extension reserve.\n${formatManagedObservation(observation)}`,
+							},
+						],
+						details: { action: "detach" as const, runId: params.runId, observation },
+						isError: false,
+					};
+				}
 				if (params.action === "inspect") {
 					const attention = runner.getRuntimeAttention(params.runId, parentSessionId);
 					if (!attention)
@@ -13099,6 +14090,82 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 						isError: result.status !== "completed" && result.status !== "needs_time",
 					};
 				}
+				if (params.action === "resume") {
+					// Phase gate: resume is valid only for a retained terminal child. A live
+					// run (supervisor-owned) or an in-flight resume claim must fail here
+					// instead of reaching the session layer.
+					if (runner.getOwnedSupervisor(params.runId, parentSessionId)) {
+						throw new SubagentError(
+							"child_protocol_failure",
+							"The selected subagent is still active; only a retained completed child can be resumed.",
+						);
+					}
+					if (!params.message) {
+						throw new SubagentError("malformed_result", "resume requires a bounded message.");
+					}
+					const settingsManager = getParentSettingsManager(ctx);
+					const resumed = await runner.resumeRuntime(
+						params.runId,
+						parentSessionId,
+						params.message,
+						[...ice.getActiveTools()],
+						{
+							modelRuntime: ctx.modelRegistry.getRuntime(),
+							signal: _signal,
+							createHookRuntimeFor: (request) =>
+								createSubagentHookRuntime(ctx, settingsManager, request, options, undefined, appendHookJournal),
+							isAuthorityStillValidFor: (request, hookRuntime) =>
+								isCurrentSubagentAuthorityValid(ctx, settingsManager, request, hookRuntime),
+						},
+					);
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Resumed retained subagent ${params.runId} as ${resumed.runId}. Final status: ${resumed.status}.\n${resumed.summary}`,
+							},
+						],
+						details: {
+							action: "resume" as const,
+							runId: params.runId,
+							resumedFromRunId: params.runId,
+							result: redactSubagentResult(resumed),
+						},
+						isError: resumed.status !== "completed" && resumed.status !== "needs_time",
+					};
+				}
+				if (params.action === "delete") {
+					// Phase gate: delete is valid only for a retained terminal child. A live
+					// run must be stopped first; the runner enforces the same boundary.
+					if (runner.getOwnedSupervisor(params.runId, parentSessionId)) {
+						throw new SubagentError(
+							"child_protocol_failure",
+							"The selected subagent is still active; stop it before deleting.",
+						);
+					}
+					const deleted = await runner.deleteRetainedChild(params.runId, parentSessionId);
+					return {
+						content: [
+							{
+								type: "text",
+								text: deleted.deleted
+									? `Deleted retained subagent ${params.runId}.`
+									: `Retained subagent ${params.runId} was already forgotten; nothing to delete.`,
+							},
+						],
+						details: { action: "delete" as const, runId: params.runId, deleted },
+						isError: false,
+					};
+				}
+				// Phase gate: stop is valid only for a live run. A retained terminal
+				// child has no supervisor to stop; stopping it again is a no-op
+				// rejected here so terminal handles cannot masquerade as live runs.
+				if (!runner.getOwnedSupervisor(params.runId, parentSessionId)) {
+					throw new SubagentError(
+						"child_protocol_failure",
+						"The selected subagent is not running; retained terminal children support peek, wait, resume, or delete.",
+					);
+				}
 				const result = await runner.stopRuntime(params.runId, parentSessionId);
 				return {
 					content: [
@@ -13108,7 +14175,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					isError: false,
 				};
 			} catch (error) {
-				const message = redactCredentialText(error instanceof Error ? error.message : String(error));
+				const message = formatManagedIdentifierError(error, params.runId);
 				return {
 					content: [{ type: "text", text: `Subagent management rejected: ${message}` }],
 					details: formatSubagentToolError(error),
@@ -13120,9 +14187,10 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	const delegate: DelegateTool = {
 		name: "delegate",
 		label: "delegate",
-		description: `${SUBAGENT_SCOPE_TOOL_GUIDANCE} ${SUBAGENT_INTERNAL_REPORT_GUIDANCE} Run one foreground ICE child as a file agent or self-delegation (role self with bounded parent instructions; no file needed). If the result status is needs_time, the SAME child session is retained; use manage_subagent to inspect, extend, or stop it instead of launching a duplicate replacement. File agents resolve global-first; models follow the deterministic call/primary/fallback/parent order without credential expansion. Safe mode clamps the selected profile to its requested read-only capabilities. Explicit --sub-yolo permits only the selected profile's requested built-in capabilities that are also active in the trusted parent after build-mode, trust, and parent-Bash checks; it does not grant every parent tool. Trusted ambient resources may load, but model-visible authority remains the explicit child tool allowlist and recursive delegation is not authorized. This is not a filesystem sandbox; the parent verifies and synthesizes the evidence.`,
+		description: `${SUBAGENT_SCOPE_TOOL_GUIDANCE} ${SUBAGENT_INTERNAL_REPORT_GUIDANCE} Delegation is for parallel fan-out, not single errands: never delegate a simple single task you can complete directly with your own parent tools; launch a child only when the plan calls for at least two children (delegate_batch or concurrent background delegate launches). Run one foreground ICE child as a file agent or self-delegation (role self with bounded parent instructions; no file needed). If the result status is needs_time, the SAME child session is retained; use manage_subagent to inspect, extend, or stop it instead of launching a duplicate replacement. Set background: true to receive a retained managed handle as soon as the child is admitted: the same child session keeps running and is managed with manage_subagent, so a long child never blocks the parent tool call. File agents resolve global-first; models follow the deterministic call/primary/fallback/parent order without credential expansion. Safe mode clamps the selected profile to its requested read-only capabilities. Explicit --sub-yolo permits only the selected profile's requested built-in capabilities that are also active in the trusted parent after build-mode, trust, and parent-Bash checks; it does not grant every parent tool. Trusted ambient resources may load, but model-visible authority remains the explicit child tool allowlist and recursive delegation is not authorized. This is not a filesystem sandbox; the parent verifies and synthesizes the evidence.`,
 		promptSnippet: "Delegate one bounded file/self subagent",
-		parameters: delegateParameters,
+		promptGuidelines: [...SUBAGENT_DELEGATION_POLICY_GUIDELINES],
+		parameters: delegateForegroundParameters,
 		renderCall: (args, theme, context) => renderObservatoryCall("delegate", args, theme, context),
 		renderResult: (result, options, theme, context) => renderObservatoryResult(result, options, theme, context),
 		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
@@ -13259,16 +14327,22 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					? [...unsafeAuthorization.parentActiveTools]
 					: [...ice.getActiveTools()];
 				const effectiveParentActiveTools = parentActiveTools;
+				const managedLaunch = params.background === true;
+				let resolveManagedHandle: ((handle: SubagentManagedHandle) => void) | undefined;
+				const managedHandlePromise = managedLaunch
+					? new Promise<SubagentManagedHandle>((resolve) => {
+							resolveManagedHandle = resolve;
+						})
+					: undefined;
 				const runChild = (
 					attempt: 1 | 2,
 					childRequest: NormalizedSubagentRequest,
 					activeTools: readonly string[],
-					tokenBudgetLedger?: TokenBudgetLedger,
 				) =>
 					runner.runResolved(childRequest, activeTools, {
-						tokenBudgetLedger,
 						model: childRequest.retryModel ?? model,
 						modelRuntime: ctx.modelRegistry.getRuntime(),
+						settingsManager,
 						projectTrusted: childRequest.projectTrusted,
 						unsafeHostExec,
 						attempt,
@@ -13280,13 +14354,57 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 						hookRuntime,
 						onEvent: (event) =>
 							publishRuntimeProgress(observatory, toolCallId, "delegate", ctx.cwd, event, onUpdate),
+						...(managedLaunch
+							? {
+									onManagedHandle: (handle: SubagentManagedHandle) => {
+										resolveManagedHandle?.(handle);
+									},
+								}
+							: {}),
 					});
-				const result = unsafeHostExec
-					? await runChild(1, normalized, effectiveParentActiveTools)
-					: await runSubagentWithRecovery(normalized, effectiveParentActiveTools, runChild, {
+				const runPromise = unsafeHostExec
+					? runChild(1, normalized, effectiveParentActiveTools)
+					: runSubagentWithRecovery(normalized, effectiveParentActiveTools, runChild, {
 							getStopReason: () => (signal?.aborted ? "cancelled" : undefined),
-							hardCap: SUBAGENT_HARD_CAP_APIS.has(model.api) ? "enforced" : "aggregate-soft",
 						});
+				let result: SubagentResult;
+				if (managedLaunch && managedHandlePromise) {
+					// Return control at admission: the same child session keeps running
+					// under the supervisor, and the run promise is kept alive so its
+					// terminal result is published exactly once to the retained ledger.
+					//
+					// The retained child stays bound to the parent run signal handed to
+					// runResolved, exactly like delegate_async's parent-run tie: a normal run
+					// completion never aborts that signal, so returning here does not cancel
+					// the child. It terminates only on an explicit abort/compact/dispose of the
+					// launching run, on manage_subagent stop, or on session shutdown through
+					// runner.shutdown().
+					const outcome = await Promise.race([
+						runPromise.then((value) => ({ kind: "settled" as const, value })),
+						managedHandlePromise.then((handle) => ({ kind: "managed" as const, handle })),
+					]);
+					if (outcome.kind === "managed") {
+						void runPromise.catch(() => {});
+						const observation = runner.peekRuntime(outcome.handle.runId, normalized.parentSessionId);
+						return {
+							content: [
+								{
+									type: "text",
+									text: `Launched retained subagent ${outcome.handle.runId} in managed mode; it keeps the same run ID, child session, model, profile, scope, and tool authority.${observation ? `\n${formatManagedObservation(observation)}` : ""}`,
+								},
+							],
+							details: {
+								managed: outcome.handle,
+								...(observation ? { observation } : {}),
+								launch: createSubagentLaunchProvenance(normalized, model),
+							},
+							isError: false,
+						};
+					}
+					result = outcome.value;
+				} else {
+					result = await runPromise;
+				}
 				const verification =
 					result.status === "needs_time"
 						? pendingSubagentVerification(result)
@@ -13377,8 +14495,9 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	const delegateAsync: DelegateAsyncTool = {
 		name: "delegate_async",
 		label: "delegate_async",
-		description: `${SUBAGENT_SCOPE_TOOL_GUIDANCE} ${SUBAGENT_INTERNAL_REPORT_GUIDANCE} Accept one durable asynchronous ICE child for the current session using the current parent model captured at acceptance time. The parent-owned scheduler admits bounded active work or FIFO queued work, reserves bounded output, owns cancellation, persists state, and returns acceptance metadata without awaiting the child. Safe mode clamps the selected profile to requested read-only capabilities. Explicit --sub-yolo permits only profile-requested built-in capabilities that are also active in the trusted parent; it does not grant every parent tool. Trusted ambient resources may load, but model-visible authority remains the explicit child allowlist and recursive delegation is not authorized.`,
+		description: `${SUBAGENT_SCOPE_TOOL_GUIDANCE} ${SUBAGENT_INTERNAL_REPORT_GUIDANCE} Delegation is for parallel fan-out, not single errands: never delegate a simple single task you can complete directly with your own parent tools; launch a child only when the plan calls for at least two children (delegate_batch or concurrent background delegate launches). Accept one durable asynchronous ICE child for the current session using the current parent model captured at acceptance time. The returned details.accepted.jobId is the bare identifier for inspect_subagent_job or cancel_subagent_job; details.accepted.resultRef (job:<id>) is display/reference metadata, not a jobId. Do not use a batchId, taskId, or foreground runId with the durable-job tools. The parent-owned scheduler admits bounded active work or FIFO queued work, reserves bounded output, owns cancellation, persists state, and returns acceptance metadata without awaiting the child. Safe mode clamps the selected profile to requested read-only capabilities. Explicit --sub-yolo permits only profile-requested built-in capabilities that are also active in the trusted parent; it does not grant every parent tool. Trusted ambient resources may load, but model-visible authority remains the explicit child allowlist and recursive delegation is not authorized.`,
 		promptSnippet: "Launch one durable asynchronous subagent",
+		promptGuidelines: [...SUBAGENT_DELEGATION_POLICY_GUIDELINES],
 		parameters: delegateAsyncParameters,
 		execute: async (_toolCallId, params, signal, _onUpdate, ctx) => {
 			try {
@@ -13486,7 +14605,8 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					contract: {
 						route: acceptedRoute,
 						capabilities: [
-							...(normalized.delegatedTools ?? []).map(({ name, origin, fingerprint }) => ({
+							...(normalized.delegatedTools ?? []).map(({ adapterId, name, origin, fingerprint }) => ({
+								adapterId,
 								name,
 								origin,
 								fingerprint,
@@ -13500,12 +14620,11 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 						resourcesHash: hashSource(JSON.stringify(normalized.resources)),
 						thinking: normalized.execution.thinking,
 						timeoutMs: normalized.timeoutMs,
-						maxTurns: normalized.execution.maxTurns,
-						maxToolCalls: normalized.execution.maxToolCalls,
 						maxOutputBytes: normalized.execution.maxOutputBytes,
-						...(normalized.execution.maxTotalTokens !== undefined
-							? { maxTotalTokens: normalized.execution.maxTotalTokens }
+						...(normalized.execution.temperature !== undefined
+							? { temperature: normalized.execution.temperature }
 							: {}),
+						...(normalized.execution.topP !== undefined ? { topP: normalized.execution.topP } : {}),
 						tools: acceptedTools,
 						sourceHash: normalized.profile.sourceHash,
 						...(normalized.modelCandidates ? { modelCandidates: [...normalized.modelCandidates] } : {}),
@@ -13563,13 +14682,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 									role: normalized.role,
 									thinking: normalized.execution.thinking,
 									timeoutMs: normalized.timeoutMs,
-									maxTurns: normalized.execution.maxTurns,
-									maxToolCalls: normalized.execution.maxToolCalls,
 									maxOutputBytes: normalized.execution.maxOutputBytes,
-									...(normalized.execution.maxTotalTokens !== undefined &&
-									normalized.iceContract.sources.maxTotalTokens === "call"
-										? { maxTotalTokens: normalized.execution.maxTotalTokens }
-										: {}),
 								},
 							});
 							const acceptedTools = (normalized.execution.tools ?? normalized.profile.requestedTools).filter(
@@ -13595,12 +14708,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 								currentContract.denied ||
 								!currentContract.enabled ||
 								currentContract.values.timeoutMs < normalized.timeoutMs ||
-								currentContract.values.maxTurns < normalized.execution.maxTurns ||
-								currentContract.values.maxToolCalls < normalized.execution.maxToolCalls ||
 								currentContract.values.maxOutputBytes < normalized.execution.maxOutputBytes ||
-								(normalized.execution.maxTotalTokens !== undefined &&
-									(currentContract.values.maxTotalTokens === undefined ||
-										currentContract.values.maxTotalTokens < normalized.execution.maxTotalTokens)) ||
 								acceptedTools.some((tool) => currentContract.deniedTools.includes(tool)) ||
 								acceptedHookIds.join("|") !== currentHookIds.join("|")
 							) {
@@ -13628,12 +14736,11 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 							attempt: 1 | 2,
 							childRequest: NormalizedSubagentRequest,
 							activeTools: readonly string[],
-							tokenBudgetLedger?: TokenBudgetLedger,
 						) =>
 							runner.runResolved(childRequest, activeTools, {
-								tokenBudgetLedger,
 								model,
 								modelRuntime,
+								settingsManager,
 								projectTrusted: childRequest.projectTrusted,
 								unsafeHostExec,
 								attempt,
@@ -13674,7 +14781,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 							? await runAttempt(1, normalized, promotionActiveTools)
 							: await runSubagentWithRecovery(normalized, promotionActiveTools, runAttempt, {
 									getStopReason: () => (jobSignal.aborted ? "cancelled" : undefined),
-									hardCap: SUBAGENT_HARD_CAP_APIS.has(model.api) ? "enforced" : "aggregate-soft",
 								});
 						const jobVerification =
 							result.status === "needs_time"
@@ -13704,7 +14810,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					content: [
 						{
 							type: "text",
-							text: `Background subagent job ${accepted.jobId} accepted. Result ref: ${accepted.resultRef}.`,
+							text: `Background subagent job ${accepted.jobId} accepted. Use this bare jobId with inspect_subagent_job or cancel_subagent_job. Result ref for display only: ${accepted.resultRef}.`,
 						},
 					],
 					details: { accepted, launch },
@@ -13723,7 +14829,8 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	const inspectSubagentJob: SubagentJobTool = {
 		name: "inspect_subagent_job",
 		label: "inspect_subagent_job",
-		description: "Inspect one owner-scoped durable subagent job and its bounded result projection.",
+		description:
+			"Inspect one owner-scoped durable subagent job and its bounded result projection. Pass only the bare jobId returned as details.accepted.jobId by delegate_async; do not pass resultRef values such as job:<id>, a foreground runId, batchId, or taskId.",
 		promptSnippet: "Inspect a durable subagent job",
 		parameters: subagentJobParameters,
 		execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
@@ -13746,7 +14853,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					isError: false,
 				};
 			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
+				const message = formatDurableJobIdentifierError(error, params.jobId);
 				return {
 					content: [{ type: "text", text: `Subagent job inspection rejected: ${message}` }],
 					details: undefined,
@@ -13758,7 +14865,8 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	const cancelSubagentJob: SubagentJobTool = {
 		name: "cancel_subagent_job",
 		label: "cancel_subagent_job",
-		description: "Cancel one owner-scoped durable subagent job and wait for its worker to settle.",
+		description:
+			"Cancel one owner-scoped durable subagent job and wait for its worker to settle. Pass only the bare jobId returned as details.accepted.jobId by delegate_async; do not pass resultRef values such as job:<id>, a foreground runId, batchId, or taskId.",
 		promptSnippet: "Cancel a durable subagent job",
 		parameters: subagentJobParameters,
 		execute: async (_toolCallId, params, _signal, _onUpdate, ctx) => {
@@ -13772,7 +14880,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					isError: false,
 				};
 			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
+				const message = formatDurableJobIdentifierError(error, params.jobId);
 				return {
 					content: [{ type: "text", text: `Subagent job cancellation rejected: ${message}` }],
 					details: undefined,
@@ -13784,8 +14892,12 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	const delegateBatch: DelegateBatchTool = {
 		name: "delegate_batch",
 		label: "delegate_batch",
-		description: `${SUBAGENT_SCOPE_TOOL_GUIDANCE} ${SUBAGENT_INTERNAL_REPORT_GUIDANCE} Run up to eight independently scoped sibling ICE children through the same atomic executor using the current parent model. Each child uses a fresh session and a parent-owned bounded complete-report output budget. Safe mode clamps each selected profile to requested read-only capabilities. Explicit --sub-yolo permits only each profile's requested built-in capabilities that are also active in the trusted parent; it does not grant every parent tool. Trusted ambient resources may load in YOLO, but model-visible authority remains each explicit child allowlist and recursive delegation is not authorized. The parent synthesizes the independent evidence.`,
+		description: `${SUBAGENT_SCOPE_TOOL_GUIDANCE} ${SUBAGENT_INTERNAL_REPORT_GUIDANCE} Never wrap a single task in a batch: delegate_batch is for two or more independent sibling tasks, so a lone task is done directly in the parent. Run up to eight independently scoped sibling ICE children through the same atomic executor using the current parent model. Each child uses a fresh session and a parent-owned bounded complete-report output budget. The result identifies the batch with batchId and each item with taskId; those values are report identifiers only, not a durable jobId or a manageable foreground runId. Do not pass a batchId or taskId to inspect_subagent_job or manage_subagent. Safe mode clamps each selected profile to requested read-only capabilities. Explicit --sub-yolo permits only each profile's requested built-in capabilities that are also active in the trusted parent; it does not grant every parent tool. Trusted ambient resources may load in YOLO, but model-visible authority remains each explicit child allowlist and recursive delegation is not authorized. The parent synthesizes the independent evidence.`,
 		promptSnippet: "Delegate bounded parallel profile-aware subagents",
+		promptGuidelines: [
+			...SUBAGENT_DELEGATION_POLICY_GUIDELINES,
+			"Do not wrap a single task in a batch: delegate_batch requires two or more independent sibling tasks, so a lone task is done directly in the parent.",
+		],
 		parameters: delegateBatchParameters,
 		renderCall: (args, theme, context) => renderObservatoryCall("delegate_batch", args, theme, context),
 		renderResult: (result, options, theme, context) => renderObservatoryResult(result, options, theme, context),
@@ -13893,10 +15005,12 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					: [...ice.getActiveTools()];
 				const result = await runResolvedSubagentBatch(tasks, effectiveParentActiveTools, runner, {
 					concurrency: params.concurrency,
+					concurrencyPolicy: resolveSubagentConcurrencyPolicyFromSettings(settingsManager),
+					admission: subagentAdmission,
 					failFast: params.failFast,
 					totalBudgetBytes: params.totalBudgetBytes,
-					totalTokenBudget: params.totalTokenBudget,
 					modelRuntime: ctx.modelRegistry.getRuntime(),
+					settingsManager,
 					unsafeHostExec,
 					signal,
 					timeoutMs: params.timeoutMs,
@@ -13929,7 +15043,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 							cwd: ctx.cwd,
 							evidenceCount: item.result.evidence?.paths.length,
 							usage: item.result.usage,
-							budget: item.result.budget,
 							diagnostics: item.result.diagnostics.map((diagnostic) => diagnostic.code),
 						},
 						onUpdate,
@@ -13982,8 +15095,12 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	const reviewBatch: ReviewBatchTool = {
 		name: "review_batch",
 		label: "review_batch",
-		description: `${SUBAGENT_SCOPE_TOOL_GUIDANCE} ${SUBAGENT_INTERNAL_REPORT_GUIDANCE} Run up to eight independently scoped reviewers for correctness, security, tests, or regression risk through the existing bounded delegate scheduler. Reviewers always use the current parent model; each result is independently verified and returned to the parent without synthesis. Safe mode clamps the resolved review profile to requested read-only capabilities. Explicit --sub-yolo permits only profile-requested built-in capabilities that are also active in the trusted parent; it does not grant every parent tool. Trusted ambient resources may load in YOLO, but model-visible authority remains the explicit reviewer allowlist and recursive delegation is not authorized.`,
+		description: `${SUBAGENT_SCOPE_TOOL_GUIDANCE} ${SUBAGENT_INTERNAL_REPORT_GUIDANCE} Never run a single-reviewer batch: review_batch is for two or more independent review dimensions or targets, so one review is done directly in the parent. Run up to eight independently scoped reviewers for correctness, security, tests, or regression risk through the existing bounded delegate scheduler. Reviewers always use the current parent model; each result is independently verified and returned to the parent without synthesis. Safe mode clamps the resolved review profile to requested read-only capabilities. Explicit --sub-yolo permits only profile-requested built-in capabilities that are also active in the trusted parent; it does not grant every parent tool. Trusted ambient resources may load in YOLO, but model-visible authority remains the explicit reviewer allowlist and recursive delegation is not authorized.`,
 		promptSnippet: "Run bounded parallel typed reviewers",
+		promptGuidelines: [
+			...SUBAGENT_DELEGATION_POLICY_GUIDELINES,
+			"Do not run a single-reviewer batch: review_batch is for two or more independent review dimensions or targets, so one review is done directly in the parent.",
+		],
 		parameters: reviewBatchParameters,
 		renderCall: (args, theme, context) => renderObservatoryCall("review_batch", args, theme, context),
 		renderResult: (result, options, theme, context) => renderObservatoryResult(result, options, theme, context),
@@ -14074,8 +15191,8 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					concurrency: params.concurrency,
 					failFast: params.failFast,
 					totalBudgetBytes: params.totalBudgetBytes,
-					totalTokenBudget: params.totalTokenBudget,
 					modelRuntime: ctx.modelRegistry.getRuntime(),
+					settingsManager,
 					unsafeHostExec,
 					signal,
 					timeoutMs: params.timeoutMs,
@@ -14108,7 +15225,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 							cwd: ctx.cwd,
 							evidenceCount: reviewer.result.evidence?.paths.length,
 							usage: reviewer.result.usage,
-							budget: reviewer.result.budget,
 							diagnostics: reviewer.result.diagnostics.map((diagnostic) => diagnostic.code),
 						},
 						onUpdate,
@@ -14233,28 +15349,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 			values: ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
 		},
 		{
-			id: "max-turns",
-			label: "Default child turn budget",
-			description: "Maximum observed Ice turns, including finalization",
-			currentValue: "12",
-			values: ["4", "8", "12", "16", "24", "32", "64"],
-		},
-		{
-			id: "max-tool-calls",
-			label: "Default child tool-call budget",
-			description: "Maximum child tool dispatches",
-			currentValue: "40",
-			values: ["0", "8", "16", "32", "40", "64", "128", "512"],
-		},
-		{
-			id: "max-total-tokens",
-			label: "Default child token budget",
-			description:
-				"Soft cumulative limit for input + output + cache-write tokens; cache reads are reported separately; one in-flight response may overshoot",
-			currentValue: "off",
-			values: ["off", "1024", "4096", "8192", "16384", "32768", "65536", "131072", "262144", "1000000"],
-		},
-		{
 			id: "policy-summary",
 			label: "Effective policy",
 			description: "Inspect source-aware role budgets, trust, hooks, and bounded settings errors",
@@ -14292,22 +15386,13 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					) as Record<string, unknown>;
 					if (id === "enabled") subagents.enabled = value === "true";
 					else if (id === "hooks-enabled") hooks.enabled = value === "true";
-					else if (
-						id === "thinking-default" ||
-						id === "max-turns" ||
-						id === "max-tool-calls" ||
-						id === "max-total-tokens"
-					) {
+					else if (id === "thinking-default") {
 						const defaults = (
 							subagents.defaults && typeof subagents.defaults === "object" && !Array.isArray(subagents.defaults)
 								? subagents.defaults
 								: {}
 						) as Record<string, unknown>;
-						if (id === "thinking-default") defaults.thinking = value;
-						else if (id === "max-turns") defaults.maxTurns = Number(value);
-						else if (id === "max-tool-calls") defaults.maxToolCalls = Number(value);
-						else if (value === "off") delete defaults.maxTotalTokens;
-						else defaults.maxTotalTokens = Number(value);
+						defaults.thinking = value;
 						subagents.defaults = defaults;
 					} else return;
 					next.subagents = subagents;
@@ -14339,11 +15424,6 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 		settingsItems.find((item) => item.id === "hooks-enabled")!.currentValue = String(hooksEnabled ?? false);
 		settingsItems.find((item) => item.id === "thinking-default")!.currentValue = String(
 			defaults.thinking ?? "medium",
-		);
-		settingsItems.find((item) => item.id === "max-turns")!.currentValue = String(defaults.maxTurns ?? 12);
-		settingsItems.find((item) => item.id === "max-tool-calls")!.currentValue = String(defaults.maxToolCalls ?? 40);
-		settingsItems.find((item) => item.id === "max-total-tokens")!.currentValue = String(
-			defaults.maxTotalTokens ?? "off",
 		);
 		shuttingDown = false;
 		parentBusy = false;
@@ -14393,10 +15473,17 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 			const jobId = details && "jobId" in details && typeof details.jobId === "string" ? details.jobId : undefined;
 			if (jobId && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(jobId)) deliveredJobIds.add(jobId);
 		}
+		const concurrencySettingsManager = getParentSettingsManager(ctx);
+		const concurrencyPolicy = resolveSubagentConcurrencyPolicyFromSettings(concurrencySettingsManager);
+		subagentAdmission = new SubagentConcurrencyAdmission(concurrencyPolicy.maxConcurrency);
 		jobs = new SubagentJobRegistry({
 			ownerSessionId: ctx.sessionManager.getSessionId(),
+			reportArtifactRoot: subagentArtifactRoot,
 			persist: (snapshot) => ice.appendEntry(JOB_ENTRY_TYPE, snapshot),
 			notify: queueCompletion,
+			maxActiveJobs: concurrencyPolicy.defaultConcurrency,
+			maxQueuedJobs: SUBAGENT_JOB_QUEUE_LIMIT,
+			admission: subagentAdmission,
 		});
 		for (const jobId of jobs.restore(entries, deliveredJobIds)) queueCompletion(jobId);
 	});

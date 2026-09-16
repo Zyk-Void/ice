@@ -139,8 +139,7 @@ For long uninterrupted agent runs, set `midRunCompaction` to `"resume"` to compa
 Load the optional extension by copying `examples/extensions/ice-blackhole/` from the installed package into `~/.ice/agent/extensions/` (or load it with `--extension packages/coding-agent/examples/extensions/ice-blackhole/index.ts`). It stores configuration at `~/.ice/agent/ice-blackhole/ice-blackhole-config.json`.
 
 ```text
-/blackhole percent 20
-/blackhole tokens 54400
+/blackhole percent 85
 /blackhole resume
 /blackhole pause
 /blackhole off
@@ -154,11 +153,13 @@ The loaded extension exposes all Blackhole fields in `/settings`. Changes persis
 | Blackhole compaction | `auto`, `manual`, `off` | `auto` | `auto`: Blackhole's `session_before_compact` hook replaces the Ice summary whenever a compaction runs. `manual`: it only steps in for its own mid-run trigger. `off`: loaded but inert |
 | Blackhole engine | `blackhole`, `ice-default` | `blackhole` | Summary builder used when the hook handles a compaction: Blackhole's own structured pipeline (goals, file ops, commits, preferences) or Ice's native summarization |
 | Blackhole mid-run | `off`, `pause`, `resume` | `off` | Blackhole's own mid-run trigger, independent of native `compaction.midRunCompaction`. Crosses its threshold at a tool-turn boundary, then pauses or injects a resume message and continues |
-| Blackhole token threshold | 1%–99% | `20%` | Percentage of the active model's context window used by the mid-run trigger; `/blackhole tokens <n>` switches to an absolute token count (`compactAfterPercent` and `compactAfterTokens` are mutually exclusive) |
+| Blackhole token threshold | 1%–99% | `85%` | Percentage of the active model's context window used by the mid-run trigger. Set it with `/blackhole percent <1-99>` or `ICE_BLACKHOLE_COMPACT_AFTER_PERCENT`; out-of-range values are rejected and the default stands. Legacy numeric `compactAfterTokens` configs are ignored — the percent threshold always applies |
 | Blackhole tail | `ice-default`, `minimal` | `minimal` | `minimal` summarizes the retained tail too and keeps only the new compact entry (much smaller context after compaction); `ice-default` keeps the normal `keepRecentTokens` tail verbatim |
 | Blackhole memory | `false`, `true` | `false` | Placeholder for observational-memory workers; no functional effect today |
 
 If both native and Blackhole mid-run triggers are enabled, Blackhole yields to native ICE and displays a warning. Keep native `compaction.enabled` set to `true` for overflow recovery; the native 95% safety net applies regardless of which mid-run trigger owns proactive compaction.
+
+Blackhole summaries open with a `[Last Actions]` section (the most recent tool actions, failures marked) and list in-flight background subagent jobs under `[Running Agents]` (re-attach via `inspect_subagent_job`). When the Cognee extension runs with `checkpointRecall: true`, the checkpoint also carries a capped `[Relevant Memory]` section.
 
 ### Branch Summary
 
@@ -318,16 +319,14 @@ ICE keeps its operational settings under the existing `ice` namespace. Global va
       "defaults": {
         "thinking": "medium",
         "timeoutMs": 120000,
-        "maxTurns": 12,
-        "maxToolCalls": 40,
         "maxOutputBytes": 24576
       },
       "allowedRoles": ["self", "api-review"],
       "roleDefaults": {
-        "api-review": { "thinking": "high", "maxTurns": 16 }
+        "api-review": { "thinking": "high" }
       },
       "restrictions": {
-        "maxTurns": 24,
+        "maxTimeoutMs": 300000,
         "denyTools": ["bash", "write", "edit"]
       },
       "modelSelection": { "mode": "inherit-parent" }
@@ -349,11 +348,11 @@ ICE keeps its operational settings under the existing `ice` namespace. Global va
 }
 ```
 
-Resolution is deterministic and global-first for ice: an explicit global value beats a trusted-project value, then the built-in/file default (bundled/global defaults, project defaults, per-role defaults, and per-call requests are resolved once before launch). Hard caps and deny lists narrow authority; they never widen the parent. An omitted or empty `allowedRoles` list adds no restriction; use `restrictions.denyRoles` for explicit denial. Project settings are ignored until project trust is established, and a more-specific allow cannot override a broader deny. Malformed settings files and security-sensitive namespaces fail closed. Every launch result reports effective budgets, tool restrictions, source labels, and bounded diagnostics. Stock `ice` keeps its existing project-first merge; the `ice` launcher uses global-first shared preferences, not only its subagent namespace. File-agent discovery uses `~/.ice/agents` (or `<agentDir>/agents` for an explicit custom directory) ahead of trusted `.ice/agents`, with shadowed sources surfaced. Explicit global arrays replace the corresponding project configuration arrays; explicit empty, false, and zero values are not treated as missing. For subagent preferences the order is file/default, project default, project role, global default, global role, then explicit invocation request; hard caps and denies apply afterward.
+Resolution is deterministic and global-first for ice: an explicit global value beats a trusted-project value, then the built-in/file default (bundled/global defaults, project defaults, per-role defaults, and per-call requests are resolved once before launch). Timeout/output caps and deny lists narrow authority; they never widen the parent. An omitted or empty `allowedRoles` list adds no restriction; use `restrictions.denyRoles` for explicit denial. Project settings are ignored until project trust is established, and a more-specific allow cannot override a broader deny. Malformed settings files and security-sensitive namespaces fail closed. Every launch result reports effective timeout/output limits, tool restrictions, source labels, and bounded diagnostics. Stock `ice` keeps its existing project-first merge; the `ice` launcher uses global-first shared preferences, not only its subagent namespace. File-agent discovery uses `~/.ice/agents` (or `<agentDir>/agents` for an explicit custom directory) ahead of trusted `.ice/agents`, with shadowed sources surfaced. Explicit global arrays replace the corresponding project configuration arrays; explicit empty, false, and zero values are not treated as missing. For subagent preferences the order is file/default, project default, project role, global default, global role, then explicit invocation request; hard caps and denies apply afterward.
 
 Read/review delegation also accepts an optional restricted local `outputSchema` object. The root must be an object with `additionalProperties: false`; only bounded object/array/string/number/integer/boolean/null nodes are supported. `$ref`, remote schemas, unions, executable validators, and unknown keywords are rejected before child creation. A valid schema validates a nested `payload` while the mandatory `summary`/`evidence` envelope remains authoritative. Payloads are capped at 16 KiB and are retained in bounded durable result projections.
 
-`manage_subagent` supports `inspect`, `extend`, `stop`, and owner-bound `follow_up`. Follow-up requires a stable `requestId`, is deduplicated, queues through the retained native Ice child, preserves its original scope/tools/model/budgets, and is rejected while a user has Take Control. Durable async acceptance stores the resolved thinking, timeout, turn/tool/output budgets, tools, and profile source hash; settings changes do not silently re-resolve accepted jobs.
+`manage_subagent` supports `inspect`, `extend`, `stop`, owner-bound `follow_up`, `resume`, and `delete`. Follow-up requires a stable `requestId`, is deduplicated, queues through the retained native Ice child, preserves its original scope/tools/model/execution contract, and is rejected while a user has Take Control. `resume` continues an eligible completed child in its original session under a new run id, re-derives profile/resources/project trust/tool authority fail-closed at the resume boundary, re-points the session's own tool/stream/turn-stop wrappers at the resumed run's hooks and authority callback, and cannot widen model/profile/scope/tools; `delete` is owner-scoped and idempotent, rejects active children, and releases both the retained session and its historical view snapshot. Durable async acceptance stores the resolved thinking, timeout, output limit, tools, and profile source hash; settings changes do not silently re-resolve accepted jobs.
 
 The shipped hook dispatcher supports trusted parent-owned in-process handlers supplied by the ICE integration. Decision events are `subagent.beforeLaunch`, `subagent.beforeTool`, and `subagent.beforeAccept`; observational lifecycle events, including bounded `subagent.checkpoint`, cannot authorize work. Optional `roleHookIds` and `callHookIds` selections filter optional hooks as a union; required hooks remain active, and an explicitly empty selector selects no optional hooks. A `beforeLaunch` handler may return bounded `contextAdditions`; the parent redacts and merges them into the context packet, then reruns context, source/resource, scope, and preflight validation before admission. Missing approval, malformed required-hook output, timeout, or a required handler that is unavailable blocks the gated action. Executable hooks require global `ice.hooks.commandPolicy`, trusted build mode, startup-authorized parent Bash, pinned executable/script identities, and execution approval. Plan/review children cannot execute command hooks. Global definitions win ID collisions without downgrading required status. Trusted handlers can register through `registerIceSubagentHook(ice.events, id, handler)`; replacement/unregistration of a captured handler fails closed. Hooks never load child extensions, create another agent loop, or grant additional model/tool authority. Each dispatched handler gets a stable event ID; the parent persists redacted intent/outcome records in the session, and reload warns about unresolved intent without replaying the hook.
 

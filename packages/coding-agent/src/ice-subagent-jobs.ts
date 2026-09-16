@@ -1,12 +1,18 @@
 import { randomUUID } from "node:crypto";
+import { rmdirSync, unlinkSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { getAgentDir } from "./config.ts";
 import { matchesEntryType } from "./core/legacy-compat/identity.ts";
+import { isIceDelegableAdapterId } from "./ice-subagent-capabilities.ts";
+import { SUBAGENT_CONCURRENCY_LIMITS, type SubagentConcurrencyAdmission } from "./ice-subagent-concurrency.ts";
 import type { IceModelCandidateSkip, IceSubagentRouteSnapshot } from "./ice-subagent-routing.ts";
 import type { IceHookDispatchRecord } from "./ice-subagent-settings.ts";
 import type {
 	ReviewFinding,
 	SubagentFailureCode,
+	SubagentReportArtifact,
+	SubagentReportMode,
 	SubagentResult,
-	SubagentTokenBudgetSummary,
 	SubagentUsage,
 	SubagentVerification,
 } from "./ice-subagents.ts";
@@ -15,8 +21,10 @@ import { redactCredentialText } from "./utils/redact.ts";
 export const JOB_ENTRY_TYPE = "ice-subagent-job-v1";
 export const JOB_COMPLETION_MESSAGE_TYPE = "ice-subagent-job-completion";
 export const SUBAGENT_JOB_RETENTION_LIMIT = 32;
-export const SUBAGENT_JOB_DEFAULT_CONCURRENCY = 2;
-export const SUBAGENT_JOB_MAX_CONCURRENCY = 4;
+/** Default active background jobs; derived from the canonical concurrency policy. */
+export const SUBAGENT_JOB_DEFAULT_CONCURRENCY = SUBAGENT_CONCURRENCY_LIMITS.bundledDefault;
+/** Hard ceiling for active background jobs; shared admission may cap lower. */
+export const SUBAGENT_JOB_MAX_CONCURRENCY = SUBAGENT_CONCURRENCY_LIMITS.hardCap;
 export const SUBAGENT_JOB_QUEUE_LIMIT = 8;
 export const SUBAGENT_JOB_OWNER_OUTPUT_BUDGET = 256 * 1024;
 export const SUBAGENT_JOB_DEFAULT_OUTPUT_BYTES = 24 * 1024;
@@ -40,15 +48,15 @@ export type SubagentJobStatus =
 export type TerminalSubagentJobStatus = Exclude<SubagentJobStatus, "created" | "queued" | "running" | "needs_time">;
 
 export interface SubagentJobContract {
-	capabilities?: readonly { name: string; origin: string; fingerprint: string }[];
+	/** Adapter identity is optional only for legacy persisted contracts. */
+	capabilities?: readonly { adapterId?: string; name: string; origin: string; fingerprint: string }[];
 	resourcesHash?: string;
 	route?: IceSubagentRouteSnapshot;
 	thinking: string;
 	timeoutMs: number;
-	maxTurns: number;
-	maxToolCalls: number;
 	maxOutputBytes: number;
-	maxTotalTokens?: number;
+	temperature?: number;
+	topP?: number;
 	tools: readonly string[];
 	sourceHash?: string;
 	/** Deterministic model candidates tried at admission (primary, fallback); parent is implicit. */
@@ -85,6 +93,8 @@ export interface SubagentJobResultEnvelope {
 	runId?: string;
 	status: TerminalSubagentJobStatus;
 	summary?: string;
+	/** How the final answer was ingested; absent in snapshots persisted before this field existed. */
+	reportMode?: SubagentReportMode;
 	evidence?: {
 		paths: readonly string[];
 	};
@@ -92,6 +102,9 @@ export interface SubagentJobResultEnvelope {
 	verification?: {
 		verified: boolean;
 		reason: string;
+		/** Present for snapshots persisted after this field existed. */
+		kind?: "structured" | "plain_bounds";
+		structuredVerified?: boolean;
 	};
 	/** Optional bounded custom payload from the validated child report. */
 	payload?: Readonly<Record<string, unknown>>;
@@ -99,13 +112,14 @@ export interface SubagentJobResultEnvelope {
 	/** Bounded parent-owned hook outcomes; never contains raw hook payloads. */
 	hookRecords?: readonly IceHookDispatchRecord[];
 	usage?: SubagentUsage;
-	budget?: SubagentTokenBudgetSummary;
 	diagnostics: readonly {
 		code: string;
 		message?: string;
 	}[];
 	/** Runtime-owned bounded work projection preserved across report-protocol failures. */
 	workArtifact?: SubagentJobWorkArtifactView;
+	/** Stable local pointer for an oversized final or partial assistant capture. */
+	reportArtifact?: SubagentReportArtifact;
 }
 
 export interface SubagentJobWorkArtifactView {
@@ -114,7 +128,7 @@ export interface SubagentJobWorkArtifactView {
 	touchedPaths: readonly string[];
 	candidateEvidencePaths: readonly string[];
 	reportProtocol: {
-		status: "valid" | "malformed" | "missing" | "truncated";
+		status: "valid" | "malformed" | "missing" | "truncated" | "plain";
 		diagnostic?: string;
 	};
 	lastActivities?: readonly {
@@ -157,9 +171,11 @@ export interface SubagentJobInspection {
 		reservedOutputBytes: number;
 		ownerReservedOutputBytes: number;
 		ownerBudgetBytes: number;
-		resolvedMaxTotalTokens?: number;
-		chargedTokens?: number;
-		remainingTokens?: number;
+		/** Present when a shared admission coordinator bounds active jobs. */
+		ownerActiveJobs?: number;
+		/** Number of queued jobs owned by this registry at the inspection boundary. */
+		ownerQueuedJobs?: number;
+		ownerActiveJobsCap?: number;
 	}>;
 	result?: Readonly<SubagentJobResultEnvelope>;
 	/** Present when the full result expired from retention; final status stays visible. */
@@ -198,6 +214,10 @@ interface SubagentJobRegistryOptions {
 	maxActiveJobs?: number;
 	maxQueuedJobs?: number;
 	maxAggregateOutputBytes?: number;
+	/** Parent-owned root under which runtime report artifacts are generated. */
+	reportArtifactRoot?: string;
+	/** Shared permit accounting across batch and job admission; optional for legacy consumers. */
+	admission?: SubagentConcurrencyAdmission;
 }
 
 interface JobState {
@@ -211,6 +231,8 @@ interface LiveJob extends JobState {
 	promise?: Promise<void>;
 	requestedStop?: "cancelled" | "interrupted";
 	settled?: boolean;
+	/** Set while this job holds a shared admission permit; released exactly once. */
+	holdsPermit?: boolean;
 }
 
 interface JobEntryLike {
@@ -260,63 +282,6 @@ function boundedText(value: unknown, maxBytes: number): string | undefined {
 
 function boundedPath(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 && Buffer.byteLength(value) <= 4096 ? value : undefined;
-}
-
-function cloneBudget(
-	budget: SubagentTokenBudgetSummary | undefined,
-	maxAllowedTokens?: number,
-): SubagentTokenBudgetSummary | undefined {
-	if (!budget) return undefined;
-	if (!validBudget(budget, maxAllowedTokens)) return undefined;
-	return Object.freeze({ ...budget });
-}
-
-function validBudget(value: unknown, maxAllowedTokens?: number): value is SubagentTokenBudgetSummary {
-	if (!isRecord(value)) return false;
-	const integerKeys = [
-		"maxTotalTokens",
-		"workPhaseLimit",
-		"reportReserveTokens",
-		"chargedTokens",
-		"remainingTokens",
-		"inputTokens",
-		"outputTokens",
-		"cacheReadTokens",
-		"cacheWriteTokens",
-		"overshootTokens",
-	];
-	if (
-		integerKeys.some(
-			(key) => typeof value[key] !== "number" || !Number.isSafeInteger(value[key]) || (value[key] as number) < 0,
-		)
-	)
-		return false;
-	const maxTotalTokens = value.maxTotalTokens as number;
-	const workPhaseLimit = value.workPhaseLimit as number;
-	const reportReserveTokens = value.reportReserveTokens as number;
-	const chargedTokens = value.chargedTokens as number;
-	const remainingTokens = value.remainingTokens as number;
-	const inputTokens = value.inputTokens as number;
-	const outputTokens = value.outputTokens as number;
-	const cacheWriteTokens = value.cacheWriteTokens as number;
-	const overshootTokens = value.overshootTokens as number;
-	if (
-		maxAllowedTokens === undefined ||
-		maxTotalTokens < 1_024 ||
-		maxTotalTokens > 1_000_000 ||
-		maxTotalTokens !== maxAllowedTokens ||
-		reportReserveTokens !== Math.min(4_096, Math.max(1_024, Math.floor(maxTotalTokens * 0.1))) ||
-		workPhaseLimit !== maxTotalTokens - reportReserveTokens ||
-		chargedTokens !== inputTokens + outputTokens + cacheWriteTokens ||
-		remainingTokens !== Math.max(0, maxTotalTokens - chargedTokens) ||
-		overshootTokens !== Math.max(0, chargedTokens - maxTotalTokens)
-	)
-		return false;
-	return (
-		(value.accounting === "provider" || value.accounting === "estimated" || value.accounting === "mixed") &&
-		typeof value.exhausted === "boolean" &&
-		(value.hardCap === "enforced" || value.hardCap === "aggregate-soft")
-	);
 }
 
 function cloneUsage(usage: SubagentUsage | undefined): SubagentUsage | undefined {
@@ -417,20 +382,21 @@ function cloneHookRecords(
 	);
 }
 
-function cloneResult(result: SubagentJobResultEnvelope, maxAllowedTokens?: number): SubagentJobResultEnvelope {
-	const { budget, ...resultWithoutBudget } = result;
-	const sanitizedBudget = cloneBudget(budget, maxAllowedTokens);
+function cloneResult(result: SubagentJobResultEnvelope): SubagentJobResultEnvelope {
+	const { budget: _legacyBudget, ...resultWithoutLegacyBudget } = result as SubagentJobResultEnvelope & {
+		budget?: unknown;
+	};
 	return Object.freeze({
-		...resultWithoutBudget,
+		...resultWithoutLegacyBudget,
 		...(result.summary ? { summary: result.summary } : {}),
 		...(result.evidence ? { evidence: Object.freeze({ paths: Object.freeze([...result.evidence.paths]) }) } : {}),
 		...(result.findings ? { findings: Object.freeze(result.findings.map(cloneFindingDeep)) } : {}),
 		...(result.verification ? { verification: Object.freeze({ ...result.verification }) } : {}),
 		...(result.payload ? { payload: cloneBoundedPayload(result.payload) } : {}),
 		...(result.observedTurns !== undefined ? { observedTurns: result.observedTurns } : {}),
+		...(result.reportArtifact ? { reportArtifact: Object.freeze({ ...result.reportArtifact }) } : {}),
 		...(cloneHookRecords(result.hookRecords) ? { hookRecords: cloneHookRecords(result.hookRecords) } : {}),
 		...(result.usage ? { usage: Object.freeze({ ...result.usage }) } : {}),
-		...(sanitizedBudget ? { budget: sanitizedBudget } : {}),
 		diagnostics: Object.freeze(result.diagnostics.map((diagnostic) => Object.freeze({ ...diagnostic }))),
 	});
 }
@@ -476,7 +442,7 @@ function cloneInspection(
 		job: cloneJob(state.job),
 		...(metadata?.queuePosition !== undefined ? { queuePosition: metadata.queuePosition } : {}),
 		...(metadata?.budget ? { budget: Object.freeze({ ...metadata.budget }) } : {}),
-		...(state.result ? { result: cloneResult(state.result, state.job.contract?.maxTotalTokens) } : {}),
+		...(state.result ? { result: cloneResult(state.result) } : {}),
 	});
 }
 
@@ -516,6 +482,60 @@ function isCanonicalFinding(value: unknown): value is ReviewFinding {
 	);
 }
 
+function validReportArtifact(
+	value: unknown,
+	reportArtifactRoot: string,
+	expectedRunId?: string,
+): value is SubagentReportArtifact {
+	if (!isRecord(value) || value.schemaVersion !== 1) return false;
+	if (
+		typeof value.id !== "string" ||
+		!isJobId(value.id) ||
+		typeof value.path !== "string" ||
+		value.path.length === 0 ||
+		Buffer.byteLength(value.path) > 4096 ||
+		typeof value.bytes !== "number" ||
+		!Number.isSafeInteger(value.bytes) ||
+		value.bytes < 1 ||
+		value.bytes > 512 * 1024 ||
+		typeof value.originalBytes !== "number" ||
+		!Number.isSafeInteger(value.originalBytes) ||
+		value.originalBytes < value.bytes ||
+		typeof value.sha256 !== "string" ||
+		!/^[a-f0-9]{64}$/.test(value.sha256) ||
+		(value.contentType !== "text/plain" && value.contentType !== "application/json") ||
+		typeof value.truncated !== "boolean"
+	)
+		return false;
+	if (expectedRunId !== undefined && value.id !== expectedRunId) return false;
+	if (!isAbsolute(value.path)) return false;
+	const extension = value.contentType === "application/json" ? "json" : "txt";
+	const expectedPath = join(resolve(reportArtifactRoot), value.id, `report.${extension}`);
+	// Restore intentionally does not dereference this path: retention or an
+	// interrupted cleanup may make a valid historical artifact unavailable.
+	// Any future reader must revalidate the filesystem object immediately before use.
+	return value.path === expectedPath;
+}
+
+function removeRetainedReportArtifact(
+	value: SubagentReportArtifact,
+	reportArtifactRoot: string,
+	expectedRunId: string | undefined,
+): void {
+	if (!validReportArtifact(value, reportArtifactRoot, expectedRunId)) return;
+	try {
+		unlinkSync(value.path);
+	} catch {
+		return;
+	}
+	try {
+		rmdirSync(dirname(value.path));
+	} catch {
+		// The artifact file is already gone; a non-empty or concurrently changed
+		// run directory is retained rather than recursively deleted.
+	}
+}
+
 function validWorkArtifactView(value: unknown): value is SubagentJobWorkArtifactView {
 	if (!isRecord(value) || value.schemaVersion !== 1) return false;
 	if (
@@ -538,7 +558,14 @@ function validWorkArtifactView(value: unknown): value is SubagentJobWorkArtifact
 		return false;
 	if (!isRecord(value.reportProtocol)) return false;
 	const status = value.reportProtocol.status;
-	if (status !== "valid" && status !== "malformed" && status !== "missing" && status !== "truncated") return false;
+	if (
+		status !== "valid" &&
+		status !== "malformed" &&
+		status !== "missing" &&
+		status !== "truncated" &&
+		status !== "plain"
+	)
+		return false;
 	if (
 		value.reportProtocol.diagnostic !== undefined &&
 		boundedText(value.reportProtocol.diagnostic, MAX_DURABLE_DIAGNOSTIC_BYTES) !== value.reportProtocol.diagnostic
@@ -572,7 +599,7 @@ function validWorkArtifactView(value: unknown): value is SubagentJobWorkArtifact
 function validResultEnvelope(
 	value: unknown,
 	jobId: string,
-	jobContractMaxTotalTokens?: number,
+	reportArtifactRoot: string,
 ): value is SubagentJobResultEnvelope {
 	if (!isRecord(value) || value.schemaVersion !== 1 || value.jobId !== jobId) return false;
 	if (value.runId !== undefined && !isJobId(value.runId)) return false;
@@ -593,10 +620,22 @@ function validResultEnvelope(
 		if (
 			!isRecord(value.verification) ||
 			typeof value.verification.verified !== "boolean" ||
-			boundedText(value.verification.reason, MAX_DURABLE_VERIFICATION_REASON_BYTES) !== value.verification.reason
+			boundedText(value.verification.reason, MAX_DURABLE_VERIFICATION_REASON_BYTES) !== value.verification.reason ||
+			(value.verification.kind !== undefined &&
+				value.verification.kind !== "structured" &&
+				value.verification.kind !== "plain_bounds") ||
+			(value.verification.structuredVerified !== undefined &&
+				typeof value.verification.structuredVerified !== "boolean")
 		) {
 			return false;
 		}
+	}
+	if (
+		value.reportMode !== undefined &&
+		value.reportMode !== "plain_final_turn" &&
+		value.reportMode !== "structured_report"
+	) {
+		return false;
 	}
 	if (value.payload !== undefined) {
 		if (!isRecord(value.payload)) return false;
@@ -609,6 +648,12 @@ function validResultEnvelope(
 	if (
 		value.observedTurns !== undefined &&
 		(typeof value.observedTurns !== "number" || !Number.isSafeInteger(value.observedTurns) || value.observedTurns < 0)
+	)
+		return false;
+	if (
+		value.reportArtifact !== undefined &&
+		(!validReportArtifact(value.reportArtifact, reportArtifactRoot, value.runId as string | undefined) ||
+			value.runId === undefined)
 	)
 		return false;
 	if (value.hookRecords !== undefined) {
@@ -640,11 +685,6 @@ function validResultEnvelope(
 			return false;
 	}
 	if (value.usage !== undefined && !validUsage(value.usage)) return false;
-	if (
-		value.budget !== undefined &&
-		(jobContractMaxTotalTokens === undefined || !validBudget(value.budget, jobContractMaxTotalTokens))
-	)
-		return false;
 	if (value.workArtifact !== undefined && !validWorkArtifactView(value.workArtifact)) return false;
 	if (!Array.isArray(value.diagnostics) || value.diagnostics.length > 32) return false;
 	return value.diagnostics.every(
@@ -681,6 +721,8 @@ function validJobRecord(value: unknown): value is SubagentJobRecord {
 				contract.capabilities.some(
 					(item) =>
 						!isRecord(item) ||
+						(item.adapterId !== undefined &&
+							(!isIceDelegableAdapterId(item.adapterId) || Buffer.byteLength(item.adapterId) > 128)) ||
 						typeof item.name !== "string" ||
 						item.name.length > 64 ||
 						typeof item.origin !== "string" ||
@@ -709,12 +751,17 @@ function validJobRecord(value: unknown): value is SubagentJobRecord {
 		if (
 			typeof contract.thinking !== "string" ||
 			Buffer.byteLength(contract.thinking) > 16 ||
-			(contract.maxTotalTokens !== undefined &&
-				(typeof contract.maxTotalTokens !== "number" ||
-					!Number.isSafeInteger(contract.maxTotalTokens) ||
-					contract.maxTotalTokens < 1_024 ||
-					contract.maxTotalTokens > 1_000_000)) ||
-			!["timeoutMs", "maxTurns", "maxToolCalls", "maxOutputBytes"].every(
+			(contract.temperature !== undefined &&
+				(typeof contract.temperature !== "number" ||
+					!Number.isFinite(contract.temperature) ||
+					contract.temperature < 0 ||
+					contract.temperature > 2)) ||
+			(contract.topP !== undefined &&
+				(typeof contract.topP !== "number" ||
+					!Number.isFinite(contract.topP) ||
+					contract.topP < 0 ||
+					contract.topP > 1)) ||
+			!["timeoutMs", "maxOutputBytes"].every(
 				(key) => typeof contract[key] === "number" && Number.isSafeInteger(contract[key]) && contract[key] >= 0,
 			) ||
 			!Array.isArray(contract.tools) ||
@@ -814,7 +861,31 @@ function validJobRecord(value: unknown): value is SubagentJobRecord {
 	return value.resultRef === `job:${value.jobId}`;
 }
 
-function validSnapshot(value: unknown): value is PersistedSubagentJobSnapshot {
+function normalizePersistedSnapshot(value: unknown): unknown {
+	if (!isRecord(value)) return value;
+	const normalized: Record<string, unknown> = { ...value };
+	let changed = false;
+	if (isRecord(normalized.job)) {
+		const job = { ...normalized.job };
+		if (isRecord(job.contract)) {
+			const obsoleteKeys = new Set(["maxTotalTokens", "maxTurns", "maxToolCalls"]);
+			const contract = Object.fromEntries(Object.entries(job.contract).filter(([key]) => !obsoleteKeys.has(key)));
+			if (Object.keys(contract).length !== Object.keys(job.contract).length) {
+				job.contract = contract;
+				changed = true;
+			}
+		}
+		if (changed) normalized.job = job;
+	}
+	if (isRecord(normalized.result) && Object.hasOwn(normalized.result, "budget")) {
+		const { budget: _legacyBudget, ...result } = normalized.result;
+		normalized.result = result;
+		changed = true;
+	}
+	return changed ? normalized : value;
+}
+
+function validSnapshot(value: unknown, reportArtifactRoot: string): value is PersistedSubagentJobSnapshot {
 	if (
 		!isRecord(value) ||
 		value.schemaVersion !== 1 ||
@@ -824,10 +895,7 @@ function validSnapshot(value: unknown): value is PersistedSubagentJobSnapshot {
 	)
 		return false;
 	if (!validJobRecord(value.job)) return false;
-	if (
-		value.result !== undefined &&
-		!validResultEnvelope(value.result, value.job.jobId, value.job.contract?.maxTotalTokens)
-	)
+	if (value.result !== undefined && !validResultEnvelope(value.result, value.job.jobId, reportArtifactRoot))
 		return false;
 	if (isTerminal(value.job.status) !== (value.result !== undefined)) return false;
 	if (value.result !== undefined && value.result.status !== value.job.status) return false;
@@ -871,7 +939,7 @@ function projectResult(
 	requestedStop: LiveJob["requestedStop"],
 	runResult: SubagentJobRunResult | undefined,
 	runtimeError?: unknown,
-	maxAllowedTokens?: number,
+	retainedRunId?: string,
 ): SubagentJobResultEnvelope {
 	const result = runResult?.result;
 	let status: TerminalSubagentJobStatus;
@@ -906,17 +974,23 @@ function projectResult(
 				reason:
 					boundedText(runResult.verification.reason, MAX_DURABLE_VERIFICATION_REASON_BYTES) ??
 					"Verification failed.",
+				...(runResult.verification.kind !== undefined ? { kind: runResult.verification.kind } : {}),
+				...(runResult.verification.structuredVerified !== undefined
+					? { structuredVerified: runResult.verification.structuredVerified }
+					: {}),
 			}
 		: undefined;
 	const runtimeMessage =
 		runtimeError instanceof Error ? runtimeError.message : runtimeError ? String(runtimeError) : undefined;
 	const artifactView = projectWorkArtifactView(result);
+	const reportArtifact = result?.reportArtifact ? Object.freeze({ ...result.reportArtifact }) : undefined;
 	const hookRecords = cloneHookRecords(result?.hookRecords);
 	return {
 		schemaVersion: 1,
 		jobId,
-		...(result?.runId ? { runId: result.runId } : {}),
+		...(result?.runId || retainedRunId ? { runId: result?.runId ?? retainedRunId } : {}),
 		status,
+		...(result?.reportMode !== undefined ? { reportMode: result.reportMode } : {}),
 		...(summary ? { summary } : {}),
 		...(evidence && evidence.length > 0 ? { evidence: { paths: evidence } } : {}),
 		...(findings && findings.length > 0 ? { findings } : {}),
@@ -925,10 +999,8 @@ function projectResult(
 		...(result?.observedTurns !== undefined ? { observedTurns: result.observedTurns } : {}),
 		...(hookRecords ? { hookRecords } : {}),
 		...(cloneUsage(result?.usage) ? { usage: cloneUsage(result?.usage) } : {}),
-		...(cloneBudget(result?.budget, maxAllowedTokens)
-			? { budget: cloneBudget(result?.budget, maxAllowedTokens) }
-			: {}),
 		...(artifactView ? { workArtifact: artifactView } : {}),
+		...(reportArtifact ? { reportArtifact } : {}),
 		diagnostics: resultDiagnostics(result, runtimeError ? "job_runtime_failure" : undefined, runtimeMessage),
 	};
 }
@@ -984,6 +1056,8 @@ export class SubagentJobRegistry {
 	private readonly maxActiveJobs: number;
 	private readonly maxQueuedJobs: number;
 	private readonly maxAggregateOutputBytes: number;
+	private readonly reportArtifactRoot: string;
+	private readonly admission?: SubagentConcurrencyAdmission;
 	private readonly listeners = new Set<() => void>();
 	private schedulerBlocked = false;
 	private readonly records = new Map<string, JobState>();
@@ -1005,6 +1079,14 @@ export class SubagentJobRegistry {
 		const maxActiveJobs = options.maxActiveJobs ?? SUBAGENT_JOB_DEFAULT_CONCURRENCY;
 		const maxQueuedJobs = options.maxQueuedJobs ?? SUBAGENT_JOB_QUEUE_LIMIT;
 		const maxAggregateOutputBytes = options.maxAggregateOutputBytes ?? SUBAGENT_JOB_OWNER_OUTPUT_BUDGET;
+		const reportArtifactRoot = options.reportArtifactRoot ?? join(getAgentDir(), "artifacts", "subagent");
+		if (
+			typeof reportArtifactRoot !== "string" ||
+			reportArtifactRoot.length === 0 ||
+			Buffer.byteLength(reportArtifactRoot) > 4096
+		) {
+			throw new SubagentJobError("job_invalid", "Report artifact root must be a bounded path.");
+		}
 		if (!Number.isSafeInteger(maxActiveJobs) || maxActiveJobs < 1 || maxActiveJobs > SUBAGENT_JOB_MAX_CONCURRENCY) {
 			throw new SubagentJobError(
 				"job_invalid",
@@ -1034,6 +1116,11 @@ export class SubagentJobRegistry {
 		this.maxActiveJobs = maxActiveJobs;
 		this.maxQueuedJobs = maxQueuedJobs;
 		this.maxAggregateOutputBytes = maxAggregateOutputBytes;
+		this.reportArtifactRoot = resolve(reportArtifactRoot);
+		this.admission = options.admission;
+		// Shared-admission wakeup: when a batch or another job releases a permit,
+		// queued jobs may be promoted. Listeners are non-authoritative scheduling hints.
+		this.admission?.onRelease(() => this.pump());
 	}
 
 	subscribe(listener: () => void): () => void {
@@ -1074,7 +1161,9 @@ export class SubagentJobRegistry {
 		}
 		const active = this.activeCount();
 		const queued = this.queuedCount();
-		const status: SubagentJobStatus = active < this.maxActiveJobs ? "created" : "queued";
+		let admitted = active < this.maxActiveJobs;
+		if (admitted && this.admission) admitted = this.admission.tryAcquire();
+		const status: SubagentJobStatus = admitted ? "created" : "queued";
 		if (status === "queued" && queued >= this.maxQueuedJobs) {
 			throw new SubagentJobError("queue_full", "Owner background job queue is full.");
 		}
@@ -1105,6 +1194,7 @@ export class SubagentJobRegistry {
 		} catch (error) {
 			this.reservedOutputBytes -= plannedOutputBytes;
 			this.orderCounter--;
+			if (admitted && this.admission) this.admission.release();
 			throw error;
 		}
 		this.records.set(jobId, createdState);
@@ -1114,6 +1204,7 @@ export class SubagentJobRegistry {
 			...createdState,
 			controller: new AbortController(),
 			run: input.run,
+			...(admitted ? { holdsPermit: true } : {}),
 		};
 		this.live.set(jobId, live);
 		this.publishChange();
@@ -1211,45 +1302,32 @@ export class SubagentJobRegistry {
 		this.order.clear();
 		this.orderCounter = 0;
 		this.reservedOutputBytes = 0;
-		const latest = new Map<string, { snapshot: PersistedSubagentJobSnapshot; order: number }>();
+		const latest = new Map<string, { snapshot: PersistedSubagentJobSnapshot; order: number; normalized: boolean }>();
 		let entryOrder = 0;
 		for (const entry of entries) {
 			entryOrder++;
 			if (!isRecord(entry) || entry.type !== "custom" || !matchesEntryType(entry.customType, JOB_ENTRY_TYPE))
 				continue;
-			const data = (entry as JobEntryLike).data;
-			if (!validSnapshot(data) || data.job.ownerSessionId !== this.ownerSessionId) continue;
+			const rawData = (entry as JobEntryLike).data;
+			const data = normalizePersistedSnapshot(rawData);
+			if (!validSnapshot(data, this.reportArtifactRoot) || data.job.ownerSessionId !== this.ownerSessionId) continue;
+			const normalized = data !== rawData;
 			const previous = latest.get(data.job.jobId);
 			if (!previous) {
-				latest.set(data.job.jobId, { snapshot: data, order: entryOrder });
+				latest.set(data.job.jobId, { snapshot: data, order: entryOrder, normalized });
 				continue;
 			}
 			if (data.sequence < previous.snapshot.sequence) continue;
-			const previousMaxTokens = previous.snapshot.job.contract?.maxTotalTokens;
-			const nextMaxTokens = data.job.contract?.maxTotalTokens;
-			// Persisted token authority is monotonic. A newer snapshot cannot widen a
-			// bounded job to a larger/unbounded ceiling, nor can it rewind already
-			// recorded charged usage. Keep the last trustworthy snapshot instead.
-			if (previousMaxTokens !== undefined && (nextMaxTokens === undefined || nextMaxTokens > previousMaxTokens))
-				continue;
-			const previousChargedTokens = previous.snapshot.result?.budget?.chargedTokens;
-			const nextChargedTokens = data.result?.budget?.chargedTokens;
-			if (
-				previousChargedTokens !== undefined &&
-				(nextChargedTokens === undefined || nextChargedTokens < previousChargedTokens)
-			)
-				continue;
-			latest.set(data.job.jobId, { snapshot: data, order: entryOrder });
+			latest.set(data.job.jobId, { snapshot: data, order: entryOrder, normalized });
 		}
 		for (const [jobId, value] of latest) {
 			const state: JobState = {
 				job: { ...value.snapshot.job },
-				...(value.snapshot.result
-					? { result: cloneResult(value.snapshot.result, value.snapshot.job.contract?.maxTotalTokens) }
-					: {}),
+				...(value.snapshot.result ? { result: cloneResult(value.snapshot.result) } : {}),
 			};
 			this.records.set(jobId, state);
 			this.sequences.set(jobId, value.snapshot.sequence);
+			if (value.normalized) this.persistState(state);
 			const order = value.snapshot.job.queueOrder ?? value.order;
 			this.order.set(jobId, order);
 			this.orderCounter = Math.max(this.orderCounter, order);
@@ -1343,9 +1421,9 @@ export class SubagentJobRegistry {
 			schemaVersion: 1,
 			sequence,
 			job: { ...state.job },
-			...(state.result ? { result: cloneResult(state.result, state.job.contract?.maxTotalTokens) } : {}),
+			...(state.result ? { result: cloneResult(state.result) } : {}),
 		};
-		if (!validSnapshot(snapshot))
+		if (!validSnapshot(snapshot, this.reportArtifactRoot))
 			throw new SubagentJobError("job_persistence_failure", "Subagent job snapshot is invalid or oversized.");
 		try {
 			this.persistSnapshot(Object.freeze(snapshot));
@@ -1397,6 +1475,9 @@ export class SubagentJobRegistry {
 		const live = [...this.live.values()].find((candidate) => candidate.job.runId === runId);
 		if (!live || live.settled) return false;
 		if (state === "running" && live.job.status !== "needs_time") return false;
+		// Retained managed runs keep their admission permit while awaiting an
+		// extension. This makes needs_time an active state and prevents resumed
+		// work from racing with a newly admitted sibling.
 		live.job = { ...live.job, status: state, runId };
 		this.records.set(live.job.jobId, live);
 		this.persistState(live);
@@ -1419,6 +1500,8 @@ export class SubagentJobRegistry {
 	): Promise<void> {
 		if (live.settled) return;
 		if (!live.requestedStop && runResult?.result.status === "needs_time") {
+			// The retained child remains active and owns its permit until a terminal
+			// result or explicit cancellation settles it.
 			live.job = {
 				...live.job,
 				status: "needs_time",
@@ -1436,13 +1519,11 @@ export class SubagentJobRegistry {
 	private async settle(live: LiveJob, runResult?: SubagentJobRunResult, runtimeError?: unknown): Promise<void> {
 		if (live.settled) return;
 		live.settled = true;
-		const result = projectResult(
-			live.job.jobId,
-			live.requestedStop,
-			runResult,
-			runtimeError,
-			live.job.contract?.maxTotalTokens,
-		);
+		if (live.holdsPermit) {
+			live.holdsPermit = false;
+			this.admission?.release();
+		}
+		const result = projectResult(live.job.jobId, live.requestedStop, runResult, runtimeError, live.job.runId);
 		const reservedOutputBytes = live.job.reservedOutputBytes ?? 0;
 		if (runResult?.result.runId) live.job = { ...live.job, runId: runResult.result.runId };
 		live.job = {
@@ -1485,6 +1566,10 @@ export class SubagentJobRegistry {
 	private failPersistence(live: LiveJob): void {
 		this.schedulerBlocked = true;
 		live.settled = true;
+		if (live.holdsPermit) {
+			live.holdsPermit = false;
+			this.admission?.release();
+		}
 		const reservedOutputBytes = live.job.reservedOutputBytes ?? 0;
 		live.job = {
 			...live.job,
@@ -1527,6 +1612,10 @@ export class SubagentJobRegistry {
 			while (!this.schedulerBlocked && this.activeCount() < this.maxActiveJobs) {
 				const next = this.oldestQueued();
 				if (!next) break;
+				if (this.admission && !next.holdsPermit) {
+					if (!this.admission.tryAcquire()) break;
+					next.holdsPermit = true;
+				}
 				next.promise = this.start(next);
 				void next.promise.catch(() => {});
 			}
@@ -1542,8 +1631,9 @@ export class SubagentJobRegistry {
 	}
 
 	private activeCount(): number {
-		return [...this.live.values()].filter((live) => live.job.status === "created" || live.job.status === "running")
-			.length;
+		return [...this.live.values()].filter(
+			(live) => live.job.status === "created" || live.job.status === "running" || live.job.status === "needs_time",
+		).length;
 	}
 
 	private queuedCount(): number {
@@ -1565,13 +1655,11 @@ export class SubagentJobRegistry {
 				reservedOutputBytes: state.job.reservedOutputBytes ?? 0,
 				ownerReservedOutputBytes: this.reservedOutputBytes,
 				ownerBudgetBytes: this.maxAggregateOutputBytes,
-				...(state.job.contract?.maxTotalTokens !== undefined
-					? { resolvedMaxTotalTokens: state.job.contract.maxTotalTokens }
-					: {}),
-				...(state.result?.budget
+				...(this.admission
 					? {
-							chargedTokens: state.result.budget.chargedTokens,
-							remainingTokens: state.result.budget.remainingTokens,
+							ownerActiveJobs: this.admission.active,
+							ownerQueuedJobs: this.queuedCount(),
+							ownerActiveJobsCap: Math.min(this.maxActiveJobs, this.admission.capacity),
 						}
 					: {}),
 			},
@@ -1588,6 +1676,9 @@ export class SubagentJobRegistry {
 		for (const jobId of terminal.slice(SUBAGENT_JOB_RETENTION_LIMIT)) {
 			const state = this.records.get(jobId);
 			if (state) {
+				if (state.result?.reportArtifact) {
+					removeRetainedReportArtifact(state.result.reportArtifact, this.reportArtifactRoot, state.result.runId);
+				}
 				// Retention expiry is explicit, not silent: keep a bounded tombstone so
 				// owner inspection can report "expired from full retention; final status X".
 				this.tombstones.set(jobId, {

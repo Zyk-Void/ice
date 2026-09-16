@@ -31,7 +31,12 @@ function normalizeSubagentRequest(
 	cwd: string,
 	options: SubagentNormalizationOptions = {},
 ): ReturnType<typeof normalizeSubagentRequestWithAgentDir> {
-	return normalizeSubagentRequestWithAgentDir(request, cwd, { agentDir: join(cwd, ".ice-agent"), ...options });
+	// This suite pins the structured report contract, which typed flows still run.
+	const normalized = normalizeSubagentRequestWithAgentDir(request, cwd, {
+		agentDir: join(cwd, ".ice-agent"),
+		...options,
+	});
+	return { ...normalized, reportMode: "structured_report" };
 }
 
 afterEach(async () => {
@@ -331,16 +336,14 @@ describe("result contract: malformed reports preserve work artifacts", () => {
 		);
 	});
 
-	it("does not spend a report-repair turn after a one-turn budget is exhausted", async () => {
+	it("rejects removed per-child turn and tool-call limits", async () => {
 		const cwd = await workspace();
-		const child = fakeChildSession({ firstResponse: "not json", repairResponse: validReport("should not run") });
-		const normalized = normalizeSubagentRequest(request(cwd, { execution: { maxTurns: 1 } }), cwd);
-		const result = await new NativeSubagentRunner({
-			createSession: async () => ({ session: child.session }) as CreateAgentSessionResult,
-		}).runResolved(normalized, ["delegate", "read"]);
-		expect(result.status).toBe("failed");
-		expect(child.raw.prompt).toHaveBeenCalledTimes(1);
-		expect(result.diagnostics.some((diagnostic) => /turn budget/i.test(diagnostic.message))).toBe(true);
+		expect(() => normalizeSubagentRequest(request(cwd, { execution: { maxTurns: 1 } } as never), cwd)).toThrowError(
+			/removed|maxTurns/i,
+		);
+		expect(() =>
+			normalizeSubagentRequest(request(cwd, { execution: { maxToolCalls: 1 } } as never), cwd),
+		).toThrowError(/removed|maxToolCalls/i);
 	});
 
 	it("preserves a bounded artifact when a successful edit precedes a malformed report", async () => {

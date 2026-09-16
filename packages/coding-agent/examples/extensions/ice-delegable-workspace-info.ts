@@ -22,6 +22,7 @@ export default function workspaceInfo(ice: ExtensionAPI): void {
 		}),
 	});
 	const unregister = registerIceDelegableTool(ice.events, {
+		adapterId: "example/workspace-info",
 		name: "workspace_info",
 		origin: "example/workspace-info",
 		access: "read-only",

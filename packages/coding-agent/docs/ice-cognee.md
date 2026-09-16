@@ -31,11 +31,25 @@ Ice does not load Claude `hooks.json`. Parity is implemented with the **Ice exte
   "captureTools": true,
   "autoImprove": true,
   "compactionSummaryMode": "auto",
+  "checkpointRecall": false,
   "baseUrl": "http://127.0.0.1:8211",
   "dataset": "ice",
   "recallBudgetMs": 10000
 }
 ```
+
+## Checkpoint recall handoff (optional)
+
+With `checkpointRecall: true` (env `ICE_COGNEE_CHECKPOINT_RECALL`) and Blackhole owning compaction, Cognee runs one
+bounded recall at `session_before_compact` (seeded from the newest summarized user message, same budget and caps as
+turn recall) and writes `<agentDir>/ice-cognee/compaction-recall.json`. Blackhole embeds it as a capped
+`[Relevant Memory]` section in the checkpoint and deletes the file (consume-once, 15-minute freshness window).
+
+`checkpointRecall` is independent of per-prompt `autoRecall`: disabling prompt recall does not disable the explicit
+checkpoint handoff. Handoffs are session-tagged and rejected when they belong to a different host session.
+
+This is opt-in because normal recall already fires on the next turn's prompt; the handoff only pays off when that
+prompt is too vague to seed a good query ("continue"). Failures are silent and share the recall circuit breaker.
 
 ## Blackhole cooperation
 

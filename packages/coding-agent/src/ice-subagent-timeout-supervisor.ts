@@ -1,7 +1,16 @@
 import { redactCredentialText } from "./utils/redact.ts";
 
 export type SubagentSupervisorState = "running" | "awaiting_extension" | "terminal";
-export type SubagentSupervisorPhase = "startup" | "working" | "controlled_wait" | "finalization";
+export type SubagentSupervisorPhase = "startup" | "working" | "wrapping_up" | "controlled_wait" | "finalization";
+export type SubagentRetryStateKind = "scheduled" | "recovered" | "failed";
+
+export interface SubagentRetryState {
+	readonly state: SubagentRetryStateKind;
+	readonly attempt: number;
+	readonly maxAttempts: number;
+	readonly delayMs?: number;
+	readonly diagnostic?: string;
+}
 export type SubagentToolActivityOutcome = "running" | "ok" | "error" | "aborted";
 export type SubagentSupervisorStopReason = "cancelled" | "timed_out";
 
@@ -11,6 +20,12 @@ const REPEATED_FAILURE_THRESHOLD = 2;
 const DEFAULT_DECISION_GRACE_MS = 120_000;
 const DEFAULT_MAX_TOTAL_BUDGET_MS = 10 * 60 * 1_000;
 const MIN_EXTENSION_MS = 1_000;
+/**
+ * Bounded retention window a detached child may draw on. It is deliberately
+ * separate from the extension reserve so retaining a paused child for
+ * background continuation never silently spends the parent's extension budget.
+ */
+const DEFAULT_MAX_RETENTION_MS = 2 * 60 * 1_000;
 
 export interface SubagentToolActivityDigest {
 	readonly toolCallId: string;
@@ -41,6 +56,8 @@ export interface SubagentRuntimeAttention {
 	readonly totalExtendedMs: number;
 	readonly extensionCount: number;
 	readonly remainingExtendableMs: number;
+	/** Separate retention pool for a detached child; never the extension reserve. */
+	readonly remainingRetentionMs?: number;
 	readonly progressAgeMs?: number;
 	readonly lastProgressAtMs?: number;
 	readonly decisionDeadlineAtMs?: number;
@@ -64,6 +81,49 @@ export interface SubagentUsageSnapshot {
 	readonly cost: number;
 }
 
+/**
+ * Parent-visible child state for observational management actions. It is
+ * projected from supervisor state so a management wait expiry can never be
+ * conflated with a child timeout.
+ */
+export type SubagentManagementChildState =
+	| "running"
+	| "awaiting_extension"
+	| "completed"
+	| "failed"
+	| "cancelled"
+	| "timed_out"
+	| "verification_failed";
+
+const SUBAGENT_MANAGEMENT_TERMINAL_STATES: readonly SubagentManagementChildState[] = [
+	"completed",
+	"failed",
+	"cancelled",
+	"timed_out",
+	"verification_failed",
+];
+
+/**
+ * Narrow a terminal status into the bounded management vocabulary. Unknown or
+ * absent statuses fall back to `completed`, which is the same conservative
+ * projection used for supervisor snapshots.
+ */
+export function projectSubagentTerminalStatus(status: string | undefined): SubagentManagementChildState {
+	return status && (SUBAGENT_MANAGEMENT_TERMINAL_STATES as readonly string[]).includes(status)
+		? (status as SubagentManagementChildState)
+		: "completed";
+}
+
+/** Project a supervisor snapshot into the bounded management state vocabulary. */
+export function projectSubagentManagementState(snapshot: SubagentRunSupervisorSnapshot): {
+	childState: SubagentManagementChildState;
+	terminal: boolean;
+} {
+	if (snapshot.state === "awaiting_extension") return { childState: "awaiting_extension", terminal: false };
+	if (snapshot.state === "running") return { childState: "running", terminal: false };
+	return { childState: projectSubagentTerminalStatus(snapshot.terminalStatus), terminal: true };
+}
+
 export interface SubagentRunSupervisorCallbacks<TResult> {
 	readonly abort: () => Promise<void>;
 	readonly resume: () => Promise<TResult>;
@@ -77,6 +137,7 @@ export interface SubagentRunSupervisorOptions<TResult> extends SubagentRunSuperv
 	readonly initialTimeoutMs: number;
 	readonly phase?: SubagentSupervisorPhase;
 	readonly maxTotalBudgetMs?: number;
+	readonly maxRetentionMs?: number;
 	readonly decisionGraceMs?: number;
 	readonly now?: () => number;
 	readonly setTimeout?: (callback: () => void, delayMs: number) => ReturnType<typeof globalThis.setTimeout>;
@@ -128,6 +189,7 @@ export class SubagentRunSupervisor<TResult> {
 	private readonly childSessionId: string | undefined;
 	private readonly initialTimeoutMs: number;
 	private readonly maxTotalBudgetMs: number;
+	private readonly maxRetentionMs: number;
 	private readonly decisionGraceMs: number;
 	private readonly now: () => number;
 	private readonly schedule: (callback: () => void, delayMs: number) => ReturnType<typeof globalThis.setTimeout>;
@@ -139,6 +201,8 @@ export class SubagentRunSupervisor<TResult> {
 	private activeElapsedMs = 0;
 	private totalExtendedMs = 0;
 	private extensionCount = 0;
+	private retentionBudgetMs = 0;
+	private retentionUsedMs = 0;
 	private segmentStartedAtMs: number;
 	private lastProgressAtMs: number | undefined;
 	private decisionDeadlineAtMs: number | undefined;
@@ -155,6 +219,8 @@ export class SubagentRunSupervisor<TResult> {
 	private readonly activities = new Map<string, SubagentToolActivityDigest>();
 	private readonly activityOrder: string[] = [];
 	private readonly recentFailureCounts = new Map<string, { action: string; count: number }>();
+	private readonly lifecycleWaiters = new Set<() => void>();
+	private lastObservedState: SubagentSupervisorState = "running";
 
 	constructor(options: SubagentRunSupervisorOptions<TResult>) {
 		this.runId = boundedText(options.runId);
@@ -164,6 +230,10 @@ export class SubagentRunSupervisor<TResult> {
 		this.maxTotalBudgetMs = Math.max(
 			this.initialTimeoutMs,
 			boundedPositiveInteger(options.maxTotalBudgetMs ?? DEFAULT_MAX_TOTAL_BUDGET_MS, DEFAULT_MAX_TOTAL_BUDGET_MS),
+		);
+		this.maxRetentionMs = boundedPositiveInteger(
+			options.maxRetentionMs ?? DEFAULT_MAX_RETENTION_MS,
+			DEFAULT_MAX_RETENTION_MS,
 		);
 		this.decisionGraceMs = Math.max(
 			1,
@@ -185,7 +255,8 @@ export class SubagentRunSupervisor<TResult> {
 			this.state === "running" && this.phase !== "controlled_wait"
 				? Math.max(0, this.now() - this.segmentStartedAtMs)
 				: 0;
-		const activeElapsedMs = Math.min(this.activeBudgetMs, this.activeElapsedMs + currentElapsed);
+		const effectiveBudgetMs = this.activeBudgetMs + this.retentionBudgetMs;
+		const activeElapsedMs = Math.min(effectiveBudgetMs, this.activeElapsedMs + currentElapsed);
 		const progressAgeMs =
 			this.lastProgressAtMs === undefined ? undefined : Math.max(0, this.now() - this.lastProgressAtMs);
 		return Object.freeze({
@@ -199,6 +270,7 @@ export class SubagentRunSupervisor<TResult> {
 			totalExtendedMs: this.totalExtendedMs,
 			extensionCount: this.extensionCount,
 			remainingExtendableMs: Math.max(0, this.maxTotalBudgetMs - this.activeBudgetMs),
+			remainingRetentionMs: Math.max(0, this.maxRetentionMs - this.retentionUsedMs),
 			...(progressAgeMs !== undefined ? { progressAgeMs } : {}),
 			...(this.lastProgressAtMs !== undefined ? { lastProgressAtMs: this.lastProgressAtMs } : {}),
 			...(this.decisionDeadlineAtMs !== undefined ? { decisionDeadlineAtMs: this.decisionDeadlineAtMs } : {}),
@@ -215,6 +287,48 @@ export class SubagentRunSupervisor<TResult> {
 
 	get stateValue(): SubagentSupervisorState {
 		return this.state;
+	}
+
+	/** Terminal result stored by {@link finish}; absent for runner-owned terminal cleanup. */
+	getTerminalResult(): TResult | undefined {
+		return this.hasTerminalResult ? this.terminalResult : undefined;
+	}
+
+	/** Observability for waiter-leak tests: waiters registered but not yet settled. */
+	get pendingLifecycleWaiters(): number {
+		return this.lifecycleWaiters.size;
+	}
+
+	/**
+	 * Resolve on the next lifecycle state transition, or immediately when the
+	 * run already left the running state. Event driven: no polling. The waiter
+	 * unsubscribes on transition, abort, and already-settled calls.
+	 */
+	waitForLifecycleChange(signal?: AbortSignal): Promise<void> {
+		if (this.state !== "running") return Promise.resolve();
+		return new Promise<void>((resolve) => {
+			let settled = false;
+			const settle = (): void => {
+				if (settled) return;
+				settled = true;
+				this.lifecycleWaiters.delete(settle);
+				signal?.removeEventListener("abort", onAbort);
+				resolve();
+			};
+			const onAbort = (): void => settle();
+			if (signal) {
+				if (signal.aborted) {
+					onAbort();
+					return;
+				}
+				signal.addEventListener("abort", onAbort, { once: true });
+			}
+			this.lifecycleWaiters.add(settle);
+		});
+	}
+
+	private notifyLifecycleWaiters(): void {
+		for (const waiter of [...this.lifecycleWaiters]) waiter();
 	}
 
 	getTimeoutPromise(): Promise<void> {
@@ -330,6 +444,46 @@ export class SubagentRunSupervisor<TResult> {
 		return this.operationPromise;
 	}
 
+	/**
+	 * Resume a paused run under the separate retention pool. Unlike extend this
+	 * never consumes the extension reserve, so retaining a paused child for
+	 * background continuation cannot silently spend the parent's extension
+	 * budget. Bounded by the supervisor's retention ceiling.
+	 */
+	async retain(additionalMs: number): Promise<TResult> {
+		if (this.operationPromise) return this.operationPromise;
+		if (this.state !== "awaiting_extension") {
+			throw new Error(`Subagent run ${this.runId} is not awaiting a retention decision.`);
+		}
+		if (!Number.isSafeInteger(additionalMs) || additionalMs < MIN_EXTENSION_MS) {
+			throw new Error(`Subagent retention must be an integer of at least ${MIN_EXTENSION_MS} ms.`);
+		}
+		const remaining = Math.max(0, this.maxRetentionMs - this.retentionUsedMs);
+		if (remaining < MIN_EXTENSION_MS) {
+			throw new Error(`Subagent run ${this.runId} has no retention budget remaining.`);
+		}
+		const granted = Math.min(additionalMs, remaining);
+		this.clearDecisionTimer();
+		this.state = "running";
+		this.decisionDeadlineAtMs = undefined;
+		this.retentionBudgetMs += granted;
+		this.retentionUsedMs += granted;
+		this.timeoutPromise = this.createTimeoutPromise();
+		this.publish();
+		this.operationPromise = (async () => {
+			await this.interruptionPromise;
+			if (this.state !== "running") throw new Error(`Subagent run ${this.runId} is no longer resumable.`);
+			this.segmentStartedAtMs = this.now();
+			this.armTimer();
+			try {
+				return await this.callbacks.resume();
+			} finally {
+				this.operationPromise = undefined;
+			}
+		})();
+		return this.operationPromise;
+	}
+
 	/** Mark a resumed run terminal after its callback has produced a final result. */
 	finish(result: TResult, terminalStatus = "completed"): boolean {
 		if (this.hasTerminalResult || this.state === "terminal") return false;
@@ -378,30 +532,35 @@ export class SubagentRunSupervisor<TResult> {
 		return true;
 	}
 
+	/**
+	 * Terminalize the run with the requested reason. The runner-owned terminal
+	 * callback owns the outcome classification, so it is started before an
+	 * in-flight resume/retention is released: the aborted continuation then
+	 * observes the requested reason instead of defaulting to a generic failure.
+	 * Idempotent; waiters settle exactly once because the terminal transition is
+	 * published at most once.
+	 */
 	async stop(reason: SubagentSupervisorStopReason): Promise<TResult> {
 		if (this.hasTerminalResult) return this.terminalResult as TResult;
-		if (this.operationPromise) {
-			void this.callbacks.abort().catch(() => {});
-			return this.operationPromise;
-		}
+		const inFlight = this.operationPromise;
 		this.clearTimer();
 		this.clearDecisionTimer();
 		if (this.state === "running") this.recordActiveElapsed();
-		this.state = "terminal";
-		this.decisionDeadlineAtMs = undefined;
-		this.terminalStatus = reason === "cancelled" ? "cancelled" : "timed_out";
-		this.publish();
-		this.operationPromise = (async () => {
-			try {
-				const result = await this.callbacks.stop(reason);
-				this.terminalResult = result;
-				this.hasTerminalResult = true;
-				return result;
-			} finally {
-				this.operationPromise = undefined;
-			}
+		if (this.state !== "terminal") {
+			this.state = "terminal";
+			this.decisionDeadlineAtMs = undefined;
+			this.terminalStatus = reason === "cancelled" ? "cancelled" : "timed_out";
+			this.publish();
+		}
+		const terminal = (async (): Promise<TResult> => {
+			const result = await this.callbacks.stop(reason);
+			this.terminalResult = result;
+			this.hasTerminalResult = true;
+			return result;
 		})();
-		return this.operationPromise;
+		void this.callbacks.abort().catch(() => {});
+		if (inFlight) await inFlight.catch(() => undefined);
+		return terminal;
 	}
 
 	async shutdown(): Promise<void> {
@@ -417,7 +576,7 @@ export class SubagentRunSupervisor<TResult> {
 
 	private armTimer(): void {
 		this.clearTimer();
-		const remaining = Math.max(1, this.activeBudgetMs - this.activeElapsedMs);
+		const remaining = Math.max(1, this.activeBudgetMs + this.retentionBudgetMs - this.activeElapsedMs);
 		this.timer = this.schedule(() => {
 			void this.triggerTimeout();
 		}, remaining);
@@ -442,7 +601,7 @@ export class SubagentRunSupervisor<TResult> {
 	private recordActiveElapsed(): void {
 		if (this.state !== "running") return;
 		this.activeElapsedMs = Math.min(
-			this.activeBudgetMs,
+			this.activeBudgetMs + this.retentionBudgetMs,
 			this.activeElapsedMs + Math.max(0, this.now() - this.segmentStartedAtMs),
 		);
 	}
@@ -462,11 +621,14 @@ export class SubagentRunSupervisor<TResult> {
 	}
 
 	private publish(): void {
+		const stateChanged = this.lastObservedState !== this.state;
+		this.lastObservedState = this.state;
 		try {
 			this.callbacks.onChange?.(this.getSnapshot());
 		} catch {
 			// Presentation observers cannot affect lifecycle state.
 		}
+		if (stateChanged) this.notifyLifecycleWaiters();
 	}
 }
 

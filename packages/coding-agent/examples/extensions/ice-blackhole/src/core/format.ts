@@ -50,6 +50,7 @@ export const capBrief = (text: string): string => {
 
 export const formatSummary = (data: SectionData): string => {
 	const headerParts = [
+		section("Last Actions", data.recentActions),
 		section("Session Goal", data.sessionGoal),
 		section("Files And Changes", data.filesAndChanges),
 		section("Commits", data.commits),

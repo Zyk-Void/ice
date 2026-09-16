@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readIceManifest } from "../../src/core/ice-manifest.ts";
+import { readCompatibleManifest, readIceManifest } from "../../src/core/ice-manifest.ts";
 import { compatibleBlackholeConfigPath, compatibleCogneeStorageDir } from "../../src/core/legacy-compat/cognee.ts";
 import { DefaultResourceLoader } from "../../src/core/resource-loader.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
@@ -49,24 +49,45 @@ describe("legacy runtime contracts", () => {
 		);
 		const manager = SettingsManager.create(root, join(root, ".ice/agent"));
 		expect(manager.getIceSettingsValue("global")?.subagents?.enabled).toBe(false);
-		manager.setIceSettingsValue("global", { subagents: { enabled: false, defaults: { maxToolCalls: 0 } } });
+		manager.setIceSettingsValue("global", { subagents: { enabled: false, defaults: { maxOutputBytes: 1_024 } } });
 		await manager.flush();
 		expect(manager.drainErrors()).toEqual([]);
 		const stored = JSON.parse(readFileSync(file, "utf8"));
 		expect(stored).toMatchObject({
 			theme: "dark",
-			ice: { subagents: { enabled: false, defaults: { maxToolCalls: 0 } } },
+			ice: { subagents: { enabled: false, defaults: { maxOutputBytes: 1_024 } } },
 		});
 	});
 
-	it("reads only ice package manifests", () => {
+	it("reads ice package manifests and falls back to the legacy pi field", () => {
 		const root = fixture();
 		const file = put(root, "package.json", JSON.stringify({ pi: { extensions: ["old.ts"] } }));
-		expect(readIceManifest(file)).toBeNull();
+		expect(readIceManifest(file)?.extensions).toEqual(["old.ts"]);
+		expect(readCompatibleManifest(file)?.source).toBe("legacy-pi");
 		writeFileSync(file, JSON.stringify({ ice: { extensions: ["new.ts"] }, pi: { extensions: ["old.ts"] } }));
 		expect(readIceManifest(file)?.extensions).toEqual(["new.ts"]);
+		expect(readCompatibleManifest(file)?.source).toBe("ice");
 		writeFileSync(file, JSON.stringify({ ice: null, pi: { extensions: ["old.ts"] } }));
 		expect(readIceManifest(file)).toBeNull();
+		expect(readCompatibleManifest(file)).toBeNull();
+	});
+
+	it("reports manifest provenance without merging ice and pi resources", () => {
+		const root = fixture();
+		const file = put(root, "package.json", JSON.stringify({ ice: { extensions: ["new.ts"] } }));
+		expect(readCompatibleManifest(file)).toEqual({ manifest: { extensions: ["new.ts"] }, source: "ice" });
+
+		writeFileSync(file, JSON.stringify({ pi: { skills: ["legacy.md"] } }));
+		expect(readCompatibleManifest(file)).toEqual({ manifest: { skills: ["legacy.md"] }, source: "legacy-pi" });
+
+		// Both fields present: ICE is selected wholesale and legacy fields are
+		// not merged in, so a pi-only resource cannot ride along with an ICE block.
+		writeFileSync(file, JSON.stringify({ ice: { extensions: ["new.ts"] }, pi: { skills: ["legacy.md"] } }));
+		expect(readCompatibleManifest(file)).toEqual({ manifest: { extensions: ["new.ts"] }, source: "ice" });
+
+		// Malformed ICE stays a hard null rather than downgrading to valid pi.
+		writeFileSync(file, JSON.stringify({ ice: "nope", pi: { skills: ["legacy.md"] } }));
+		expect(readCompatibleManifest(file)).toBeNull();
 	});
 
 	it("does not execute project extensions before trust, and does not load .pi extensions", async () => {

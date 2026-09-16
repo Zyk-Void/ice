@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	JOB_ENTRY_TYPE,
@@ -8,14 +11,21 @@ import {
 	type SubagentJobRunResult,
 } from "../src/ice-subagent-jobs.ts";
 import type { IceHookDispatchRecord } from "../src/ice-subagent-settings.ts";
-import type { ReviewFinding, SubagentResult, SubagentVerification } from "../src/ice-subagents.ts";
+import {
+	type ReviewFinding,
+	type SubagentResult,
+	type SubagentVerification,
+	writeSubagentReportArtifact,
+} from "../src/ice-subagents.ts";
 
+const TEST_REPORT_ARTIFACT_ROOT = "/tmp/ice-subagent-report-artifacts";
 const registries: SubagentJobRegistry[] = [];
 
 interface TestRegistryOptions {
 	maxActiveJobs?: number;
 	maxQueuedJobs?: number;
 	maxAggregateOutputBytes?: number;
+	reportArtifactRoot?: string;
 }
 
 function createRegistry(
@@ -27,6 +37,7 @@ function createRegistry(
 		ownerSessionId: "owner-a",
 		persist,
 		notify,
+		reportArtifactRoot: TEST_REPORT_ARTIFACT_ROOT,
 		...options,
 	} as ConstructorParameters<typeof SubagentJobRegistry>[0]);
 	registries.push(registry);
@@ -206,16 +217,22 @@ describe("durable subagent jobs", () => {
 			{
 				thinking: "high",
 				timeoutMs: 120_000,
-				maxTurns: 8,
-				maxToolCalls: 16,
 				maxOutputBytes: 24 * 1024,
+				temperature: 0.2,
+				topP: 0.8,
 				tools: ["read"],
 				sourceHash: "a".repeat(64),
 			},
 		);
 		await flush();
 		const inspection = registry.inspect(accepted.jobId);
-		expect(inspection.job.contract).toMatchObject({ thinking: "high", maxTurns: 8, tools: ["read"] });
+		expect(inspection.job.contract).toMatchObject({
+			thinking: "high",
+			maxOutputBytes: 24 * 1024,
+			temperature: 0.2,
+			topP: 0.8,
+			tools: ["read"],
+		});
 		expect(inspection.result).toMatchObject({
 			status: "completed",
 			payload: { severity: "high" },
@@ -223,110 +240,104 @@ describe("durable subagent jobs", () => {
 			hookRecords: [{ hookId: "policy", outcome: "continue" }],
 		});
 		expect(snapshots.at(-1)?.job.contract?.sourceHash).toBe("a".repeat(64));
+
+		const trusted = structuredClone(snapshots.at(-1)!);
+		const invalidSampling = structuredClone(trusted);
+		invalidSampling.sequence += 1;
+		invalidSampling.job.contract!.temperature = 2.1;
+		const restored = createRegistry();
+		restored.restore(
+			[trusted, invalidSampling].map((snapshot) => ({ type: "custom", customType: JOB_ENTRY_TYPE, data: snapshot })),
+		);
+		expect(restored.inspect(accepted.jobId).job.contract).toMatchObject({ temperature: 0.2, topP: 0.8 });
 	});
 
-	it("persists a bounded token budget only under its immutable contract", async () => {
+	it("validates persisted adapter identity while accepting legacy capability records", () => {
+		const legacy = persistedSnapshot("legacy-adapter", "completed");
+		legacy.job.contract = {
+			thinking: "medium",
+			timeoutMs: 1_000,
+			maxOutputBytes: 24 * 1024,
+			tools: [],
+			capabilities: [
+				{
+					name: "lookup",
+					origin: "fixture/lookup",
+					fingerprint: "a".repeat(64),
+				},
+			],
+		};
+		const invalid = structuredClone(legacy);
+		invalid.job.jobId = "invalid-adapter";
+		invalid.job.resultRef = "job:invalid-adapter";
+		invalid.job.contract!.capabilities![0]!.adapterId = "bad adapter id";
+		invalid.result!.jobId = "invalid-adapter";
+		invalid.sequence = 2;
+
+		const registry = createRegistry();
+		registry.restore(
+			[legacy, invalid].map((snapshot) => ({ type: "custom", customType: JOB_ENTRY_TYPE, data: snapshot })),
+		);
+		expect(registry.inspect("legacy-adapter").job.contract?.capabilities?.[0]).not.toHaveProperty("adapterId");
+		expect(() => registry.inspect("invalid-adapter")).toThrowError(/not found/i);
+	});
+
+	it("persists bounded usage telemetry without aggregate token authority", async () => {
 		const snapshots: PersistedSubagentJobSnapshot[] = [];
 		const registry = createRegistry((snapshot) => snapshots.push(snapshot));
 		const contract: SubagentJobContract = {
 			thinking: "medium",
 			timeoutMs: 120_000,
-			maxTurns: 12,
-			maxToolCalls: 40,
 			maxOutputBytes: 24 * 1024,
-			maxTotalTokens: 20_000,
 			tools: [],
 		};
 		const run = completedRun();
-		run.result.budget = {
-			maxTotalTokens: 20_000,
-			workPhaseLimit: 18_000,
-			reportReserveTokens: 2_000,
-			chargedTokens: 12,
-			remainingTokens: 19_988,
+		run.result.usage = {
 			inputTokens: 5,
 			outputTokens: 6,
 			cacheReadTokens: 9,
 			cacheWriteTokens: 1,
-			overshootTokens: 0,
-			accounting: "estimated",
-			exhausted: false,
-			hardCap: "aggregate-soft",
+			cost: 0.01,
 		};
 		const accepted = launch(registry, async () => run, 24 * 1024, contract);
 		await flush();
-		expect(registry.inspect(accepted.jobId).result?.budget).toMatchObject({
-			maxTotalTokens: 20_000,
-			chargedTokens: 12,
-			remainingTokens: 19_988,
+		expect(registry.inspect(accepted.jobId).result?.usage).toMatchObject({
+			inputTokens: 5,
+			outputTokens: 6,
+			cacheReadTokens: 9,
+			cacheWriteTokens: 1,
 		});
-		expect(snapshots.at(-1)?.result?.budget?.maxTotalTokens).toBe(20_000);
+		expect(snapshots.at(-1)?.result?.usage?.inputTokens).toBe(5);
+		expect(snapshots.at(-1)?.job.contract).not.toHaveProperty("maxTotalTokens");
 	});
 
-	it("refuses newer persisted snapshots that widen token authority or rewind charged usage", async () => {
+	it("normalizes legacy token-budget fields before restoring persisted jobs", () => {
 		const snapshots: PersistedSubagentJobSnapshot[] = [];
-		const source = createRegistry((snapshot) => snapshots.push(snapshot));
-		const contract: SubagentJobContract = {
+		const legacy = persistedSnapshot("legacy-token-budget", "completed") as unknown as Record<string, unknown>;
+		const legacyJob = legacy.job as Record<string, unknown>;
+		legacyJob.contract = {
 			thinking: "medium",
 			timeoutMs: 120_000,
 			maxTurns: 12,
 			maxToolCalls: 40,
 			maxOutputBytes: 24 * 1024,
-			maxTotalTokens: 20_000,
 			tools: [],
-		};
-		const run = completedRun();
-		run.result.budget = {
 			maxTotalTokens: 20_000,
-			workPhaseLimit: 18_000,
-			reportReserveTokens: 2_000,
-			chargedTokens: 12,
-			remainingTokens: 19_988,
-			inputTokens: 5,
-			outputTokens: 6,
-			cacheReadTokens: 9,
-			cacheWriteTokens: 1,
-			overshootTokens: 0,
-			accounting: "estimated",
-			exhausted: false,
-			hardCap: "aggregate-soft",
 		};
-		const accepted = launch(source, async () => run, 24 * 1024, contract);
-		await flush();
-		const trusted = structuredClone(snapshots.at(-1)!);
-
-		const widened = structuredClone(trusted);
-		widened.sequence += 1;
-		widened.job.contract!.maxTotalTokens = 30_000;
-		widened.result!.budget = {
-			...widened.result!.budget!,
-			maxTotalTokens: 30_000,
-			workPhaseLimit: 27_000,
-			reportReserveTokens: 3_000,
-			remainingTokens: 29_988,
-		};
-		const widenedRegistry = createRegistry();
-		widenedRegistry.restore(
-			[trusted, widened].map((snapshot) => ({ type: "custom", customType: JOB_ENTRY_TYPE, data: snapshot })),
-		);
-		expect(widenedRegistry.inspect(accepted.jobId).job.contract?.maxTotalTokens).toBe(20_000);
-		expect(widenedRegistry.inspect(accepted.jobId).result?.budget?.maxTotalTokens).toBe(20_000);
-
-		const rewound = structuredClone(trusted);
-		rewound.sequence += 1;
-		rewound.result!.budget = {
-			...rewound.result!.budget!,
-			chargedTokens: 2,
-			remainingTokens: 19_998,
-			inputTokens: 1,
-			outputTokens: 1,
-			cacheWriteTokens: 0,
-		};
-		const rewoundRegistry = createRegistry();
-		rewoundRegistry.restore(
-			[trusted, rewound].map((snapshot) => ({ type: "custom", customType: JOB_ENTRY_TYPE, data: snapshot })),
-		);
-		expect(rewoundRegistry.inspect(accepted.jobId).result?.budget?.chargedTokens).toBe(12);
+		const legacyResult = legacy.result as Record<string, unknown>;
+		legacyResult.budget = { maxTotalTokens: 20_000, chargedTokens: 12 };
+		const registry = createRegistry((snapshot) => snapshots.push(snapshot));
+		registry.restore([{ type: "custom", customType: JOB_ENTRY_TYPE, data: legacy }]);
+		const inspection = registry.inspect("legacy-token-budget");
+		expect(inspection.job.contract).not.toHaveProperty("maxTotalTokens");
+		expect(inspection.job.contract).not.toHaveProperty("maxTurns");
+		expect(inspection.job.contract).not.toHaveProperty("maxToolCalls");
+		expect(inspection.result).not.toHaveProperty("budget");
+		expect(snapshots.at(-1)?.sequence).toBe(2);
+		expect(snapshots.at(-1)?.job.contract).not.toHaveProperty("maxTotalTokens");
+		expect(snapshots.at(-1)?.job.contract).not.toHaveProperty("maxTurns");
+		expect(snapshots.at(-1)?.job.contract).not.toHaveProperty("maxToolCalls");
+		expect(snapshots.at(-1)?.result).not.toHaveProperty("budget");
 	});
 
 	it("queues a second owner job when the active limit is reached", async () => {
@@ -801,6 +812,35 @@ describe("durable subagent jobs", () => {
 		expect(tombstoneInspection.tombstone).toMatchObject({ jobId: firstJobId, terminalStatus: "completed" });
 		expect(tombstoneInspection.job.status).toBe("completed");
 		expect(tombstoneInspection.result).toBeUndefined();
+	});
+
+	it("removes a spilled artifact when its durable full result expires from retention", async () => {
+		const artifactRoot = mkdtempSync(join(tmpdir(), "ice-subagent-job-artifacts-"));
+		try {
+			const artifact = writeSubagentReportArtifact({
+				runId: "retained-artifact",
+				content: "oversized child output",
+				artifactRoot,
+			});
+			expect(artifact).toBeDefined();
+			expect(existsSync(artifact!.path)).toBe(true);
+			const registry = createRegistry(undefined, undefined, { reportArtifactRoot: artifactRoot });
+			const first = completedRun();
+			launch(registry, async () => ({
+				...first,
+				result: { ...first.result, runId: artifact!.id, reportArtifact: artifact },
+			}));
+			await flush();
+			for (let index = 0; index < 32; index++) {
+				launch(registry, async () => completedRun());
+				await flush();
+			}
+
+			expect(existsSync(artifact!.path)).toBe(false);
+			expect(registry.list().filter((inspection) => inspection.tombstone)).toHaveLength(1);
+		} finally {
+			rmSync(artifactRoot, { recursive: true, force: true });
+		}
 	});
 
 	it("shuts down active work as interrupted and leaves no active controller", async () => {
@@ -1408,15 +1448,27 @@ describe("durable job identity and artifact parity", () => {
 	});
 
 	it("preserves the runtime work artifact when a durable job fails the report protocol", async () => {
+		const snapshots: PersistedSubagentJobSnapshot[] = [];
 		const registry = createRegistry(
-			() => {},
+			(snapshot) => snapshots.push(snapshot),
 			() => {},
 		);
 		const protocolFailure: SubagentJobRunResult = {
 			result: {
 				...completedRun().result,
+				runId: "run-protocol",
 				status: "verification_failed",
 				evidence: undefined,
+				reportArtifact: {
+					schemaVersion: 1,
+					id: "run-protocol",
+					path: `${TEST_REPORT_ARTIFACT_ROOT}/run-protocol/report.json`,
+					bytes: 12,
+					originalBytes: 42,
+					sha256: "a".repeat(64),
+					contentType: "application/json",
+					truncated: true,
+				},
 				workArtifact: {
 					schemaVersion: 1,
 					runId: "run-protocol",
@@ -1449,11 +1501,35 @@ describe("durable job identity and artifact parity", () => {
 		const inspection = registry.inspect(accepted.jobId);
 		expect(inspection.job.status).toBe("verification_failed");
 		expect(inspection.result?.workArtifact).toBeDefined();
+		expect(inspection.result?.reportArtifact).toMatchObject({
+			id: "run-protocol",
+			contentType: "application/json",
+			bytes: 12,
+			originalBytes: 42,
+			truncated: true,
+		});
 		expect(inspection.result?.workArtifact?.reportProtocol).toMatchObject({ status: "malformed" });
 		expect(inspection.result?.workArtifact?.touchedPaths).toEqual(["src/app.ts"]);
 		// Candidate evidence stays bounded and never becomes verified evidence.
 		expect(inspection.result?.workArtifact?.candidateEvidencePaths).toEqual(["src/generated.ts"]);
 		expect(inspection.result?.evidence).toBeUndefined();
+
+		const trusted = snapshots.at(-1)!;
+		const outsideRoot = structuredClone(trusted);
+		outsideRoot.sequence += 1;
+		outsideRoot.result!.reportArtifact!.path = "/tmp/report.json";
+		const mismatchedPath = structuredClone(trusted);
+		mismatchedPath.sequence += 2;
+		mismatchedPath.result!.reportArtifact!.path = `${TEST_REPORT_ARTIFACT_ROOT}/another-run/report.json`;
+		const restored = createRegistry();
+		restored.restore(
+			[outsideRoot, mismatchedPath].map((snapshot) => ({
+				type: "custom",
+				customType: JOB_ENTRY_TYPE,
+				data: snapshot,
+			})),
+		);
+		expect(restored.list()).toHaveLength(0);
 	});
 
 	it("keeps expired terminal history inspectable as a bounded tombstone after restart", async () => {

@@ -15,6 +15,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { type IceCommandHookPolicy, parseIceCommandHookPolicy } from "./ice-subagent-command-hooks.ts";
+import { SUBAGENT_CONCURRENCY_LIMITS, type SubagentConcurrencySettings } from "./ice-subagent-concurrency.ts";
 import type { SubagentRequestedToolName, SubagentThinkingLevel } from "./ice-subagents.ts";
 import { redactCredentialText } from "./utils/redact.ts";
 
@@ -26,10 +27,9 @@ import { redactCredentialText } from "./utils/redact.ts";
 export interface IceSubagentPreferenceFields {
 	thinking?: SubagentThinkingLevel;
 	timeoutMs?: number;
-	maxTurns?: number;
-	maxToolCalls?: number;
 	maxOutputBytes?: number;
-	maxTotalTokens?: number;
+	temperature?: number;
+	topP?: number;
 }
 
 export interface IceSubagentSettingsInput {
@@ -41,13 +41,12 @@ export interface IceSubagentSettingsInput {
 	restrictions?: {
 		maxTimeoutMs?: number;
 		maxOutputBytes?: number;
-		maxTurns?: number;
-		maxToolCalls?: number;
-		maxTotalTokens?: number;
 		denyRoles?: string[];
 		denyTools?: string[];
 	};
 	modelSelection?: { mode?: string };
+	/** Bounded active-child concurrency for batches and background jobs. */
+	concurrency?: SubagentConcurrencySettings;
 }
 
 export interface IceHookDefinitionInput {
@@ -76,14 +75,12 @@ export const ICE_SUBAGENT_SETTINGS_LIMITS = {
 	maxThinkingLength: 16,
 	minTimeoutMs: 1,
 	maxTimeoutMs: 10 * 60 * 1_000,
-	minTurns: 1,
-	maxTurns: 64,
-	minToolCalls: 0,
-	maxToolCalls: 512,
 	minOutputBytes: 1_024,
 	maxOutputBytes: 64 * 1_024,
-	minTotalTokens: 1_024,
-	maxTotalTokens: 1_000_000,
+	minTemperature: 0,
+	maxTemperature: 2,
+	minTopP: 0,
+	maxTopP: 1,
 	maxRoles: 64,
 	maxRoleNameBytes: 64,
 	maxRoleDefaults: 64,
@@ -111,24 +108,11 @@ const KNOWN_SUBAGENT_SETTINGS_KEYS = new Set([
 	"roleDefaults",
 	"restrictions",
 	"modelSelection",
+	"concurrency",
 ]);
-const KNOWN_PREFERENCE_KEYS = new Set([
-	"thinking",
-	"timeoutMs",
-	"maxTurns",
-	"maxToolCalls",
-	"maxOutputBytes",
-	"maxTotalTokens",
-]);
-const KNOWN_RESTRICTION_KEYS = new Set([
-	"maxTimeoutMs",
-	"maxOutputBytes",
-	"maxTurns",
-	"maxToolCalls",
-	"maxTotalTokens",
-	"denyRoles",
-	"denyTools",
-]);
+const KNOWN_CONCURRENCY_KEYS = new Set(["default", "max"]);
+const KNOWN_PREFERENCE_KEYS = new Set(["thinking", "timeoutMs", "maxOutputBytes", "temperature", "topP"]);
+const KNOWN_RESTRICTION_KEYS = new Set(["maxTimeoutMs", "maxOutputBytes", "denyRoles", "denyTools"]);
 const KNOWN_HOOK_KEYS = new Set(["id", "event", "roles", "kind", "timeoutMs", "maxOutputBytes", "required"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -142,6 +126,13 @@ function fail(path: string, message: string): Error {
 function checkPositiveInteger(value: unknown, path: string, minimum: number, maximum: number): number {
 	if (typeof value !== "number" || !Number.isInteger(value) || value < minimum || value > maximum) {
 		throw fail(path, `expected integer in [${minimum}, ${maximum}]`);
+	}
+	return value;
+}
+
+function checkFiniteNumber(value: unknown, path: string, minimum: number, maximum: number): number {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < minimum || value > maximum) {
+		throw fail(path, `expected finite number in [${minimum}, ${maximum}]`);
 	}
 	return value;
 }
@@ -164,6 +155,12 @@ function parsePreferenceFields(
 	const diagnostics: string[] = [];
 	const fields: IceSubagentPreferenceFields = {};
 	for (const key of Object.keys(value)) {
+		if (key === "maxTotalTokens") {
+			throw fail(`${path}.${key}`, '"maxTotalTokens" was removed; use timeoutMs/maxOutputBytes');
+		}
+		if (key === "maxTurns" || key === "maxToolCalls") {
+			throw fail(`${path}.${key}`, `"${key}" was removed; use timeoutMs/maxOutputBytes`);
+		}
 		if (!KNOWN_PREFERENCE_KEYS.has(key)) throw fail(`${path}.${key}`, `unknown preference key "${key}"`);
 	}
 	const raw = value as Record<string, unknown>;
@@ -184,22 +181,6 @@ function parsePreferenceFields(
 			ICE_SUBAGENT_SETTINGS_LIMITS.maxTimeoutMs,
 		);
 	}
-	if (raw.maxTurns !== undefined) {
-		fields.maxTurns = checkPositiveInteger(
-			raw.maxTurns,
-			`${path}.maxTurns`,
-			ICE_SUBAGENT_SETTINGS_LIMITS.minTurns,
-			ICE_SUBAGENT_SETTINGS_LIMITS.maxTurns,
-		);
-	}
-	if (raw.maxToolCalls !== undefined) {
-		fields.maxToolCalls = checkPositiveInteger(
-			raw.maxToolCalls,
-			`${path}.maxToolCalls`,
-			ICE_SUBAGENT_SETTINGS_LIMITS.minToolCalls,
-			ICE_SUBAGENT_SETTINGS_LIMITS.maxToolCalls,
-		);
-	}
 	if (raw.maxOutputBytes !== undefined) {
 		fields.maxOutputBytes = checkPositiveInteger(
 			raw.maxOutputBytes,
@@ -208,12 +189,20 @@ function parsePreferenceFields(
 			ICE_SUBAGENT_SETTINGS_LIMITS.maxOutputBytes,
 		);
 	}
-	if (raw.maxTotalTokens !== undefined) {
-		fields.maxTotalTokens = checkPositiveInteger(
-			raw.maxTotalTokens,
-			`${path}.maxTotalTokens`,
-			ICE_SUBAGENT_SETTINGS_LIMITS.minTotalTokens,
-			ICE_SUBAGENT_SETTINGS_LIMITS.maxTotalTokens,
+	if (raw.temperature !== undefined) {
+		fields.temperature = checkFiniteNumber(
+			raw.temperature,
+			`${path}.temperature`,
+			ICE_SUBAGENT_SETTINGS_LIMITS.minTemperature,
+			ICE_SUBAGENT_SETTINGS_LIMITS.maxTemperature,
+		);
+	}
+	if (raw.topP !== undefined) {
+		fields.topP = checkFiniteNumber(
+			raw.topP,
+			`${path}.topP`,
+			ICE_SUBAGENT_SETTINGS_LIMITS.minTopP,
+			ICE_SUBAGENT_SETTINGS_LIMITS.maxTopP,
 		);
 	}
 	return { fields: Object.freeze(fields), diagnostics };
@@ -227,13 +216,11 @@ export interface ParsedIceSubagentSettings {
 	restrictions: {
 		maxTimeoutMs?: number;
 		maxOutputBytes?: number;
-		maxTurns?: number;
-		maxToolCalls?: number;
-		maxTotalTokens?: number;
 		denyRoles: readonly string[];
 		denyTools: readonly string[];
 	};
 	modelSelection: { mode: "inherit-parent" | "configured" };
+	concurrency: SubagentConcurrencySettings;
 	diagnostics: readonly string[];
 }
 
@@ -246,6 +233,7 @@ export function parseIceSubagentSettings(input: unknown, path = "ice.subagents")
 			roleDefaults: Object.freeze({}),
 			restrictions: { denyRoles: Object.freeze([]), denyTools: Object.freeze([]) },
 			modelSelection: { mode: "inherit-parent" },
+			concurrency: Object.freeze({}),
 			diagnostics: Object.freeze([]),
 		};
 	}
@@ -286,15 +274,18 @@ export function parseIceSubagentSettings(input: unknown, path = "ice.subagents")
 	const restrictions = {
 		maxTimeoutMs: undefined as number | undefined,
 		maxOutputBytes: undefined as number | undefined,
-		maxTurns: undefined as number | undefined,
-		maxToolCalls: undefined as number | undefined,
-		maxTotalTokens: undefined as number | undefined,
 		denyRoles: [] as string[],
 		denyTools: [] as string[],
 	};
 	if (input.restrictions !== undefined) {
 		if (!isRecord(input.restrictions)) throw fail(`${path}.restrictions`, "expected object");
 		for (const key of Object.keys(input.restrictions)) {
+			if (key === "maxTotalTokens") {
+				throw fail(`${path}.restrictions.${key}`, '"maxTotalTokens" was removed; use timeoutMs/maxOutputBytes');
+			}
+			if (key === "maxTurns" || key === "maxToolCalls") {
+				throw fail(`${path}.restrictions.${key}`, `"${key}" was removed; use timeoutMs/maxOutputBytes`);
+			}
 			if (!KNOWN_RESTRICTION_KEYS.has(key))
 				throw fail(`${path}.restrictions.${key}`, `unknown enforcement key "${key}"`);
 		}
@@ -313,30 +304,6 @@ export function parseIceSubagentSettings(input: unknown, path = "ice.subagents")
 				`${path}.restrictions.maxOutputBytes`,
 				ICE_SUBAGENT_SETTINGS_LIMITS.minOutputBytes,
 				ICE_SUBAGENT_SETTINGS_LIMITS.maxOutputBytes,
-			);
-		}
-		if (raw.maxTurns !== undefined) {
-			restrictions.maxTurns = checkPositiveInteger(
-				raw.maxTurns,
-				`${path}.restrictions.maxTurns`,
-				ICE_SUBAGENT_SETTINGS_LIMITS.minTurns,
-				ICE_SUBAGENT_SETTINGS_LIMITS.maxTurns,
-			);
-		}
-		if (raw.maxToolCalls !== undefined) {
-			restrictions.maxToolCalls = checkPositiveInteger(
-				raw.maxToolCalls,
-				`${path}.restrictions.maxToolCalls`,
-				ICE_SUBAGENT_SETTINGS_LIMITS.minToolCalls,
-				ICE_SUBAGENT_SETTINGS_LIMITS.maxToolCalls,
-			);
-		}
-		if (raw.maxTotalTokens !== undefined) {
-			restrictions.maxTotalTokens = checkPositiveInteger(
-				raw.maxTotalTokens,
-				`${path}.restrictions.maxTotalTokens`,
-				ICE_SUBAGENT_SETTINGS_LIMITS.minTotalTokens,
-				ICE_SUBAGENT_SETTINGS_LIMITS.maxTotalTokens,
 			);
 		}
 		if (raw.denyRoles !== undefined) {
@@ -376,6 +343,31 @@ export function parseIceSubagentSettings(input: unknown, path = "ice.subagents")
 		modelSelection = { mode: mode === "configured" ? "configured" : "inherit-parent" };
 		if (mode === "configured") diagnostics.push("explicit child routing requires host-owned global approval");
 	}
+	let concurrency: SubagentConcurrencySettings = {};
+	if (input.concurrency !== undefined) {
+		if (!isRecord(input.concurrency)) throw fail(`${path}.concurrency`, "expected object");
+		for (const key of Object.keys(input.concurrency)) {
+			if (!KNOWN_CONCURRENCY_KEYS.has(key)) throw fail(`${path}.concurrency.${key}`, `unknown key "${key}"`);
+		}
+		const raw = input.concurrency as Record<string, unknown>;
+		if (raw.default !== undefined) {
+			concurrency.default = checkPositiveInteger(
+				raw.default,
+				`${path}.concurrency.default`,
+				SUBAGENT_CONCURRENCY_LIMITS.min,
+				SUBAGENT_CONCURRENCY_LIMITS.hardCap,
+			);
+		}
+		if (raw.max !== undefined) {
+			concurrency.max = checkPositiveInteger(
+				raw.max,
+				`${path}.concurrency.max`,
+				SUBAGENT_CONCURRENCY_LIMITS.min,
+				SUBAGENT_CONCURRENCY_LIMITS.hardCap,
+			);
+		}
+		concurrency = Object.freeze(concurrency);
+	}
 	return {
 		enabled,
 		defaults,
@@ -387,6 +379,7 @@ export function parseIceSubagentSettings(input: unknown, path = "ice.subagents")
 			denyTools: Object.freeze(restrictions.denyTools),
 		}),
 		modelSelection,
+		concurrency,
 		diagnostics: Object.freeze(diagnostics),
 	};
 }
@@ -571,10 +564,9 @@ export interface IceResolvedSubagentContract {
 	enabled: boolean;
 	thinking: IceResolvedField<SubagentThinkingLevel>;
 	timeoutMs: IceResolvedField<number>;
-	maxTurns: IceResolvedField<number>;
-	maxToolCalls: IceResolvedField<number>;
 	maxOutputBytes: IceResolvedField<number>;
-	maxTotalTokens: IceResolvedField<number | undefined>;
+	temperature: IceResolvedField<number | undefined>;
+	topP: IceResolvedField<number | undefined>;
 	allowedRoles: IceResolvedField<readonly string[] | undefined>;
 	role: IceResolvedField<string>;
 	diagnostics: readonly string[];
@@ -583,19 +575,17 @@ export interface IceResolvedSubagentContract {
 	values: {
 		thinking: SubagentThinkingLevel;
 		timeoutMs: number;
-		maxTurns: number;
-		maxToolCalls: number;
 		maxOutputBytes: number;
-		maxTotalTokens?: number;
+		temperature?: number;
+		topP?: number;
 	};
 	/** W06: legacy flat projection for compact consumers (sources only). */
 	sources: {
 		thinking: IceSettingSource;
 		timeoutMs: IceSettingSource;
-		maxTurns: IceSettingSource;
-		maxToolCalls: IceSettingSource;
 		maxOutputBytes: IceSettingSource;
-		maxTotalTokens: IceSettingSource;
+		temperature: IceSettingSource;
+		topP: IceSettingSource;
 	};
 	/** W06: caps that clamped a preference value (empty when none applied). */
 	restrictionsApplied: readonly string[];
@@ -628,8 +618,6 @@ export interface IceResolverInput {
 const BUNDLED_CONTRACT_DEFAULTS: IceSubagentPreferenceFields = Object.freeze({
 	thinking: "medium",
 	timeoutMs: 120_000,
-	maxTurns: 12,
-	maxToolCalls: 40,
 	maxOutputBytes: 24_576,
 });
 
@@ -748,11 +736,9 @@ export function resolveIceSubagentContract(input: IceResolverInput): IceResolved
 	const call = input.call ?? {};
 	const thinking = resolveField("thinking", call.thinking);
 	const timeoutMs = resolveField("timeoutMs", call.timeoutMs);
-	const maxTurns = resolveField("maxTurns", call.maxTurns);
-	const maxToolCalls = resolveField("maxToolCalls", call.maxToolCalls);
 	const maxOutputBytes = resolveField("maxOutputBytes", call.maxOutputBytes);
 	const resolveOptionalField = (
-		key: "maxTotalTokens",
+		key: "temperature" | "topP",
 		callValue: number | undefined,
 	): IceResolvedField<number | undefined> => {
 		let value: number | undefined = bundled[key];
@@ -778,43 +764,24 @@ export function resolveIceSubagentContract(input: IceResolverInput): IceResolved
 		}
 		return { value, source };
 	};
-	const maxTotalTokens = resolveOptionalField("maxTotalTokens", call.maxTotalTokens);
+	const temperature = resolveOptionalField("temperature", call.temperature);
+	const topP = resolveOptionalField("topP", call.topP);
 
 	// W06: enforced hard caps use the most restrictive applicable cap and are not
 	// another preference layer. Preference values above a cap are clamped with an
 	// explicit diagnostic; the enforced source label records the restriction.
 	const caps: Array<{
-		key: "timeoutMs" | "maxTurns" | "maxToolCalls" | "maxOutputBytes" | "maxTotalTokens";
+		key: "timeoutMs" | "maxOutputBytes";
 		values: Array<number | undefined>;
 	}> = [
 		{ key: "timeoutMs", values: [globalParsed.restrictions.maxTimeoutMs, projectParsed.restrictions.maxTimeoutMs] },
-		{ key: "maxTurns", values: [globalParsed.restrictions.maxTurns, projectParsed.restrictions.maxTurns] },
-		{
-			key: "maxToolCalls",
-			values: [globalParsed.restrictions.maxToolCalls, projectParsed.restrictions.maxToolCalls],
-		},
 		{
 			key: "maxOutputBytes",
 			values: [globalParsed.restrictions.maxOutputBytes, projectParsed.restrictions.maxOutputBytes],
 		},
-		{
-			key: "maxTotalTokens",
-			values: [globalParsed.restrictions.maxTotalTokens, projectParsed.restrictions.maxTotalTokens],
-		},
 	];
 	const resolvedTimeoutMs: IceResolvedField<number> = timeoutMs;
-	const resolvedMaxTurns: IceResolvedField<number> = maxTurns;
-	const resolvedMaxToolCalls: IceResolvedField<number> = maxToolCalls;
 	const resolvedMaxOutputBytes: IceResolvedField<number> = maxOutputBytes;
-	const clampOptionalToCap = (
-		field: IceResolvedField<number | undefined>,
-		cap: number,
-		key: string,
-	): IceResolvedField<number | undefined> => {
-		if (field.value === undefined || field.value <= cap) return field;
-		diagnostics.push(`${key} clamped to enforced cap ${cap} (requested ${field.value} from ${field.source})`);
-		return { value: cap, source: "enforced" };
-	};
 	const clampToCap = (field: IceResolvedField<number>, cap: number, key: string): IceResolvedField<number> => {
 		if (field.value <= cap) return field;
 		diagnostics.push(`${key} clamped to enforced cap ${cap} (requested ${field.value} from ${field.source})`);
@@ -826,29 +793,11 @@ export function resolveIceSubagentContract(input: IceResolverInput): IceResolved
 			? resolvedTimeoutMs
 			: clampToCap(resolvedTimeoutMs, Math.min(...applicable), "timeoutMs");
 	})();
-	const cappedMaxTurns = (() => {
-		const applicable = caps[1]!.values.filter((value): value is number => value !== undefined);
-		return applicable.length === 0
-			? resolvedMaxTurns
-			: clampToCap(resolvedMaxTurns, Math.min(...applicable), "maxTurns");
-	})();
-	const cappedMaxToolCalls = (() => {
-		const applicable = caps[2]!.values.filter((value): value is number => value !== undefined);
-		return applicable.length === 0
-			? resolvedMaxToolCalls
-			: clampToCap(resolvedMaxToolCalls, Math.min(...applicable), "maxToolCalls");
-	})();
 	const cappedMaxOutputBytes = (() => {
-		const applicable = caps[3]!.values.filter((value): value is number => value !== undefined);
+		const applicable = caps[1]!.values.filter((value): value is number => value !== undefined);
 		return applicable.length === 0
 			? resolvedMaxOutputBytes
 			: clampToCap(resolvedMaxOutputBytes, Math.min(...applicable), "maxOutputBytes");
-	})();
-	const cappedMaxTotalTokens = (() => {
-		const applicable = caps[4]!.values.filter((value): value is number => value !== undefined);
-		return applicable.length === 0
-			? maxTotalTokens
-			: clampOptionalToCap(maxTotalTokens, Math.min(...applicable), "maxTotalTokens");
 	})();
 
 	// W06: allowed roles intersect across layers; project narrowing can never
@@ -878,21 +827,16 @@ export function resolveIceSubagentContract(input: IceResolverInput): IceResolved
 		};
 	}
 	const restrictionsApplied = diagnostics.some((entry) => entry.includes("timeoutMs clamped")) ? ["timeoutMs"] : [];
-	if (diagnostics.some((entry) => entry.includes("maxTurns clamped"))) restrictionsApplied.push("maxTurns");
-	if (diagnostics.some((entry) => entry.includes("maxToolCalls clamped"))) restrictionsApplied.push("maxToolCalls");
 	if (diagnostics.some((entry) => entry.includes("maxOutputBytes clamped")))
 		restrictionsApplied.push("maxOutputBytes");
-	if (diagnostics.some((entry) => entry.includes("maxTotalTokens clamped")))
-		restrictionsApplied.push("maxTotalTokens");
 
 	const contract: IceResolvedSubagentContract = {
 		enabled,
 		thinking,
 		timeoutMs: cappedTimeoutMs,
-		maxTurns: cappedMaxTurns,
-		maxToolCalls: cappedMaxToolCalls,
 		maxOutputBytes: cappedMaxOutputBytes,
-		maxTotalTokens: cappedMaxTotalTokens,
+		temperature,
+		topP,
 		allowedRoles: {
 			value: allowedRoles,
 			source: projectParsed.allowedRoles && projectParsed.allowedRoles.length > 0 ? "project" : "global",
@@ -904,18 +848,16 @@ export function resolveIceSubagentContract(input: IceResolverInput): IceResolved
 		values: {
 			thinking: thinking.value,
 			timeoutMs: cappedTimeoutMs.value,
-			maxTurns: cappedMaxTurns.value,
-			maxToolCalls: cappedMaxToolCalls.value,
 			maxOutputBytes: cappedMaxOutputBytes.value,
-			...(cappedMaxTotalTokens.value !== undefined ? { maxTotalTokens: cappedMaxTotalTokens.value } : {}),
+			...(temperature.value !== undefined ? { temperature: temperature.value } : {}),
+			...(topP.value !== undefined ? { topP: topP.value } : {}),
 		},
 		sources: {
 			thinking: thinking.source,
 			timeoutMs: cappedTimeoutMs.source,
-			maxTurns: cappedMaxTurns.source,
-			maxToolCalls: cappedMaxToolCalls.source,
 			maxOutputBytes: cappedMaxOutputBytes.source,
-			maxTotalTokens: cappedMaxTotalTokens.source,
+			temperature: temperature.source,
+			topP: topP.source,
 		},
 		restrictionsApplied: Object.freeze(restrictionsApplied),
 		...(denied ? { denied } : {}),

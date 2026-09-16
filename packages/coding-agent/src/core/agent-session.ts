@@ -61,6 +61,7 @@ import {
 	estimateContextTokens,
 	estimateTokens,
 	generateBranchSummary,
+	isPastMidRunSafetyNet,
 	modelAwareReserveTokens,
 	prepareCompaction,
 	shouldCompact,
@@ -616,9 +617,26 @@ export class AgentSession {
 
 	// Track last assistant message for auto-compaction check
 	private _lastAssistantMessage: AssistantMessage | undefined = undefined;
+	/**
+	 * A failed assistant response is retry-safe only before any tool effect may
+	 * have been committed for that response. Reset at each assistant message and
+	 * mark on the first tool lifecycle event so uncertain effects fail closed.
+	 */
+	private _assistantToolEffectMayHaveCommitted = false;
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = async (event: AgentEvent): Promise<void> => {
+		if (event.type === "agent_start" || (event.type === "message_start" && event.message.role === "assistant")) {
+			this._assistantToolEffectMayHaveCommitted = false;
+		} else if (
+			event.type === "tool_execution_start" ||
+			event.type === "tool_execution_update" ||
+			event.type === "tool_execution_end" ||
+			(event.type === "message_start" && event.message.role === "toolResult")
+		) {
+			this._assistantToolEffectMayHaveCommitted = true;
+		}
+
 		// When a user message starts, check if it's from either queue and remove it BEFORE emitting
 		// This ensures the UI sees the updated queue state
 		if (event.type === "message_start" && event.message.role === "user") {
@@ -1566,6 +1584,7 @@ export class AgentSession {
 	 */
 	async abort(): Promise<void> {
 		this.abortRetry();
+		this.abortCompaction();
 		this.agent.abort();
 		await this.waitForIdle();
 	}
@@ -2008,6 +2027,11 @@ export class AgentSession {
 	 * Compact at a clean tool-turn boundary before the agent loop starts another provider request.
 	 * Returns true only when a compaction entry was written, so failed/cancelled compactions do not
 	 * stop the loop without a continuation path.
+	 *
+	 * Mid-run compaction is opt-in ("pause"/"resume"), but a safety net applies even when it is
+	 * "off": past the hard 95% ceiling the next tool turn compacts anyway (and the run pauses),
+	 * because a single uninterrupted run would otherwise climb into near-certain overflow with no
+	 * boundary check until the request fails.
 	 */
 	private async _compactBeforeNextTurn(
 		messages: AgentMessage[],
@@ -2017,7 +2041,6 @@ export class AgentSession {
 		const settings = this.settingsManager.getCompactionSettings();
 		if (
 			toolResultCount === 0 ||
-			settings.midRunCompaction === "off" ||
 			!settings.enabled ||
 			!this.model ||
 			signal?.aborted ||
@@ -2028,7 +2051,13 @@ export class AgentSession {
 		}
 
 		const contextTokens = estimateContextTokens(messages).tokens;
-		if (!shouldCompact(contextTokens, this.model.contextWindow, settings)) {
+		const thresholdReached = shouldCompact(contextTokens, this.model.contextWindow, settings);
+		const safetyNetReached =
+			settings.midRunCompaction === "off" && isPastMidRunSafetyNet(contextTokens, this.model.contextWindow);
+		if (settings.midRunCompaction === "off" && !safetyNetReached) {
+			return false;
+		}
+		if (!thresholdReached && !safetyNetReached) {
 			return false;
 		}
 
@@ -2750,6 +2779,10 @@ export class AgentSession {
 	private _isRetryableError(message: AssistantMessage): boolean {
 		// Context overflow is handled by compaction, not retry.
 		if (isContextOverflow(message, this.model?.contextWindow ?? 0)) return false;
+		// A partial/failed tool call is not safe to replay: the provider or transport
+		// may have committed an effect even though the assistant turn did not finish.
+		if (message.content.some((block) => block.type === "toolCall")) return false;
+		if (this._assistantToolEffectMayHaveCommitted) return false;
 		return isRetryableAssistantError(message);
 	}
 

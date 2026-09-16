@@ -1,10 +1,26 @@
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import type { AgentSession } from "./core/agent-session.ts";
-import type { SubagentRuntimeAttention } from "./ice-subagent-timeout-supervisor.ts";
+import type { SubagentRetryState, SubagentRuntimeAttention } from "./ice-subagent-timeout-supervisor.ts";
 import { redactCredentialText } from "./utils/redact.ts";
 
 export type IceAgentViewKind = "parent" | "subagent" | "historical-subagent";
 export type IceAgentViewAuthority = "safe" | "yolo";
+
+/** Bounded semantic theme tokens accepted by subagent profile presentation metadata. */
+export const SUBAGENT_PROFILE_COLORS = ["accent", "success", "warning", "error", "muted", "dim", "text"] as const;
+export type SubagentProfileColor = (typeof SUBAGENT_PROFILE_COLORS)[number];
+
+export function isSubagentProfileColor(value: unknown): value is SubagentProfileColor {
+	return typeof value === "string" && SUBAGENT_PROFILE_COLORS.includes(value as SubagentProfileColor);
+}
+
+/** View-facing aliases retain the bridge vocabulary without widening the profile contract. */
+export const ICE_AGENT_VIEW_COLORS = SUBAGENT_PROFILE_COLORS;
+export type IceAgentViewColor = SubagentProfileColor;
+
+export function isIceAgentViewColor(value: unknown): value is IceAgentViewColor {
+	return isSubagentProfileColor(value);
+}
 
 export interface IceAgentViewFinalResult {
 	readonly status: string;
@@ -26,14 +42,23 @@ export interface IceAgentViewPresentation {
 	readonly handoffMessageMarker?: string;
 	readonly finalizationMessageMarker?: string;
 	readonly timeoutContinuationMessageMarker?: string;
+	/** Marker for the internal timeout wrap-up prompt; hidden from child views. */
+	readonly wrapUpMessageMarker?: string;
 	readonly handoffMessageIndex?: number;
 	readonly finalizationMessageIndex?: number;
+	readonly wrapUpMessageIndex?: number;
 	readonly finalReportMessageIndex?: number;
 	/** True while the child is expected to emit an internal machine report. */
 	readonly protocolReportPending?: boolean;
+	/** True while the child AgentSession is compacting its in-memory transcript. */
+	readonly compacting?: boolean;
 	readonly finalizationStarted?: boolean;
+	/** How the child's final answer is ingested; plain mode performs no structured verification. */
+	readonly reportMode?: "plain_final_turn" | "structured_report";
 	/** Bounded, redacted runtime state for a live child awaiting a time decision. */
 	readonly runtimeAttention?: SubagentRuntimeAttention;
+	/** Bounded provider retry lifecycle state; observational only. */
+	readonly retry?: SubagentRetryState;
 	readonly finalResult?: IceAgentViewFinalResult;
 }
 
@@ -84,10 +109,12 @@ export interface IceAgentViewDescriptor {
 	readonly taskId?: string;
 	readonly session?: AgentSession;
 	readonly live: boolean;
+	readonly retentionState?: "reusable" | "history-only";
 	readonly readOnly: boolean;
 	readonly interactionMode?: IceAgentViewInteractionMode;
 	readonly controlState?: IceAgentViewControlState;
 	readonly authority?: IceAgentViewAuthority;
+	readonly color?: IceAgentViewColor;
 	readonly model?: string;
 	readonly status?: string;
 	readonly cwd?: string;
@@ -103,6 +130,7 @@ export interface IceAgentViewLiveSession {
 	readonly taskId?: string;
 	readonly model?: string;
 	readonly authority?: IceAgentViewAuthority;
+	readonly color?: IceAgentViewColor;
 	readonly presentation?: IceAgentViewPresentation;
 	readonly session: AgentSession;
 	readonly control?: IceAgentViewLiveSessionControl;
@@ -125,7 +153,9 @@ export interface IceAgentViewSnapshotInput {
 	readonly role: string;
 	readonly model?: string;
 	readonly status: string;
+	readonly retentionState?: "reusable" | "history-only";
 	readonly authority?: IceAgentViewAuthority;
+	readonly color?: IceAgentViewColor;
 	readonly startedAt?: number;
 	readonly finishedAt: number;
 	readonly messages: readonly AgentMessage[];
@@ -243,7 +273,11 @@ function normalizeRuntimeAttention(input: unknown): SubagentRuntimeAttention | u
 	const phase = input.phase;
 	if (
 		(state !== "running" && state !== "awaiting_extension" && state !== "terminal") ||
-		(phase !== "startup" && phase !== "working" && phase !== "controlled_wait" && phase !== "finalization")
+		(phase !== "startup" &&
+			phase !== "working" &&
+			phase !== "wrapping_up" &&
+			phase !== "controlled_wait" &&
+			phase !== "finalization")
 	) {
 		return undefined;
 	}
@@ -253,6 +287,7 @@ function normalizeRuntimeAttention(input: unknown): SubagentRuntimeAttention | u
 	const totalExtendedMs = boundedRuntimeNumber(input.totalExtendedMs);
 	const extensionCount = boundedRuntimeNumber(input.extensionCount);
 	const remainingExtendableMs = boundedRuntimeNumber(input.remainingExtendableMs);
+	const remainingRetentionMs = boundedRuntimeNumber(input.remainingRetentionMs);
 	if (
 		initialTimeoutMs === undefined ||
 		activeBudgetMs === undefined ||
@@ -355,6 +390,7 @@ function normalizeRuntimeAttention(input: unknown): SubagentRuntimeAttention | u
 		totalExtendedMs,
 		extensionCount,
 		remainingExtendableMs,
+		...(remainingRetentionMs !== undefined ? { remainingRetentionMs } : {}),
 		...(progressAgeMs !== undefined ? { progressAgeMs } : {}),
 		...(lastProgressAtMs !== undefined ? { lastProgressAtMs } : {}),
 		...(decisionDeadlineAtMs !== undefined ? { decisionDeadlineAtMs } : {}),
@@ -381,6 +417,10 @@ export function normalizeIceAgentViewPresentation(
 				.map((label) => truncatePresentationText(label, MAX_PRESENTATION_LABEL_BYTES))
 		: undefined;
 	const authority = input.authority === "safe" || input.authority === "yolo" ? input.authority : undefined;
+	const reportMode =
+		input.reportMode === "plain_final_turn" || input.reportMode === "structured_report"
+			? input.reportMode
+			: undefined;
 	const handoffMessageMarker =
 		typeof input.handoffMessageMarker === "string"
 			? truncatePresentationText(input.handoffMessageMarker, MAX_PRESENTATION_LABEL_BYTES)
@@ -393,7 +433,34 @@ export function normalizeIceAgentViewPresentation(
 		typeof input.timeoutContinuationMessageMarker === "string"
 			? truncatePresentationText(input.timeoutContinuationMessageMarker, MAX_PRESENTATION_LABEL_BYTES)
 			: undefined;
+	const wrapUpMessageMarker =
+		typeof input.wrapUpMessageMarker === "string"
+			? truncatePresentationText(input.wrapUpMessageMarker, MAX_PRESENTATION_LABEL_BYTES)
+			: undefined;
 	const runtimeAttention = normalizeRuntimeAttention(input.runtimeAttention);
+	const retryInput = isRecord(input.retry) ? input.retry : undefined;
+	const retryState = retryInput?.state;
+	const retryAttempt = retryInput ? boundedRuntimeNumber(retryInput.attempt, 64) : undefined;
+	const retryMaxAttempts = retryInput ? boundedRuntimeNumber(retryInput.maxAttempts, 64) : undefined;
+	const retryDelayMs = retryInput ? boundedRuntimeNumber(retryInput.delayMs, 10 * 60 * 1_000) : undefined;
+	const retryDiagnostic =
+		retryInput && typeof retryInput.diagnostic === "string"
+			? truncatePresentationText(retryInput.diagnostic, MAX_PRESENTATION_TEXT_BYTES)
+			: undefined;
+	const retry: SubagentRetryState | undefined =
+		(retryState === "scheduled" || retryState === "recovered" || retryState === "failed") &&
+		retryAttempt !== undefined &&
+		retryMaxAttempts !== undefined &&
+		retryAttempt > 0 &&
+		retryMaxAttempts > 0
+			? {
+					state: retryState,
+					attempt: retryAttempt,
+					maxAttempts: retryMaxAttempts,
+					...(retryDelayMs !== undefined ? { delayMs: retryDelayMs } : {}),
+					...(retryDiagnostic ? { diagnostic: retryDiagnostic } : {}),
+				}
+			: undefined;
 	const finalResultInput = isRecord(input.finalResult) ? input.finalResult : undefined;
 	const finalStatus =
 		finalResultInput && typeof finalResultInput.status === "string"
@@ -423,6 +490,7 @@ export function normalizeIceAgentViewPresentation(
 		: undefined;
 	const handoffMessageIndex = presentationIndex(input.handoffMessageIndex, sourceIndices);
 	const finalizationMessageIndex = presentationIndex(input.finalizationMessageIndex, sourceIndices);
+	const wrapUpMessageIndex = presentationIndex(input.wrapUpMessageIndex, sourceIndices);
 	const finalReportMessageIndex = presentationIndex(input.finalReportMessageIndex, sourceIndices);
 	const normalized: IceAgentViewPresentation = {
 		...(delegatedTask ? { delegatedTask } : {}),
@@ -431,14 +499,19 @@ export function normalizeIceAgentViewPresentation(
 		...(handoffMessageMarker ? { handoffMessageMarker } : {}),
 		...(finalizationMessageMarker ? { finalizationMessageMarker } : {}),
 		...(timeoutContinuationMessageMarker ? { timeoutContinuationMessageMarker } : {}),
+		...(wrapUpMessageMarker ? { wrapUpMessageMarker } : {}),
 		...(handoffMessageIndex !== undefined ? { handoffMessageIndex } : {}),
 		...(finalizationMessageIndex !== undefined ? { finalizationMessageIndex } : {}),
+		...(wrapUpMessageIndex !== undefined ? { wrapUpMessageIndex } : {}),
 		...(finalReportMessageIndex !== undefined ? { finalReportMessageIndex } : {}),
 		...(typeof input.protocolReportPending === "boolean"
 			? { protocolReportPending: input.protocolReportPending }
 			: {}),
+		...(typeof input.compacting === "boolean" ? { compacting: input.compacting } : {}),
 		...(typeof input.finalizationStarted === "boolean" ? { finalizationStarted: input.finalizationStarted } : {}),
+		...(reportMode ? { reportMode } : {}),
 		...(runtimeAttention ? { runtimeAttention } : {}),
+		...(retry ? { retry } : {}),
 		...(finalResult ? { finalResult } : {}),
 	};
 	return Object.keys(normalized).length > 0 ? (deepFreezeSnapshot(normalized) as IceAgentViewPresentation) : undefined;
@@ -491,10 +564,19 @@ export class IceAgentViewBridge {
 		this.publish();
 	}
 
+	/** Stage 4: drop a retained historical snapshot so a deleted child cannot be resurrected. */
+	removeHistoricalSnapshot(runId: string): boolean {
+		const removed = this.historical.delete(runId);
+		this.interactionModes.delete(runId);
+		if (removed) this.publish();
+		return removed;
+	}
+
 	registerHistoricalSnapshot(input: IceAgentViewSnapshotInput): void {
 		const id = input.runId;
 		const clonedMessages = cloneBoundedMessages(input.messages);
 		const presentation = normalizeIceAgentViewPresentation(input.presentation, clonedMessages.sourceIndices);
+		const color = isIceAgentViewColor(input.color) ? input.color : undefined;
 		// Re-registering a run makes it the newest retained snapshot.
 		this.historical.delete(id);
 		this.interactionModes.delete(id);
@@ -508,9 +590,11 @@ export class IceAgentViewBridge {
 				runId: input.runId,
 				taskId: input.taskId,
 				live: false,
+				retentionState: input.retentionState ?? "history-only",
 				readOnly: true,
 				interactionMode: "mirror" as const,
 				authority: input.authority,
+				...(color ? { color } : {}),
 				model: input.model,
 				status: input.status,
 				cwd: input.cwd,
@@ -583,6 +667,7 @@ export class IceAgentViewBridge {
 				interactionMode,
 				controlState,
 				authority: entry.authority,
+				color: entry.color,
 				presentation: runtimeAttention
 					? normalizeIceAgentViewPresentation({ ...entry.presentation, runtimeAttention })
 					: entry.presentation,

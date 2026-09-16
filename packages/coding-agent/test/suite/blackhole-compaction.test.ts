@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, AgentTool } from "@zykairotis/ice-agent-core";
 import { type AssistantMessage, type Context, fauxAssistantMessage, fauxToolCall } from "@zykairotis/ice-ai";
-import type { ExtensionAPI } from "@zykairotis/ice-coding-agent";
+import type { ExtensionAPI, SessionEntry } from "@zykairotis/ice-coding-agent";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import iceBlackholeExtension from "../../examples/extensions/ice-blackhole/index.ts";
@@ -64,8 +64,9 @@ describe("optional Blackhole compaction extension", () => {
 			"memory",
 		]);
 		const threshold = settings?.items.find((item) => item.id === "threshold");
-		expect(threshold?.label).toBe("Blackhole token threshold");
+		expect(threshold?.label).toBe("Blackhole compaction threshold");
 		expect(threshold?.values).toContain("25%");
+		expect(threshold?.currentValue).toBe(`${loadConfig().compactAfterPercent}%`);
 		settings?.onChange("threshold", "25%");
 		expect(loadConfig().compactAfterPercent).toBe(25);
 		expect(loadConfig().midRunCompaction).toBe("resume");
@@ -228,6 +229,71 @@ describe("optional Blackhole compaction extension", () => {
 				details: { engine: "blackhole", tailBehavior: "minimal" },
 			},
 		});
+	});
+
+	it("lists running background subagent jobs and recent actions in the summary", async () => {
+		configureBlackhole();
+		const harness = await createHarness({ extensionFactories: [iceBlackholeExtension] });
+		harnesses.push(harness);
+		const branchEntries = [
+			{
+				type: "custom",
+				id: "job-1",
+				parentId: null,
+				timestamp: new Date().toISOString(),
+				customType: "ice-subagent-job-v1",
+				data: {
+					schemaVersion: 1,
+					sequence: 1,
+					job: { jobId: "job-1", role: "explore", status: "running", createdAt: new Date().toISOString() },
+				},
+			},
+			{
+				type: "message",
+				id: "keep-entry",
+				parentId: "job-1",
+				timestamp: new Date().toISOString(),
+				message: { role: "user", content: "recent user turn", timestamp: Date.now() } as AgentMessage,
+			},
+		] as SessionEntry[];
+		const result = await harness.session.extensionRunner.emit({
+			type: "session_before_compact",
+			preparation: {
+				firstKeptEntryId: "keep-entry",
+				messagesToSummarize: [
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", name: "Read", arguments: { file_path: "/tmp/a.ts" } }],
+						timestamp: Date.now(),
+					} as unknown as AgentMessage,
+					{
+						role: "toolResult",
+						toolName: "Read",
+						content: "file body",
+						isError: false,
+						timestamp: Date.now(),
+					} as unknown as AgentMessage,
+				],
+				turnPrefixMessages: [],
+				isSplitTurn: false,
+				tokensBefore: 40000,
+				fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+				settings: { enabled: true, reserveTokens: 0, keepRecentTokens: 20000 },
+			},
+			branchEntries,
+			reason: "manual",
+			willRetry: false,
+			signal: new AbortController().signal,
+		} as SessionBeforeCompactEvent);
+		expect(result).toMatchObject({
+			compaction: {
+				details: { engine: "blackhole", runningAgents: 1 },
+			},
+		});
+		expect(result?.compaction?.summary).toContain("[Running Agents]");
+		expect(result?.compaction?.summary).toContain("explore (running) job job-1: re-check via inspect_subagent_job");
+		expect(result?.compaction?.summary).toContain("[Last Actions]");
+		expect(result?.compaction?.summary).toContain('Read "/tmp/a.ts"');
 	});
 
 	it("uses the last compaction summary when Blackhole and Cognee are both enabled", async () => {

@@ -272,6 +272,21 @@ describe("openai-responses provider defaults", () => {
 		expect(captured.clientRequestId).toBe("session-123");
 	});
 
+	it("uses promptCacheKey in the payload while keeping session affinity separate", async () => {
+		let capturedPayload: CapturedResponsesPayload | undefined;
+		const captured = await captureOpenAIResponseHeaders({
+			sessionId: "child-session",
+			promptCacheKey: "shared-fork-prefix",
+			onPayload: (payload) => {
+				capturedPayload = payload as CapturedResponsesPayload;
+			},
+		});
+
+		expect(capturedPayload?.prompt_cache_key).toBe("shared-fork-prefix");
+		expect(captured.sessionId).toBe("child-session");
+		expect(captured.clientRequestId).toBe("child-session");
+	});
+
 	it("clamps prompt_cache_key to OpenAI's 64-character limit", async () => {
 		const sessionId = "x".repeat(67);
 		let capturedPayload: Pick<CapturedResponsesPayload, "prompt_cache_key"> | undefined;
@@ -574,11 +589,20 @@ describe("openai-responses provider defaults", () => {
 		expect(captured.clientRequestId).toBe("override-request");
 	});
 
-	it("omits OpenAI cache-affinity headers when cacheRetention is none", async () => {
-		const captured = await captureOpenAIResponseHeaders({ cacheRetention: "none", sessionId: "session-123" });
+	it("omits OpenAI cache-affinity headers and keys when cacheRetention is none", async () => {
+		let capturedPayload: CapturedResponsesPayload | undefined;
+		const captured = await captureOpenAIResponseHeaders({
+			cacheRetention: "none",
+			sessionId: "session-123",
+			promptCacheKey: "shared-fork-prefix",
+			onPayload: (payload) => {
+				capturedPayload = payload as CapturedResponsesPayload;
+			},
+		});
 
 		expect(captured.sessionId).toBeNull();
 		expect(captured.clientRequestId).toBeNull();
+		expect(capturedPayload?.prompt_cache_key).toBeUndefined();
 	});
 
 	it.each([
