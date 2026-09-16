@@ -30,6 +30,7 @@ import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { readIceManifest } from "../ice-manifest.ts";
+import { LEGACY_PI_EXTENSION_ALIASES } from "../legacy-compat/extension-aliases.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { time } from "../timings.ts";
 import type {
@@ -46,28 +47,6 @@ import type {
 	RegisteredSettings,
 	ToolDefinition,
 } from "./types.ts";
-
-/**
- * Current upstream pi specifiers mapped to their ICE equivalents.
- *
- * Upstream pi extensions import from `@earendil-works/*`. ICE renamed those
- * packages to `@zykairotis/ice-*`, so without this mapping pi packages
- * install but fail to load with a module-resolution error.
- *
- * Exact keys only: the pi-ai root resolves to the compat entrypoint (a
- * strict superset of the core entrypoint), so a prefix rewrite would send it
- * to the wrong module. Unknown subpaths fail loudly instead of mis-resolving.
- * `@mariozechner/pi-*` stays deliberately unresolved (no-legacy contract).
- */
-const UPSTREAM_PI_ALIASES = {
-	"@earendil-works/pi-coding-agent": "@zykairotis/ice-coding-agent",
-	"@earendil-works/pi-agent-core": "@zykairotis/ice-agent-core",
-	"@earendil-works/pi-tui": "@zykairotis/ice-tui",
-	"@earendil-works/pi-ai": "@zykairotis/ice-ai",
-	"@earendil-works/pi-ai/compat": "@zykairotis/ice-ai/compat",
-	"@earendil-works/pi-ai/oauth": "@zykairotis/ice-ai/oauth",
-	"@earendil-works/pi-ai/providers/all": "@zykairotis/ice-ai/providers/all",
-} as const;
 
 /** Modules available to extensions via virtualModules (for compiled Bun binary) */
 const VIRTUAL_MODULES: Record<string, unknown> = {
@@ -89,33 +68,37 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@zykairotis/ice-coding-agent": _bundledIceCodingAgent,
 };
 
-// Upstream pi specifiers reuse the already-bundled ICE modules (no extra
-// bundle weight): each pi key points at the same object as its ice target.
-applyUpstreamPiAliases(VIRTUAL_MODULES);
+// Approved historical Pi specifiers reuse the already-bundled ICE modules
+// (no extra bundle weight): each legacy key points at the same object as its
+// ICE target.
+applyLegacyPiAliases(VIRTUAL_MODULES);
 
 const require = createRequire(import.meta.url);
 
 const isTypeScriptSourceRuntime = !isBunBinary && path.extname(fileURLToPath(import.meta.url)) === ".ts";
 
 /**
- * Overlay upstream pi specifiers onto a base map that already defines every
- * `@zykairotis/ice-*` target. Each pi key reuses the existing target value
- * rather than resolving a separate module, so a target absent from the base
- * map is a development error, not a silent `undefined`.
+ * Overlay approved historical Pi specifiers onto a base map that already
+ * defines every `@zykairotis/ice-*` target. Each legacy key reuses the existing
+ * target value rather than resolving a separate module, so a target absent
+ * from the base map is a development error, not a silent `undefined`.
  */
-function applyUpstreamPiAliases<V>(base: Record<string, V>): Record<string, V> {
-	for (const [piSpecifier, iceSpecifier] of Object.entries(UPSTREAM_PI_ALIASES)) {
+function applyLegacyPiAliases<V>(base: Record<string, V>): Record<string, V> {
+	for (const [legacySpecifier, iceSpecifier] of Object.entries(LEGACY_PI_EXTENSION_ALIASES)) {
 		if (!(iceSpecifier in base)) {
-			throw new Error(`Unresolved pi alias target: ${piSpecifier} -> ${iceSpecifier}`);
+			throw new Error(`Unresolved legacy Pi alias target: ${legacySpecifier} -> ${iceSpecifier}`);
 		}
-		base[piSpecifier] = base[iceSpecifier];
+		base[legacySpecifier] = base[iceSpecifier];
 	}
 	return base;
 }
 
 /**
- * Get aliases for jiti (used in built Node.js mode).
- * In Bun binary mode, virtualModules is used instead.
+ * Get canonical built-path aliases for Jiti's Node.js runtime.
+ *
+ * Historical Pi specifiers deliberately do not live here: Jiti treats alias
+ * keys as prefixes, which would make an approved root alias also rewrite
+ * unapproved subpaths. Legacy compatibility uses exact virtual-module keys.
  */
 let _aliases: Record<string, string> | null = null;
 
@@ -164,11 +147,21 @@ function getAliases(): Record<string, string> {
 		"@sinclair/typebox/value": typeboxValueEntry,
 	};
 
-	// Upstream pi specifiers resolve to the same entrypoints as their ICE
-	// counterparts, so pi packages load without per-package shims.
-	applyUpstreamPiAliases(_aliases);
-
 	return _aliases;
+}
+
+/**
+ * Internal seam for the resolution-parity contract test. Historical Pi keys
+ * live in the exact virtual-module map shared by Node/Jiti and Bun, while the
+ * built Node alias map contains only canonical package paths. This is not part
+ * of the package's public surface: loader exports are deliberately not
+ * re-exported from index.ts.
+ */
+export function getExtensionAliasMaps(): {
+	virtualModules: Readonly<Record<string, unknown>>;
+	nodeAliases: Readonly<Record<string, string>>;
+} {
+	return { virtualModules: VIRTUAL_MODULES, nodeAliases: getAliases() };
 }
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
@@ -464,12 +457,19 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 	const jiti = createJiti(import.meta.url, {
 		moduleCache: false,
 		// Bun uses modules embedded in the executable. Source TypeScript reuses the
-		// host-resolved modules and root tsconfig paths. Built Node uses dist aliases.
+		// host-resolved modules and root tsconfig paths. Built Node combines exact
+		// virtual modules for extensions with canonical dist-path aliases.
 		...(isBunBinary
 			? { virtualModules: VIRTUAL_MODULES, tryNative: false }
 			: isTypeScriptSourceRuntime
 				? { virtualModules: VIRTUAL_MODULES, tsconfigPaths: true }
-				: { alias: getAliases() }),
+				: {
+						// Jiti aliases are prefix-based. Keep canonical built-path aliases there,
+						// but expose historical Pi compatibility through exact virtual-module
+						// keys so unsupported legacy subpaths cannot be rewritten accidentally.
+						virtualModules: VIRTUAL_MODULES,
+						alias: getAliases(),
+					}),
 	});
 
 	const module = await jiti.import(extensionPath, { default: true });
