@@ -47,6 +47,28 @@ import type {
 	ToolDefinition,
 } from "./types.ts";
 
+/**
+ * Current upstream pi specifiers mapped to their ICE equivalents.
+ *
+ * Upstream pi extensions import from `@earendil-works/*`. ICE renamed those
+ * packages to `@zykairotis/ice-*`, so without this mapping pi packages
+ * install but fail to load with a module-resolution error.
+ *
+ * Exact keys only: the pi-ai root resolves to the compat entrypoint (a
+ * strict superset of the core entrypoint), so a prefix rewrite would send it
+ * to the wrong module. Unknown subpaths fail loudly instead of mis-resolving.
+ * `@mariozechner/pi-*` stays deliberately unresolved (no-legacy contract).
+ */
+const UPSTREAM_PI_ALIASES = {
+	"@earendil-works/pi-coding-agent": "@zykairotis/ice-coding-agent",
+	"@earendil-works/pi-agent-core": "@zykairotis/ice-agent-core",
+	"@earendil-works/pi-tui": "@zykairotis/ice-tui",
+	"@earendil-works/pi-ai": "@zykairotis/ice-ai",
+	"@earendil-works/pi-ai/compat": "@zykairotis/ice-ai/compat",
+	"@earendil-works/pi-ai/oauth": "@zykairotis/ice-ai/oauth",
+	"@earendil-works/pi-ai/providers/all": "@zykairotis/ice-ai/providers/all",
+} as const;
+
 /** Modules available to extensions via virtualModules (for compiled Bun binary) */
 const VIRTUAL_MODULES: Record<string, unknown> = {
 	typebox: _bundledTypebox,
@@ -67,9 +89,29 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@zykairotis/ice-coding-agent": _bundledIceCodingAgent,
 };
 
+// Upstream pi specifiers reuse the already-bundled ICE modules (no extra
+// bundle weight): each pi key points at the same object as its ice target.
+applyUpstreamPiAliases(VIRTUAL_MODULES);
+
 const require = createRequire(import.meta.url);
 
 const isTypeScriptSourceRuntime = !isBunBinary && path.extname(fileURLToPath(import.meta.url)) === ".ts";
+
+/**
+ * Overlay upstream pi specifiers onto a base map that already defines every
+ * `@zykairotis/ice-*` target. Each pi key reuses the existing target value
+ * rather than resolving a separate module, so a target absent from the base
+ * map is a development error, not a silent `undefined`.
+ */
+function applyUpstreamPiAliases<V>(base: Record<string, V>): Record<string, V> {
+	for (const [piSpecifier, iceSpecifier] of Object.entries(UPSTREAM_PI_ALIASES)) {
+		if (!(iceSpecifier in base)) {
+			throw new Error(`Unresolved pi alias target: ${piSpecifier} -> ${iceSpecifier}`);
+		}
+		base[piSpecifier] = base[iceSpecifier];
+	}
+	return base;
+}
 
 /**
  * Get aliases for jiti (used in built Node.js mode).
@@ -121,6 +163,10 @@ function getAliases(): Record<string, string> {
 		"@sinclair/typebox/compile": typeboxCompileEntry,
 		"@sinclair/typebox/value": typeboxValueEntry,
 	};
+
+	// Upstream pi specifiers resolve to the same entrypoints as their ICE
+	// counterparts, so pi packages load without per-package shims.
+	applyUpstreamPiAliases(_aliases);
 
 	return _aliases;
 }
