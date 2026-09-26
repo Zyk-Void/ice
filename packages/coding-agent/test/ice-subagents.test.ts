@@ -3572,6 +3572,22 @@ describe("ICE subagent contracts", () => {
 		expect(Object.isFrozen(snapshot.messages[0])).toBe(true);
 	});
 
+	it("delivers applicable instruction file contents with hash revalidation in the child prompt", async () => {
+		const cwd = await createWorkspace();
+		await writeFile(join(cwd, "AGENTS.md"), "root rule content marker\n", "utf8");
+		await mkdir(join(cwd, "src", "deep"), { recursive: true });
+		await writeFile(join(cwd, "src", "AGENTS.md"), "nested rule content marker\n", "utf8");
+		const normalized = normalizeSubagentRequest({ ...request(cwd) }, cwd);
+		expect(normalized.contextManifest?.entries.length).toBeGreaterThan(0);
+		const prompt = buildSubagentPrompt(normalized);
+		expect(prompt).toContain("root rule content marker");
+		expect(prompt).toContain("Applicable repository instructions (untrusted repository guidance");
+		// A file that changes after selection fails hash revalidation and is dropped.
+		await writeFile(join(cwd, "AGENTS.md"), "tampered rules\n", "utf8");
+		const tampered = buildSubagentPrompt(normalized);
+		expect(tampered).not.toContain("root rule content marker");
+	}, 15_000);
+
 	it("uses deterministic recent UTF-8 fork suffixes and caps each message", () => {
 		const messages: AgentMessage[] = Array.from({ length: 67 }, (_, index) => ({
 			role: "user" as const,

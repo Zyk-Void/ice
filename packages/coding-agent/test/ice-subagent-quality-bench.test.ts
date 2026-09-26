@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -18,6 +18,7 @@ import {
 	SubagentQualityBenchError,
 	type SubagentQualityBenchErrorCode,
 	type SubagentQualityRunObservation,
+	type SubagentQualityRunRecord,
 	serializeQualityBenchmarkJson,
 } from "../src/ice-subagent-quality-bench.ts";
 import { qualityCaseManifest } from "./fixtures/quality/cases.ts";
@@ -564,5 +565,86 @@ describe.skipIf(!liveEnabled)("ICE quality bench live baseline (opt-in)", () => 
 		} catch (error) {
 			expect(error).toBeInstanceOf(SubagentQualityBenchError);
 		}
+	});
+});
+
+/**
+ * Phase 0 acceptance: produce the standardized, human-readable baseline
+ * artifact. Scores are deterministic scripted outcomes driven by real fixture
+ * ground truth (evidence precision is measured against files on disk); they
+ * are NOT model-quality measurements. The live-model baseline remains gated
+ * behind ICE_QUALITY_BENCH_LIVE=1 with usable credentials.
+ */
+describe("phase 0 baseline artifact", () => {
+	it("writes the deterministic dry-run baseline report to .artifacts/subagent-quality-bench", () => {
+		const artifactDir = resolve(
+			join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", ".artifacts", "subagent-quality-bench"),
+		);
+		mkdirSync(artifactDir, { recursive: true });
+		const baseObservation = {
+			gitCommit: "dry-run",
+			worktreePath: "dry-run",
+			modelRoute: "faux/dry-run",
+			thinkingLevel: "medium",
+			childProfile: "self",
+			toolAllowlist: ["read", "grep", "find", "ls"],
+			wallMs: 0,
+			assistantRequestCount: 0,
+			toolCallCount: 0,
+			parentFollowUpCount: 0,
+			verificationKind: "none" as const,
+			finalSuccess: false,
+			notes: "dry-run scripted outcome; not model-quality evidence",
+		};
+		const modeSpecs = [
+			{ mode: "plain", childProfiles: ["self", "file"] },
+			{ mode: "structured", childProfiles: ["self", "file"] },
+			{ mode: "structured+contract", childProfiles: ["self", "file", "batch", "review"] },
+		] as const;
+		const records: SubagentQualityRunRecord[] = [];
+		for (const qualityCase of manifest.cases) {
+			for (const spec of modeSpecs) {
+				for (const childProfile of spec.childProfiles) {
+					const observed = qualityCase.groundTruthPaths.map((path) => ({
+						tool: "read",
+						path,
+					}));
+					const scriptedSuccess = spec.mode !== "plain";
+					const record = measureSubagentQualityRun(manifest, {
+						...baseObservation,
+						caseId: qualityCase.id,
+						childProfile,
+						verificationKind: spec.mode === "plain" ? ("plain_bounds" as const) : ("structured" as const),
+						observedToolCalls: observed,
+						reportedEvidencePaths: qualityCase.groundTruthPaths.slice(0, 3),
+						requiredCriterionPassRate:
+							spec.mode === "structured+contract" && qualityCase.acceptanceCriteria?.length ? 1 : undefined,
+						assistantRequestCount: spec.mode === "plain" ? 4 : 6,
+						wallMs: spec.mode === "plain" ? 4_000 : 6_000,
+						toolCallCount: 3,
+						finalSuccess: scriptedSuccess,
+						reviewerDefectCount: spec.mode === "structured+contract" && childProfile === "review" ? 1 : undefined,
+					});
+					records.push(record);
+				}
+			}
+		}
+		const run = createQualityBenchmarkRun({
+			fixture: manifest,
+			records,
+			header: {
+				title: "ICE subagent quality baseline (dry run)",
+				baselineLabel: "dry-run-scripted",
+				currentLabel: "dry-run-scripted",
+			},
+		});
+		const markdown = renderQualityBenchmarkMarkdown(run);
+		const json = serializeQualityBenchmarkJson(run);
+		expect(markdown).toContain("ICE subagent quality baseline (dry run)");
+		expect(json).toContain('"schemaVersion": 1');
+		writeFileSync(join(artifactDir, "baseline-dry.md"), markdown, "utf8");
+		writeFileSync(join(artifactDir, "baseline-dry.json"), json, "utf8");
+		expect(existsSync(join(artifactDir, "baseline-dry.md"))).toBe(true);
+		expect(existsSync(join(artifactDir, "baseline-dry.json"))).toBe(true);
 	});
 });

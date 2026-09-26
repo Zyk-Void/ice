@@ -1,10 +1,8 @@
 # Subagent Quality & Reliability V2 Plan
 
-Status: proposal for review (not implemented).
+Status: implemented (code POV). All phases landed and verified by the full non-e2e suite and `corepack npm@12.0.2 run check`. The deterministic dry-run baseline artifact lives at `.artifacts/subagent-quality-bench/baseline-dry.md`; live-model baselines remain gated behind `ICE_QUALITY_BENCH_LIVE=1` with usable credentials, and benchmark-dependent acceptance items (2.5, 3.4, 5.2, 5.4) stay provisional until that evidence exists. See `subagent-quality-reliability-v2-plan-audit.md` for the coverage ledger.
 
-Target worktree: `/home/mewtwo/Zks/ice/.worktrees/all-worktrees-experimental/`
-
-Companion plan: `agent_docs/implementation/subagent-bounds-realignment-plan.md`
+Companion plan: `agent_docs/implementation/subagent-bounds-realignment-plan.md` (implemented; concurrency bench evidence recorded in that file).
 
 Reference corpus: read-only harnesses under `/home/mewtwo/Zks/ice/Agent_harness_references/`.
 

@@ -136,6 +136,25 @@ describe("ICE subagent control settings", () => {
 		expect(sampling.values).toMatchObject({ temperature: 0.6, topP: 0.4 });
 	});
 
+	it("resolves quality tier routes from global settings only", () => {
+		const tiered = resolveIceSubagentContract({
+			role: "explore",
+			global: parseIceSubagentSettings({
+				routeTiers: { mechanical: "faux/cheap", judgment: "faux/strong" },
+			}),
+		});
+		expect(tiered.routeTiers).toEqual({ mechanical: "faux/cheap", judgment: "faux/strong" });
+		const plain = resolveIceSubagentContract({ role: "explore" });
+		expect(plain.routeTiers).toEqual({});
+		const projectOnly = resolveIceSubagentContract({
+			role: "explore",
+			projectTrusted: true,
+			project: parseIceSubagentSettings({ routeTiers: { judgment: "faux/project" } }),
+		});
+		expect(projectOnly.routeTiers).toEqual({});
+		expect(projectOnly.diagnostics.join(" ")).toMatch(/routeTiers ignored/i);
+	});
+
 	it("keeps legacy project-first precedence only with an explicit opt-out", () => {
 		const contract = resolveIceSubagentContract({
 			role: "explore",
@@ -279,6 +298,46 @@ describe("ICE subagent control settings", () => {
 			expect(normalized.execution.tools).toEqual(["read", "grep"]);
 			expect(normalized.deniedTools).toEqual(["grep"]);
 			expect(normalized.iceContract.sources.timeoutMs).toBe("enforced");
+		} finally {
+			await rm(cwd, { recursive: true, force: true });
+		}
+	});
+
+	it("resolves route tiers with explicit execution model beating the semantic tier", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "ice-settings-tiers-"));
+		try {
+			await mkdir(join(cwd, "src"));
+			const settingsManager = SettingsManager.inMemory({
+				ice: {
+					subagents: { routeTiers: { mechanical: "faux/cheap", judgment: "faux/strong" } },
+				},
+			});
+			const base = {
+				parentSessionId: "parent",
+				role: "explore",
+				task: "Inspect the source.",
+				scope: { roots: ["src"] },
+				cwd,
+			};
+			const tiered = normalizeSubagentRequest({ ...base, kind: "explore" }, cwd, {
+				projectTrusted: true,
+				settingsManager,
+			});
+			expect(tiered.requestedModel).toBe("faux/cheap");
+			const explicit = normalizeSubagentRequest(
+				{ ...base, kind: "explore", execution: { model: "faux/explicit" } },
+				cwd,
+				{ projectTrusted: true, settingsManager },
+			);
+			expect(explicit.requestedModel).toBe("faux/explicit");
+			const judgment = normalizeSubagentRequest({ ...base, kind: "review" }, cwd, {
+				projectTrusted: true,
+				settingsManager,
+			});
+			expect(judgment.requestedModel).toBe("faux/strong");
+			const unkinded = normalizeSubagentRequest({ ...base }, cwd, { projectTrusted: true, settingsManager });
+			expect(unkinded.requestedModel).toBeUndefined();
+			expect(unkinded.qualityMode).toBe("standard");
 		} finally {
 			await rm(cwd, { recursive: true, force: true });
 		}

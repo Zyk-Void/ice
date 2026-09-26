@@ -429,3 +429,20 @@ export function renderSubagentTaskContractSection(
 	}
 	return truncateSectionUtf8(redactCredentialText(lines.join("\n")));
 }
+
+/**
+ * Phase 5.5: selective high-risk reviewer policy. Recommends the existing
+ * review_batch gate when the declared contract cannot establish correctness
+ * deterministically: implementation or verification work that declares no
+ * executable verification (mode "none") and no reviewer verification. The
+ * recommendation never launches anything by itself; the parent decides.
+ */
+export function recommendSubagentReviewerGate(contract: SubagentTaskContract): string | undefined {
+	if (contract.kind !== "implement" && contract.kind !== "verify") return undefined;
+	if (contract.verification.mode !== "none") return undefined;
+	return (
+		"Reviewer gate recommended: this task declares no executable verification, so deterministic checks " +
+		"cannot establish correctness. Run review_batch over the produced change (security/correctness/regression " +
+		"dimensions) before integrating it."
+	);
+}

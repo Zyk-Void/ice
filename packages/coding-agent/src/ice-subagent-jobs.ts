@@ -115,6 +115,10 @@ export interface SubagentJobResultEnvelope {
 	taskContractHash?: string;
 	/** Runtime-derived assurance level; absent in snapshots persisted before this field existed. */
 	assurance?: SubagentAssuranceLevel;
+	/** Host-owned accepted follow-up (repair) count for the run; absent in legacy snapshots. */
+	followUpCount?: number;
+	/** Resolved reasoning level applied to the run; absent in legacy snapshots. */
+	reasoningLevel?: string;
 	evidence?: {
 		paths: readonly string[];
 	};
@@ -698,6 +702,21 @@ function validResultEnvelope(
 	) {
 		return false;
 	}
+	if (
+		value.followUpCount !== undefined &&
+		(typeof value.followUpCount !== "number" ||
+			!Number.isSafeInteger(value.followUpCount) ||
+			value.followUpCount < 0 ||
+			value.followUpCount > 16)
+	) {
+		return false;
+	}
+	if (
+		value.reasoningLevel !== undefined &&
+		(typeof value.reasoningLevel !== "string" || value.reasoningLevel.length === 0)
+	) {
+		return false;
+	}
 	if (value.payload !== undefined) {
 		if (!isRecord(value.payload)) return false;
 		try {
@@ -1095,6 +1114,8 @@ function projectResult(
 		...(result?.qualityMode !== undefined ? { qualityMode: result.qualityMode } : {}),
 		...(result?.taskContractHash !== undefined ? { taskContractHash: result.taskContractHash } : {}),
 		...(result?.assurance !== undefined ? { assurance: result.assurance } : {}),
+		...(result?.followUpCount !== undefined ? { followUpCount: result.followUpCount } : {}),
+		...(result?.reasoningLevel !== undefined ? { reasoningLevel: result.reasoningLevel } : {}),
 		...(summary ? { summary } : {}),
 		...(evidence && evidence.length > 0 ? { evidence: { paths: evidence } } : {}),
 		...(findings && findings.length > 0 ? { findings } : {}),
