@@ -1005,3 +1005,13 @@ If only one slice is implemented first, do **Phase 0 + the prompt-only part of P
 That isolates whether ICE's largest quality problem is task briefing before touching routing, context sizes, concurrency, or lifecycle policy. It is the cheapest change with the clearest causal signal.
 
 If that produces only a small gain, the next slice should be **Phase 2 + Phase 5**: automatic relevant context plus evidence-backed completion semantics.
+
+## Baseline artifact
+
+`.artifacts/` is gitignored, so the deterministic dry-run baseline is not committed; regenerate it at any time with:
+
+```bash
+/usr/bin/node node_modules/vitest/vitest.mjs --run --root packages/coding-agent test/ice-subagent-quality-bench.test.ts
+```
+
+which writes `.artifacts/subagent-quality-bench/baseline-dry.{md,json}` (80 scripted runs: 10 fixture cases x plain/structured/structured+contract x self/file/batch/review, evidence precision measured against the fixture repo on disk).
