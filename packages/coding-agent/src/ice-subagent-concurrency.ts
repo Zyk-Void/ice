@@ -16,9 +16,9 @@ import { redactCredentialText } from "./utils/redact.ts";
 export const SUBAGENT_CONCURRENCY_LIMITS = {
 	min: 1,
 	/** Bundled default active children for read-only/bounded work. */
-	bundledDefault: 4,
+	bundledDefault: 8,
 	/** Absolute hard ceiling; neither settings nor calls can exceed it. */
-	hardCap: 8,
+	hardCap: 24,
 } as const;
 
 export interface SubagentConcurrencySettings {

@@ -9,6 +9,7 @@ import type {
 	TerminalSubagentJobStatus,
 } from "./ice-subagent-jobs.ts";
 import { JOB_COMPLETION_MESSAGE_TYPE } from "./ice-subagent-jobs.ts";
+import type { SubagentOutputCaptureStatus } from "./ice-subagent-output-artifacts.ts";
 import type { SubagentRetryState, SubagentRuntimeAttention } from "./ice-subagent-timeout-supervisor.ts";
 import type {
 	SubagentBatchTaskLifecycleEvent,
@@ -256,6 +257,16 @@ export interface DurableSubagentJobFindingView {
 	readonly evidence: readonly string[];
 }
 
+export interface DurableSubagentJobOutputView {
+	readonly captureStatus: SubagentOutputCaptureStatus;
+	readonly textBytes: number;
+	readonly originalBytes: number;
+	readonly storedBytes?: number;
+	readonly artifactId?: string;
+	readonly artifactAvailable: boolean;
+	readonly artifactTruncated: boolean;
+}
+
 export interface DurableSubagentJobResultView {
 	readonly schemaVersion: 1;
 	readonly jobId: string;
@@ -265,6 +276,13 @@ export interface DurableSubagentJobResultView {
 	readonly resultRef: string;
 	readonly summary?: string;
 	readonly reportMode?: "plain_final_turn" | "structured_report";
+	/** Host-derived semantic completion class; present when the result carried one. */
+	readonly qualityMode?: string;
+	/** Descriptive assurance level; present when the result carried one. */
+	readonly assurance?: string;
+	/** Deterministic hash of the normalized task contract; present when the result carried one. */
+	readonly taskContractHash?: string;
+	readonly output?: DurableSubagentJobOutputView;
 	readonly verification?: {
 		readonly verified: boolean;
 		readonly reason?: string;
@@ -368,6 +386,16 @@ function safeMetadataText(value: string | undefined, maxBytes: number): string |
 	return boundedSingleLine(value === undefined ? undefined : terminalSafeText(value), maxBytes);
 }
 
+/**
+ * Reads the assurance level off a durable result envelope. The field is typed on
+ * SubagentResult but not yet declared on the envelope type, so it is read
+ * structurally and forwarded as-is.
+ */
+function envelopeAssurance(result: Readonly<SubagentJobResultEnvelope> | undefined): string | undefined {
+	const value = asRecord(result)?.assurance;
+	return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 export function projectSubagentCompletionInbox(
 	entries: readonly SubagentCompletionInboxSessionEntry[],
 	jobs: readonly DurableSubagentJobViewSnapshot[],
@@ -423,6 +451,7 @@ export function projectDurableSubagentJobResult(
 	if (!isDurableJobInspectable(inspection.job.status)) return undefined;
 	const metadata = projectDurableSubagentJob(inspection);
 	const result: SubagentJobResultEnvelope | undefined = inspection.result;
+	const assurance = envelopeAssurance(result);
 	const summary = sanitizeDetailText(result?.summary, OBSERVATORY_SUMMARY_MAX_BYTES);
 	const evidence = Object.freeze(
 		(result?.evidence?.paths ?? [])
@@ -499,6 +528,21 @@ export function projectDurableSubagentJobResult(
 				),
 			})
 		: undefined;
+	const output = result?.output
+		? Object.freeze({
+				captureStatus: result.output.captureStatus,
+				textBytes: result.output.textBytes,
+				originalBytes: result.output.originalBytes,
+				...(result.output.artifact
+					? {
+							storedBytes: result.output.artifact.storedBytes,
+							artifactId: result.output.artifact.id,
+						}
+					: {}),
+				artifactAvailable: result.output.artifact !== undefined,
+				artifactTruncated: result.output.artifact?.truncated ?? false,
+			})
+		: undefined;
 	const tombstone = inspection.tombstone
 		? Object.freeze({
 				terminalStatus: inspection.tombstone.terminalStatus,
@@ -517,6 +561,10 @@ export function projectDurableSubagentJobResult(
 		resultRef: sanitizeDetailText(metadata.resultRef, OBSERVATORY_PATH_MAX_BYTES) ?? `job:${jobId}`,
 		...(summary ? { summary } : {}),
 		...(result?.reportMode !== undefined ? { reportMode: result.reportMode } : {}),
+		...(result?.qualityMode !== undefined ? { qualityMode: result.qualityMode } : {}),
+		...(assurance !== undefined ? { assurance } : {}),
+		...(result?.taskContractHash !== undefined ? { taskContractHash: result.taskContractHash } : {}),
+		...(output ? { output } : {}),
 		...(verification ? { verification } : {}),
 		evidence,
 		findings,
@@ -539,6 +587,29 @@ export function formatDurableSubagentJobDetail(detail: DurableSubagentJobResultV
 	let hasDetails = false;
 	if (detail.summary) {
 		rows.push("Summary", detail.summary, "");
+		hasDetails = true;
+	}
+	if (detail.qualityMode) {
+		rows.push(
+			"Quality mode",
+			`${detail.qualityMode}${detail.assurance ? `; assurance ${detail.assurance}` : ""}`,
+			"",
+		);
+		hasDetails = true;
+	}
+	if (detail.taskContractHash) {
+		rows.push("Task contract", detail.taskContractHash, "");
+		hasDetails = true;
+	}
+	if (detail.output) {
+		const artifact = detail.output.artifactAvailable
+			? `artifact ${detail.output.artifactId} (${detail.output.storedBytes} bytes${detail.output.artifactTruncated ? ", truncated" : ""})`
+			: "no artifact";
+		rows.push(
+			"Final output",
+			`${detail.output.captureStatus}; inline ${detail.output.textBytes} bytes; original ${detail.output.originalBytes} bytes; ${artifact}.`,
+			"",
+		);
 		hasDetails = true;
 	}
 	if (detail.verification) {

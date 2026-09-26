@@ -20,8 +20,8 @@ import { getAgentDir } from "./config.ts";
 import { redactCredentialText } from "./utils/redact.ts";
 
 export const SUBAGENT_OUTPUT_ARTIFACT_LIMITS = {
-	inlineBytes: 8 * 1024,
-	maxArtifactBytes: 512 * 1024,
+	inlineBytes: 48 * 1024,
+	maxArtifactBytes: 4 * 1024 * 1024,
 	defaultReadBytes: 16 * 1024,
 	maxReadBytes: 64 * 1024,
 	maxOwnerBytes: 16 * 1024 * 1024,
@@ -137,6 +137,7 @@ const ARTIFACT_ID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9
 const ARTIFACT_REFERENCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,255}$/;
 const CAPTURE_REFERENCE_ID = "capture";
 const DURABLE_REFERENCE_ID = "durable";
+const DURABLE_REFERENCE_PREFIX = "durable:";
 const ARTIFACT_FILE_NAMES: Readonly<Record<SubagentOutputContentType, string>> = Object.freeze({
 	"text/plain": "output.txt",
 	"application/json": "output.json",
@@ -196,7 +197,7 @@ function validateLimits(limits: SubagentOutputArtifactStoreLimits): void {
 	if (limits.inlineBytes > limits.maxArtifactBytes) {
 		throw new SubagentOutputArtifactError("artifact_invalid", "Inline output limit exceeds artifact storage limit.");
 	}
-	if (limits.maxArtifactBytes > 512 * 1024) {
+	if (limits.maxArtifactBytes > 4 * 1024 * 1024) {
 		throw new SubagentOutputArtifactError("artifact_invalid", "Per-artifact storage limit exceeds the host maximum.");
 	}
 	if (limits.maxOwnerBytes > 16 * 1024 * 1024 || limits.maxGlobalBytes > 128 * 1024 * 1024) {
@@ -204,8 +205,17 @@ function validateLimits(limits: SubagentOutputArtifactStoreLimits): void {
 	}
 }
 
-function validateArtifactRef(value: unknown): value is SubagentOutputArtifactRef {
-	if (!value || typeof value !== "object") return false;
+export function isSubagentOutputArtifactRef(value: unknown): value is SubagentOutputArtifactRef {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	if (
+		Object.keys(value).some(
+			(key) =>
+				!["schemaVersion", "id", "storedBytes", "originalBytes", "sha256", "contentType", "truncated"].includes(
+					key,
+				),
+		)
+	)
+		return false;
 	const artifact = value as Partial<SubagentOutputArtifactRef>;
 	return (
 		artifact.schemaVersion === 2 &&
@@ -217,10 +227,56 @@ function validateArtifactRef(value: unknown): value is SubagentOutputArtifactRef
 		artifact.storedBytes <= SUBAGENT_OUTPUT_ARTIFACT_LIMITS.maxArtifactBytes &&
 		typeof artifact.originalBytes === "number" &&
 		Number.isSafeInteger(artifact.originalBytes) &&
+		artifact.originalBytes >= 0 &&
 		typeof artifact.sha256 === "string" &&
 		/^[a-f0-9]{64}$/.test(artifact.sha256) &&
 		(artifact.contentType === "text/plain" || artifact.contentType === "application/json") &&
 		typeof artifact.truncated === "boolean"
+	);
+}
+
+export function isSubagentOutput(value: unknown): value is SubagentOutput {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const output = value as Partial<SubagentOutput>;
+	if (
+		Object.keys(value).some(
+			(key) => !["text", "textBytes", "originalBytes", "inlineTruncated", "captureStatus", "artifact"].includes(key),
+		) ||
+		typeof output.text !== "string" ||
+		redactCredentialText(output.text) !== output.text ||
+		Buffer.byteLength(output.text, "utf8") !== output.textBytes ||
+		!Number.isSafeInteger(output.textBytes) ||
+		output.textBytes! < 0 ||
+		output.textBytes! > SUBAGENT_OUTPUT_ARTIFACT_LIMITS.inlineBytes ||
+		!Number.isSafeInteger(output.originalBytes) ||
+		output.originalBytes! < 0 ||
+		typeof output.inlineTruncated !== "boolean" ||
+		(output.captureStatus !== "inline_complete" &&
+			output.captureStatus !== "artifact_complete" &&
+			output.captureStatus !== "artifact_truncated" &&
+			output.captureStatus !== "artifact_unavailable")
+	) {
+		return false;
+	}
+	if (output.artifact !== undefined && !isSubagentOutputArtifactRef(output.artifact)) return false;
+	if (output.captureStatus === "inline_complete") {
+		return !output.inlineTruncated && output.artifact === undefined;
+	}
+	if (!output.inlineTruncated) return false;
+	if (output.captureStatus === "artifact_unavailable") return output.artifact === undefined;
+	if (!output.artifact || output.artifact.originalBytes !== output.originalBytes) return false;
+	return output.captureStatus === "artifact_truncated" ? output.artifact.truncated : !output.artifact.truncated;
+}
+
+function sameArtifact(left: SubagentOutputArtifactRef, right: SubagentOutputArtifactRef): boolean {
+	return (
+		left.schemaVersion === right.schemaVersion &&
+		left.id === right.id &&
+		left.storedBytes === right.storedBytes &&
+		left.originalBytes === right.originalBytes &&
+		left.sha256 === right.sha256 &&
+		left.contentType === right.contentType &&
+		left.truncated === right.truncated
 	);
 }
 
@@ -291,11 +347,18 @@ export class SubagentOutputArtifactStore {
 			contentType,
 			truncated: stored.byteLength < sanitizedBytes.byteLength,
 		});
-		const absolutePath = this.artifactPath(id, contentType);
-		if (!this.writeArtifact(absolutePath, id, stored)) {
+		const lifecycle = input.lifecycle ?? "process_local";
+		const absolutePath = this.artifactPath(input.ownerSessionId, id, contentType);
+		if (!this.writeArtifact(absolutePath, id, stored, input.ownerSessionId)) {
 			return { ...base, captureStatus: "artifact_unavailable" };
 		}
-		this.register(input.ownerSessionId, artifact, absolutePath, input.lifecycle ?? "process_local");
+		this.register(
+			input.ownerSessionId,
+			artifact,
+			absolutePath,
+			lifecycle,
+			lifecycle === "durable" ? DURABLE_REFERENCE_ID : CAPTURE_REFERENCE_ID,
+		);
 		return {
 			...base,
 			captureStatus: artifact.truncated ? "artifact_truncated" : "artifact_complete",
@@ -366,16 +429,35 @@ export class SubagentOutputArtifactStore {
 		return true;
 	}
 
-	registerDurable(ownerSessionId: string, artifact: SubagentOutputArtifactRef): boolean {
+	registerDurable(
+		ownerSessionId: string,
+		artifact: SubagentOutputArtifactRef,
+		referenceId = DURABLE_REFERENCE_ID,
+	): boolean {
 		this.assertLive();
 		this.validateOwner(ownerSessionId);
-		if (!validateArtifactRef(artifact)) return false;
+		if (
+			!isSubagentOutputArtifactRef(artifact) ||
+			typeof referenceId !== "string" ||
+			!ARTIFACT_REFERENCE_ID_PATTERN.test(referenceId)
+		)
+			return false;
 		const existing = this.artifacts.get(artifact.id);
-		if (existing) return existing.ownerSessionId === ownerSessionId;
+		if (existing) {
+			if (existing.ownerSessionId !== ownerSessionId || !sameArtifact(existing.artifact, artifact)) return false;
+			try {
+				this.readAndVerify(existing);
+			} catch {
+				return false;
+			}
+			existing.lifecycle = "durable";
+			existing.references.add(referenceId);
+			return true;
+		}
 		if (!this.hasCapacity(ownerSessionId, artifact.storedBytes)) return false;
-		const absolutePath = this.artifactPath(artifact.id, artifact.contentType);
+		const absolutePath = this.artifactPath(ownerSessionId, artifact.id, artifact.contentType);
 		try {
-			const bytes = this.readFileAtPath(absolutePath, artifact.id);
+			const bytes = this.readFileAtPath(absolutePath, artifact.id, ownerSessionId);
 			if (
 				bytes.byteLength !== artifact.storedBytes ||
 				hashBytes(bytes) !== artifact.sha256 ||
@@ -383,23 +465,56 @@ export class SubagentOutputArtifactStore {
 			) {
 				return false;
 			}
-			this.register(ownerSessionId, Object.freeze({ ...artifact }), absolutePath, "durable");
+			this.register(ownerSessionId, Object.freeze({ ...artifact }), absolutePath, "durable", referenceId);
 			return true;
 		} catch {
 			return false;
 		}
 	}
 
-	finalizeRestore(): void {
+	retainDurable(ownerSessionId: string, artifact: SubagentOutputArtifactRef, referenceId: string): boolean {
 		this.assertLive();
+		this.validateOwner(ownerSessionId);
+		if (
+			!isSubagentOutputArtifactRef(artifact) ||
+			typeof referenceId !== "string" ||
+			!referenceId.startsWith(DURABLE_REFERENCE_PREFIX) ||
+			!ARTIFACT_REFERENCE_ID_PATTERN.test(referenceId)
+		)
+			return false;
+		const existing = this.artifacts.get(artifact.id);
+		if (!existing) return this.registerDurable(ownerSessionId, artifact, referenceId);
+		if (existing.ownerSessionId !== ownerSessionId || !sameArtifact(existing.artifact, artifact)) return false;
+		try {
+			this.readAndVerify(existing);
+		} catch {
+			return false;
+		}
+		existing.lifecycle = "durable";
+		existing.references.delete(CAPTURE_REFERENCE_ID);
+		existing.references.add(referenceId);
+		return true;
+	}
+
+	finalizeRestore(ownerSessionId: string): void {
+		this.assertLive();
+		this.validateOwner(ownerSessionId);
 		try {
 			assertNoSymlinkComponents(this.artifactRoot);
 			const canonicalRoot = realpathSync(this.artifactRoot);
-			for (const entry of readdirSync(canonicalRoot, { withFileTypes: true })) {
+			const ownerRoot = join(canonicalRoot, this.ownerDirectoryName(ownerSessionId));
+			const ownerStat = lstatSync(ownerRoot);
+			if (!ownerStat.isDirectory() || ownerStat.isSymbolicLink() || realpathSync(ownerRoot) !== ownerRoot) return;
+			for (const entry of readdirSync(ownerRoot, { withFileTypes: true })) {
 				if (!entry.isDirectory() || !ARTIFACT_ID_PATTERN.test(entry.name)) continue;
 				const tracked = this.artifacts.get(entry.name);
-				if (tracked) continue;
-				this.removeOrphan(entry.name, canonicalRoot);
+				if (tracked?.ownerSessionId === ownerSessionId) continue;
+				this.removeOrphan(entry.name, ownerRoot);
+			}
+			try {
+				rmdirSync(ownerRoot);
+			} catch {
+				// Durable files or unexpected content keep the owner directory in place.
 			}
 		} catch {
 			// Artifact sweep is best-effort; it never changes restored job status.
@@ -429,8 +544,8 @@ export class SubagentOutputArtifactStore {
 	dispose(): void {
 		if (this.disposed) return;
 		for (const [artifactId, owned] of this.artifacts) {
-			if (owned.lifecycle !== "process_local") continue;
 			for (const referenceId of [...owned.references]) {
+				if (referenceId === DURABLE_REFERENCE_ID || referenceId.startsWith(DURABLE_REFERENCE_PREFIX)) continue;
 				this.release({ ownerSessionId: owned.ownerSessionId, artifactId, referenceId });
 			}
 		}
@@ -465,30 +580,39 @@ export class SubagentOutputArtifactStore {
 		artifact: SubagentOutputArtifactRef,
 		absolutePath: string,
 		lifecycle: OwnedOutputArtifact["lifecycle"],
+		referenceId: string,
 	): void {
 		this.artifacts.set(artifact.id, {
 			ownerSessionId,
 			artifact,
 			absolutePath,
 			lifecycle,
-			references: new Set([lifecycle === "durable" ? DURABLE_REFERENCE_ID : CAPTURE_REFERENCE_ID]),
+			references: new Set([referenceId]),
 		});
 		this.storedBytes += artifact.storedBytes;
 		this.ownerBytes.set(ownerSessionId, (this.ownerBytes.get(ownerSessionId) ?? 0) + artifact.storedBytes);
 	}
 
-	private artifactPath(id: string, contentType: SubagentOutputContentType): string {
+	private artifactPath(ownerSessionId: string, id: string, contentType: SubagentOutputContentType): string {
 		if (!ARTIFACT_ID_PATTERN.test(id)) {
 			throw new SubagentOutputArtifactError("artifact_invalid", "Output artifact ID is invalid.");
 		}
-		const path = join(this.artifactRoot, id, ARTIFACT_FILE_NAMES[contentType]);
+		const path = join(this.ownerRoot(ownerSessionId), id, ARTIFACT_FILE_NAMES[contentType]);
 		if (!pathWithin(this.artifactRoot, path)) {
 			throw new SubagentOutputArtifactError("artifact_invalid", "Output artifact path escaped its root.");
 		}
 		return path;
 	}
 
-	private writeArtifact(artifactPath: string, id: string, bytes: Uint8Array): boolean {
+	private ownerDirectoryName(ownerSessionId: string): string {
+		return hashBytes(Buffer.from(ownerSessionId, "utf8"));
+	}
+
+	private ownerRoot(ownerSessionId: string): string {
+		return join(this.artifactRoot, this.ownerDirectoryName(ownerSessionId));
+	}
+
+	private writeArtifact(artifactPath: string, id: string, bytes: Uint8Array, ownerSessionId: string): boolean {
 		let fd: number | undefined;
 		try {
 			assertNoSymlinkComponents(this.artifactRoot);
@@ -496,13 +620,19 @@ export class SubagentOutputArtifactStore {
 			chmodSync(this.artifactRoot, 0o700);
 			assertNoSymlinkComponents(this.artifactRoot);
 			const canonicalRoot = realpathSync(this.artifactRoot);
-			const runDirectory = join(canonicalRoot, id);
-			if (!pathWithin(canonicalRoot, runDirectory)) return false;
+			const ownerRoot = this.ownerRoot(ownerSessionId);
+			const canonicalOwnerRoot = join(canonicalRoot, this.ownerDirectoryName(ownerSessionId));
+			mkdirSync(ownerRoot, { recursive: true, mode: 0o700 });
+			chmodSync(ownerRoot, 0o700);
+			assertNoSymlinkComponents(ownerRoot);
+			if (realpathSync(ownerRoot) !== canonicalOwnerRoot) return false;
+			const runDirectory = join(canonicalOwnerRoot, id);
+			if (!pathWithin(canonicalOwnerRoot, runDirectory)) return false;
 			mkdirSync(runDirectory, { recursive: false, mode: 0o700 });
 			chmodSync(runDirectory, 0o700);
 			assertNoSymlinkComponents(runDirectory);
 			if (realpathSync(runDirectory) !== runDirectory) return false;
-			if (!pathWithin(canonicalRoot, artifactPath)) return false;
+			if (!pathWithin(canonicalOwnerRoot, artifactPath)) return false;
 			const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
 			fd = openSync(artifactPath, flags, 0o400);
 			if (!fstatSync(fd).isFile()) return false;
@@ -525,7 +655,7 @@ export class SubagentOutputArtifactStore {
 
 	private readAndVerify(owned: OwnedOutputArtifact): Buffer {
 		try {
-			const bytes = this.readFileAtPath(owned.absolutePath, owned.artifact.id);
+			const bytes = this.readFileAtPath(owned.absolutePath, owned.artifact.id, owned.ownerSessionId);
 			if (
 				bytes.byteLength !== owned.artifact.storedBytes ||
 				hashBytes(bytes) !== owned.artifact.sha256 ||
@@ -546,11 +676,12 @@ export class SubagentOutputArtifactStore {
 		}
 	}
 
-	private readFileAtPath(path: string, id: string): Buffer {
+	private readFileAtPath(path: string, id: string, ownerSessionId: string): Buffer {
 		assertNoSymlinkComponents(this.artifactRoot);
 		const canonicalRoot = realpathSync(this.artifactRoot);
-		const canonicalDirectory = join(canonicalRoot, id);
-		if (!pathWithin(canonicalRoot, canonicalDirectory) || !pathWithin(canonicalRoot, path)) {
+		const ownerRoot = join(canonicalRoot, this.ownerDirectoryName(ownerSessionId));
+		const canonicalDirectory = join(ownerRoot, id);
+		if (!pathWithin(ownerRoot, canonicalDirectory) || !pathWithin(ownerRoot, path)) {
 			throw new SubagentOutputArtifactError(
 				"artifact_integrity_failure",
 				"Subagent output artifact integrity check failed.",
@@ -589,9 +720,10 @@ export class SubagentOutputArtifactStore {
 		try {
 			assertNoSymlinkComponents(this.artifactRoot);
 			const canonicalRoot = realpathSync(this.artifactRoot);
-			const canonicalDirectory = join(canonicalRoot, owned.artifact.id);
+			const ownerRoot = join(canonicalRoot, this.ownerDirectoryName(owned.ownerSessionId));
+			const canonicalDirectory = join(ownerRoot, owned.artifact.id);
 			if (
-				!pathWithin(canonicalRoot, canonicalDirectory) ||
+				!pathWithin(ownerRoot, canonicalDirectory) ||
 				realpathSync(dirname(owned.absolutePath)) !== canonicalDirectory
 			) {
 				return;
@@ -609,10 +741,10 @@ export class SubagentOutputArtifactStore {
 		}
 	}
 
-	private removeOrphan(id: string, canonicalRoot: string): void {
-		const directory = join(canonicalRoot, id);
+	private removeOrphan(id: string, canonicalOwnerRoot: string): void {
+		const directory = join(canonicalOwnerRoot, id);
 		try {
-			if (!pathWithin(canonicalRoot, directory)) return;
+			if (!pathWithin(canonicalOwnerRoot, directory)) return;
 			assertNoSymlinkComponents(directory);
 			const canonicalDirectory = realpathSync(directory);
 			const directoryStat = lstatSync(directory);

@@ -98,6 +98,17 @@ import {
 	runVerifier,
 } from "./ice-safe-verify.ts";
 import {
+	deriveSubagentAssuranceLevel,
+	SUBAGENT_ASSURANCE_LEVEL_TEXT,
+	type SubagentAssuranceLevel,
+	validateSubagentEvidenceClaims,
+} from "./ice-subagent-assurance.ts";
+import {
+	findExactDuplicateBatchTasks,
+	renderBatchSynthesisSection,
+	summarizeBatchSynthesis,
+} from "./ice-subagent-batch-synthesis.ts";
+import {
 	awaitIceToolDispatch,
 	boundedIceToolOutput,
 	createIceDelegableToolDefinitions,
@@ -121,6 +132,11 @@ import {
 	SUBAGENT_CONCURRENCY_LIMITS,
 	SubagentConcurrencyAdmission,
 } from "./ice-subagent-concurrency.ts";
+import {
+	buildSubagentContextManifest,
+	renderSubagentContextManifestSection,
+	type SubagentContextManifest,
+} from "./ice-subagent-context-bootstrap.ts";
 import {
 	JOB_COMPLETION_MESSAGE_TYPE,
 	JOB_ENTRY_TYPE,
@@ -167,6 +183,7 @@ import {
 	type SubagentPreflightRequirement,
 	type SubagentPreflightRequirementInput,
 } from "./ice-subagent-preflight.ts";
+import { buildSubagentQualityTelemetry, formatWeakRunDiagnostics } from "./ice-subagent-quality-telemetry.ts";
 import {
 	type IceModelCandidateSkip,
 	type IceSubagentRouteSnapshot,
@@ -193,6 +210,17 @@ import {
 	resolveIceSubagentContract,
 	resolveIceSubagentHooks,
 } from "./ice-subagent-settings.ts";
+import {
+	buildSubagentTaskContract,
+	deriveSubagentQualityMode,
+	hashSubagentTaskContract,
+	renderSubagentTaskContractSection,
+	SUBAGENT_TASK_CONTRACT_LIMITS,
+	type SubagentQualityMode,
+	type SubagentTaskContract,
+	type SubagentTaskContractKind,
+	type SubagentTaskContractVerificationInput,
+} from "./ice-subagent-task-contract.ts";
 import {
 	formatSubagentTelemetrySummary,
 	type SubagentOutcomeTelemetryInput,
@@ -436,6 +464,8 @@ export type SubagentFailureCode =
 	| "preflight_failed"
 	| "verification_failure"
 	| "batch_budget_exhausted"
+	| "batch_admission_exhausted"
+	| "follow_up_budget_exhausted"
 	| "provider_option_unsupported"
 	| "writer_precondition"
 	| "writer_workspace_failure"
@@ -609,11 +639,13 @@ export interface ResolvedSubagentResources {
 	context: SubagentResourceProvenance[];
 }
 
+/** Parent-facing presentation cap for single and aggregate subagent tool results. */
+export const SUBAGENT_PRESENTATION_LIMIT_BYTES = 64 * 1024;
+
 export const SUBAGENT_BATCH_LIMITS = {
 	maxTasks: 8,
 	defaultConcurrency: SUBAGENT_CONCURRENCY_LIMITS.bundledDefault,
 	maxConcurrency: SUBAGENT_CONCURRENCY_LIMITS.hardCap,
-	defaultBudgetBytes: 256 * 1024,
 	maxManagedBatches: 16,
 	retainedManagedBatches: 32,
 } as const;
@@ -646,12 +678,18 @@ const SUBAGENT_INTERNAL_REPORT_GUIDANCE =
 const SUBAGENT_DELEGATION_POLICY_GUIDELINES: readonly string[] = [
 	"Do not delegate a simple single task: when the whole job is one straightforward piece of work you can do directly with your own tools, do it yourself instead of launching a subagent.",
 	"Delegate only when the work fans out to two or more children (delegate_batch or concurrent background delegate launches).",
+	"Brief every child as a zero-context collaborator: a child sees no parent conversation history, so a terse task string produces shallow work. State the objective and why it matters, not just the command to run.",
+	"Include what you already know in the brief: relevant file paths with line hints, verified facts, approaches already tried or ruled out, and constraints discovered so far. Do not delegate understanding you already have.",
+	"State the exact deliverable and response form: what the child must return, which evidence paths support it, and what to do when evidence is insufficient (report uncertainty; never fill gaps with plausible invention).",
+	"State how to verify when possible: the command, test, or check that establishes the work is done, and tell the child to run it when it has the tools to do so.",
+	"Tell the child what not to do: name non-goals, out-of-scope files, and forbidden actions explicitly; scope.roots grants authority, the brief defines intent.",
+	"Keep sibling scopes independent so children cannot conflict, and perform synthesis yourself in the parent: children return evidence and findings, the parent reconciles disagreements and draws conclusions.",
 ];
 
 export const SUBAGENT_CONTEXT_PACKET_LIMITS = {
 	maxItems: 16,
-	maxItemBytes: 8 * 1024,
-	maxTotalBytes: 64 * 1024,
+	maxItemBytes: 32 * 1024,
+	maxTotalBytes: 256 * 1024,
 } as const;
 
 export type SubagentContextItemKind = "parent_note" | "verified_fact" | "evidence_ref" | "artifact_ref";
@@ -678,14 +716,23 @@ export interface SubagentContextPacket {
 export type SubagentContextMode = "fresh" | "fork";
 
 export const SUBAGENT_FORK_CONTEXT_LIMITS = {
-	maxMessages: 32,
-	maxMessageBytes: 8 * 1024,
-	maxTotalBytes: 64 * 1024,
+	maxMessages: 64,
+	maxMessageBytes: 32 * 1024,
+	maxTotalBytes: 256 * 1024,
 } as const;
 
 export const SUBAGENT_HANDOFF_CONTEXT_LIMITS = {
-	maxTotalBytes: 64 * 1024,
+	maxTotalBytes: 256 * 1024,
 } as const;
+
+export type { SubagentAssuranceLevel } from "./ice-subagent-assurance.ts";
+
+export type {
+	SubagentQualityMode,
+	SubagentTaskContract,
+	SubagentTaskContractKind,
+	SubagentTaskContractVerificationInput,
+} from "./ice-subagent-task-contract.ts";
 
 export const SUBAGENT_REPORT_LIMITS = {
 	maxEvidencePaths: 64,
@@ -898,6 +945,16 @@ export interface SubagentRequest {
 	context?: string;
 	contextPacket?: SubagentContextPacketInput;
 	contextMode?: SubagentContextMode;
+	/** Optional semantic delegation kind; defaults to "explore" for legacy calls. */
+	kind?: SubagentTaskContractKind;
+	/** Optional explicit deliverable statement; defaults to a kind-specific sentence. */
+	deliverable?: string;
+	/** Optional explicit constraints; bounded and redacted, never authority. */
+	constraints?: readonly string[];
+	/** Optional explicit non-goals; scope authority is unchanged. */
+	nonGoals?: readonly string[];
+	/** Optional declarative verification hints; commands are never auto-executed. */
+	verification?: SubagentTaskContractVerificationInput;
 	checkInIntervalMs?: number;
 	timeoutMs?: number;
 	execution?: SubagentExecutionOverrideInput;
@@ -1061,6 +1118,12 @@ export interface NormalizedSubagentRequest
 	outputSchema?: SubagentOutputSchemaNode;
 	/** Resolved at normalization; typed flows force the structured report protocol. */
 	reportMode: SubagentReportMode;
+	/** Host-owned delegation semantics derived at normalization; never authority. */
+	taskContract: SubagentTaskContract;
+	qualityMode: SubagentQualityMode;
+	taskContractHash: string;
+	/** Phase 2: hash-verified instruction/orientation manifest for the approved scope. */
+	contextManifest?: SubagentContextManifest;
 }
 
 export interface SubagentBatchTask {
@@ -1071,6 +1134,11 @@ export interface SubagentBatchTask {
 	context?: string;
 	contextPacket?: SubagentContextPacketInput;
 	contextMode?: SubagentContextMode;
+	kind?: SubagentTaskContractKind;
+	deliverable?: string;
+	constraints?: readonly string[];
+	nonGoals?: readonly string[];
+	verification?: SubagentTaskContractVerificationInput;
 	checkInIntervalMs?: number;
 	timeoutMs?: number;
 	execution?: SubagentExecutionOverrideInput;
@@ -1206,8 +1274,6 @@ export interface SubagentResult {
 	workArtifact?: SubagentWorkArtifact;
 	/** Bounded final-answer projection and optional owner-scoped artifact reference. */
 	output?: SubagentOutput;
-	/** Transitional v1 persistence field; new results must not populate or expose it. */
-	reportArtifact?: SubagentReportArtifact;
 	/** Child claims for parent acceptance criteria; untrusted until parent-verified. */
 	requirementClaims?: readonly SubagentRequirementClaim[];
 	/** Parent-verified requirement states; present when acceptance criteria were declared. */
@@ -1220,6 +1286,14 @@ export interface SubagentResult {
 	hookRecords?: readonly IceHookDispatchRecord[];
 	/** How the final answer was ingested; plain mode performs no structured verification. */
 	reportMode?: SubagentReportMode;
+	/** Host-derived semantic completion class promised for this delegation. */
+	qualityMode?: SubagentQualityMode;
+	/** Deterministic hash of the normalized task contract for telemetry/replay. */
+	taskContractHash?: string;
+	/** Deterministic hash of the context manifest for telemetry/replay. */
+	contextManifestHash?: string;
+	/** Phase 5: descriptive assurance level derived from runtime-observed state. */
+	assurance?: SubagentAssuranceLevel;
 }
 
 export interface SubagentVerification {
@@ -1632,11 +1706,22 @@ function buildSubagentToolActivityDigest(
 		action: boundedSubagentActivityPreview(action, 256) ?? toolName,
 		status: outcome,
 		...(path ? { path } : {}),
+		// Phase 4.4: bounded digest of the full serialized arguments so the
+		// supervisor can detect materially identical repeated calls.
+		argsDigest: createHash("sha256").update(safeSubagentArgsJson(args)).digest("hex").slice(0, 16),
 		startedAtMs,
 		...(finishedAtMs !== undefined ? { finishedAtMs } : {}),
 		...(metadata?.exitCode !== undefined ? { exitCode: metadata.exitCode } : {}),
 		...(metadata?.errorClass ? { errorClass: metadata.errorClass } : {}),
 	});
+}
+
+function safeSubagentArgsJson(args: unknown): string {
+	try {
+		return JSON.stringify(args) ?? "";
+	} catch {
+		return String(typeof args);
+	}
 }
 
 /**
@@ -4205,8 +4290,8 @@ function selectedResourceCandidate(kind: SubagentResourceKind, name: string, roo
 	return kind === "prompt" ? join(root, `${name}.md`) : join(root, name);
 }
 
-const MAX_SELECTED_RESOURCE_BYTES = 64 * 1024;
-const MAX_SELECTED_RESOURCES_BYTES = 256 * 1024;
+const MAX_SELECTED_RESOURCE_BYTES = 128 * 1024;
+const MAX_SELECTED_RESOURCES_BYTES = 512 * 1024;
 
 function readBoundedResourceFile(path: string, kind: SubagentResourceKind, name: string): Buffer {
 	let stats: ReturnType<typeof statSync>;
@@ -4561,7 +4646,7 @@ function assertSubagentHandoffContextBudget(
 	const totalBytes = contextPacket.totalBytes + forkContext.totalBytes;
 	if (totalBytes > SUBAGENT_HANDOFF_CONTEXT_LIMITS.maxTotalBytes) {
 		throw new SubagentError(
-			"batch_budget_exhausted",
+			"invalid_request",
 			`Combined subagent handoff context exceeds ${SUBAGENT_HANDOFF_CONTEXT_LIMITS.maxTotalBytes} bytes.`,
 		);
 	}
@@ -4951,8 +5036,8 @@ function inheritSubagentSkillResources(
 		(bytes, resource) => bytes + statSync(resource.canonicalPath).size,
 		0,
 	);
-	if (total > 256 * 1024)
-		throw new SubagentError("untrusted_resource", "Inherited resources exceed the aggregate 256 KiB budget.");
+	if (total > MAX_SELECTED_RESOURCES_BYTES)
+		throw new SubagentError("untrusted_resource", "Inherited resources exceed the aggregate 512 KiB budget.");
 }
 
 export function normalizeSubagentRequest(
@@ -5189,12 +5274,21 @@ export function normalizeSubagentRequest(
 		profile,
 		...(request.execution?.hooks !== undefined ? { hookIds: normalizeSubagentHookIds(request.execution.hooks) } : {}),
 		...(request.execution?.model !== undefined ? { requestedModel: request.execution.model } : {}),
+		...resolveQualityTierRoute(request.kind, iceContract),
 		...(profile.fallbackModel ? { fallbackModel: profile.fallbackModel } : {}),
 		...(selectedMcpTools ? { selectedMcpTools: Object.freeze([...selectedMcpTools]) } : {}),
 		...(selectedAdapterIds ? { selectedAdapterIds: Object.freeze([...selectedAdapterIds]) } : {}),
 		task: request.task.trim(),
 		scope: targets.length > 0 ? { roots, targets } : { roots },
 		cwd: resolvedCwd,
+		// Phase 2: deterministic read-only instruction-chain and orientation
+		// manifest for the approved scope; metadata only, never executable
+		// authority, and the child reads file content through scoped tools.
+		contextManifest: buildSubagentContextManifest({
+			cwd: resolvedCwd,
+			roots,
+			...(targets.length > 0 ? { targets } : {}),
+		}),
 		contextPacket,
 		forkContext,
 		// Public tool schemas reject values below minTimeoutMs; retain the low-level
@@ -5216,7 +5310,126 @@ export function normalizeSubagentRequest(
 		// report protocol; ordinary delegations ingest the natural final turn.
 		reportMode:
 			outputSchema !== undefined || acceptanceCriteria.length > 0 ? "structured_report" : "plain_final_turn",
+		...buildNormalizedTaskContract(request, {
+			objective: request.task.trim(),
+			hasAcceptanceCriteria: acceptanceCriteria.length > 0,
+			hasOutputSchema: outputSchema !== undefined,
+		}),
 	};
+}
+
+/**
+ * Phase 1: derive the host-owned delegation task contract and quality mode at
+ * normalization. The contract is task semantics only — it never widens scope,
+ * tools, models, or credentials — and verified parent facts from the context
+ * packet become bounded known-fact entries.
+ */
+function buildNormalizedTaskContract(
+	request: Pick<
+		SubagentRequest,
+		"kind" | "deliverable" | "constraints" | "nonGoals" | "verification" | "contextPacket"
+	>,
+	context: { objective: string; hasAcceptanceCriteria: boolean; hasOutputSchema: boolean },
+): { taskContract: SubagentTaskContract; qualityMode: SubagentQualityMode; taskContractHash: string } {
+	const verifiedFacts = (request.contextPacket?.items ?? [])
+		.filter((item) => item.kind === "verified_fact")
+		.slice(0, SUBAGENT_TASK_CONTRACT_LIMITS.maxListItems)
+		.map((item) => ({ id: item.id, text: item.content }));
+	const contract = buildSubagentTaskContract(context.objective, {
+		kind: request.kind,
+		deliverable: request.deliverable,
+		constraints: request.constraints,
+		nonGoals: request.nonGoals,
+		knownFacts: verifiedFacts,
+		verification: request.verification,
+	});
+	const qualityMode = deriveSubagentQualityMode(contract, {
+		hasAcceptanceCriteria: context.hasAcceptanceCriteria,
+		hasOutputSchema: context.hasOutputSchema,
+		defaultedKind: request.kind === undefined,
+	});
+	return {
+		taskContract: contract,
+		qualityMode,
+		taskContractHash: hashSubagentTaskContract(contract),
+	};
+}
+
+/**
+ * Phase 3: map a task kind onto its configured quality tier route. Explicit
+ * execution.model always wins; an unset tier leaves parent-model inheritance.
+ */
+const SUBAGENT_TASK_KIND_ROUTE_TIER: Readonly<Record<SubagentTaskContractKind, "mechanical" | "judgment">> =
+	Object.freeze({
+		explore: "mechanical",
+		research: "judgment",
+		review: "judgment",
+		implement: "judgment",
+		verify: "judgment",
+	});
+
+function resolveQualityTierRoute(
+	kind: SubagentTaskContractKind | undefined,
+	iceContract: IceResolvedSubagentContract,
+): { requestedModel: string } | undefined {
+	if (kind === undefined) return undefined;
+	const route = iceContract.routeTiers[SUBAGENT_TASK_KIND_ROUTE_TIER[kind]];
+	return route !== undefined ? { requestedModel: route } : undefined;
+}
+
+/** Host-owned bounded repair policy (Phase 4.3): distinct follow-ups per live run. */
+export const SUBAGENT_FOLLOW_UP_LIMIT = 3;
+
+function boundFollowUpBudget(requestIds: Set<string>): void {
+	if (requestIds.size >= SUBAGENT_FOLLOW_UP_LIMIT) {
+		throw new SubagentError(
+			"follow_up_budget_exhausted",
+			`The bounded repair budget for this run is spent (${SUBAGENT_FOLLOW_UP_LIMIT} follow-ups); stop, resume, or accept the unresolved result.`,
+		);
+	}
+}
+
+/**
+ * Phase 5: derive the descriptive assurance level from runtime-observed state.
+ * Plain-mode results are capped at `unverified_plain`; declared verification
+ * commands count only when the child actually executed them successfully.
+ */
+function annotateSubagentAssurance(
+	result: SubagentResult,
+	verification: SubagentVerification,
+	normalized: NormalizedSubagentRequest,
+	observedBashCommands: readonly { command: string }[],
+	observedPaths: readonly string[],
+): SubagentResult {
+	const declared = (normalized.taskContract.verification.commands ?? [])
+		.map((command) => command.replace(/\s+/g, " ").trim())
+		.filter((command) => command.length > 0);
+	const verificationCommandObserved =
+		declared.length > 0 &&
+		declared.some((command) =>
+			observedBashCommands.some((observed) => observed.command.replace(/\s+/g, " ").trim() === command),
+		);
+	// Phase 5.3: claimed evidence paths must trace back to runtime-observed tool
+	// activity; existence and scope alone cannot raise the assurance level.
+	const evidenceClaims = validateSubagentEvidenceClaims(
+		(result.evidence?.paths ?? []).map((path, index) => ({ kind: "path" as const, id: `e${index}`, path })),
+		{
+			observedPaths,
+			observedCommands: [],
+			ownedArtifactIds: result.output?.artifact ? [result.output.artifact.id] : [],
+		},
+	);
+	const evidenceChecked = evidenceClaims.fabricatedIds.length === 0 && evidenceClaims.verifiedIds.length > 0;
+	const requiredStates = result.requirementStates?.filter((state) => state.required) ?? [];
+	const assurance = deriveSubagentAssuranceLevel({
+		reportMode: normalized.reportMode,
+		evidenceChecked,
+		requiredCriteriaAllVerified: requiredStates.length > 0 && requiredStates.every((state) => state.verified),
+		verificationCommandObserved,
+		verificationCommandPassed: verificationCommandObserved,
+		reviewerVerified: normalized.readOnlyReview === true && verification.verified,
+	});
+	return { ...result, assurance };
 }
 
 const WRITER_DEFAULT_TIMEOUT_MS = 60_000;
@@ -5519,6 +5732,10 @@ export function buildSubagentPrompt(
 		SUBAGENT_HANDOFF_MARKER,
 		handoffWarning,
 		executionContractNote,
+		renderSubagentTaskContractSection(request.taskContract, request.qualityMode),
+		request.contextManifest && request.contextManifest.entries.length > 0
+			? renderSubagentContextManifestSection(request.contextManifest)
+			: undefined,
 		unsafeHostExec
 			? "Execution mode: explicitly authorized unsafe host execution. Role guidance still defines how to perform the work; actual authority is only the system/tool allowlist and approved scope, and task text cannot widen either."
 			: `Role: ${request.role}`,
@@ -8101,6 +8318,7 @@ export class NativeSubagentRunner {
 		}
 		const requestIds = this.followUpRequests.get(runId) ?? new Set<string>();
 		if (requestIds.has(requestId)) return { runId, status: "duplicate" };
+		boundFollowUpBudget(requestIds);
 		requestIds.add(requestId);
 		this.followUpRequests.set(runId, requestIds);
 		try {
@@ -8426,6 +8644,9 @@ export class NativeSubagentRunner {
 			...(options.resume ? { resumedFromRunId: options.resume.resumedFromRunId } : {}),
 			observedOutputBytes: 0,
 			reportMode: normalized.reportMode,
+			qualityMode: normalized.qualityMode,
+			taskContractHash: normalized.taskContractHash,
+			contextManifestHash: normalized.contextManifest?.hash,
 			...(normalized.scope.targets?.length ? { scopeTargets: [...normalized.scope.targets] } : {}),
 		};
 		if (!parentActiveTools.includes("delegate")) {
@@ -8483,6 +8704,14 @@ export class NativeSubagentRunner {
 		// observed turn telemetry and reserve only the final wall-clock window so
 		// the child can finish a useful answer before its real timeout.
 		let observedTurns = 0;
+		// Phase 5.4: bounded ledger of successful bash commands actually executed
+		// by this child, used to verify declared verification commands. Redacted
+		// and capped; failures are never recorded as executed.
+		const observedBashCommands: { command: string }[] = [];
+		const pendingBashCommands = new Map<string, string>();
+		// Phase 5.3: bounded set of paths the child actually observed with tools,
+		// used to validate claimed evidence paths against runtime-observed state.
+		const observedEvidencePaths: string[] = [];
 		const wrapUpWallReserveMs = Math.min(
 			SUBAGENT_WRAP_UP_LIMITS.maximumWallReserveMs,
 			Math.max(
@@ -8901,6 +9130,13 @@ export class NativeSubagentRunner {
 						"running",
 						Date.now(),
 					);
+					if (event.toolName.toLowerCase() === "bash") {
+						const command = truncateSubagentOutput(
+							redactCredentialText(stringToolArgument(event.args, "command", "cmd") ?? ""),
+							2 * 1024,
+						).text;
+						if (command) pendingBashCommands.set(event.toolCallId, command);
+					}
 					activeToolActivities.set(event.toolCallId, activity);
 					supervisor?.recordActivity(activity);
 					emit(
@@ -8926,6 +9162,17 @@ export class NativeSubagentRunner {
 						activeToolActivities.set(event.toolCallId, activity);
 						supervisor?.recordActivity(activity);
 						recordTouchedPath(started.toolName, started.path);
+						const pendingCommand = pendingBashCommands.get(event.toolCallId);
+						pendingBashCommands.delete(event.toolCallId);
+						if (isBash && pendingCommand && !event.isError) {
+							observedBashCommands.push({ command: pendingCommand });
+							if (observedBashCommands.length > 16) observedBashCommands.shift();
+						}
+						if (started.path && !event.isError) {
+							observedEvidencePaths.push(started.path);
+							if (observedEvidencePaths.length > SUBAGENT_REPORT_LIMITS.maxEvidencePaths)
+								observedEvidencePaths.shift();
+						}
 					}
 					emit("subagent_tool_end", "running", event.toolName, started?.path, event.toolCallId);
 					dispatchSubagentHookObservation(
@@ -9145,7 +9392,7 @@ export class NativeSubagentRunner {
 										? `No final ${finalDeliverableNoun}: the child was cancelled before ${missingDeliverableTarget}.`
 										: reason === "timed_out"
 											? `No final ${finalDeliverableNoun}: the child reached its wall-clock timeout before ${missingDeliverableTarget}.`
-											: `No final ${finalDeliverableNoun}: the child exceeded the bounded output budget before ${missingDeliverableTarget}.`,
+											: `No final ${finalDeliverableNoun}: the child ended before ${missingDeliverableTarget}.`,
 							},
 							{ terminal: true },
 						),
@@ -9367,9 +9614,15 @@ export class NativeSubagentRunner {
 					return rejectedResult;
 				}
 				const verification = verifySubagentResult(completedResult, normalized);
-				const annotatedResult: SubagentResult = verification.requirementSummary
-					? { ...completedResult, requirementStates: verification.requirementSummary.states }
-					: completedResult;
+				const annotatedResult: SubagentResult = annotateSubagentAssurance(
+					verification.requirementSummary
+						? { ...completedResult, requirementStates: verification.requirementSummary.states }
+						: completedResult,
+					verification,
+					normalized,
+					observedBashCommands,
+					observedEvidencePaths,
+				);
 				updatePresentation({
 					finalizationStarted: false,
 					protocolReportPending: false,
@@ -9476,9 +9729,15 @@ export class NativeSubagentRunner {
 					return rejectedResult;
 				}
 				const verification = verifySubagentResult(completedResult, normalized);
-				const annotatedResult: SubagentResult = verification.requirementSummary
-					? { ...completedResult, requirementStates: verification.requirementSummary.states }
-					: completedResult;
+				const annotatedResult: SubagentResult = annotateSubagentAssurance(
+					verification.requirementSummary
+						? { ...completedResult, requirementStates: verification.requirementSummary.states }
+						: completedResult,
+					verification,
+					normalized,
+					observedBashCommands,
+					observedEvidencePaths,
+				);
 				// No finalReportMessageIndex: the plain answer stays visible in the child view.
 				updatePresentation({
 					finalizationStarted: false,
@@ -10662,6 +10921,8 @@ export function resolveReviewTask(
 			context: task.context,
 			contextPacket: task.contextPacket,
 			contextMode: task.contextMode,
+			kind: "review",
+			verification: { mode: "review" },
 			checkInIntervalMs: task.checkInIntervalMs,
 			execution: task.execution,
 			resources: task.resources,
@@ -10820,6 +11081,24 @@ const contextPacketParameters = Type.Object({
 	items: Type.Array(contextPacketItemParameters, { maxItems: SUBAGENT_CONTEXT_PACKET_LIMITS.maxItems }),
 });
 
+const taskContractKindParameters = Type.Union([
+	Type.Literal("explore"),
+	Type.Literal("research"),
+	Type.Literal("review"),
+	Type.Literal("implement"),
+	Type.Literal("verify"),
+]);
+
+const taskContractVerificationParameters = Type.Object(
+	{
+		mode: Type.Optional(
+			Type.Union([Type.Literal("evidence"), Type.Literal("tests"), Type.Literal("review"), Type.Literal("none")]),
+		),
+		commands: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 512 }), { minItems: 1, maxItems: 4 })),
+	},
+	{ additionalProperties: false },
+);
+
 const acceptanceCriterionParameters = Type.Object(
 	{
 		id: Type.String({ minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$" }),
@@ -10970,6 +11249,11 @@ const delegateParameters = Type.Object(
 		context: Type.Optional(Type.String({ maxLength: 8 * 1024 })),
 		contextPacket: Type.Optional(contextPacketParameters),
 		contextMode: Type.Optional(Type.Union([Type.Literal("fresh"), Type.Literal("fork")])),
+		kind: Type.Optional(taskContractKindParameters),
+		deliverable: Type.Optional(Type.String({ maxLength: 1024 })),
+		constraints: Type.Optional(Type.Array(Type.String({ maxLength: 1024 }), { minItems: 1, maxItems: 8 })),
+		nonGoals: Type.Optional(Type.Array(Type.String({ maxLength: 1024 }), { minItems: 1, maxItems: 8 })),
+		verification: Type.Optional(taskContractVerificationParameters),
 		checkInIntervalMs: Type.Optional(Type.Integer({ minimum: SUBAGENT_CHECKIN_INTERVAL_MS })),
 		startupTimeoutMs: Type.Optional(
 			Type.Integer({
@@ -11095,6 +11379,11 @@ const delegateBatchTaskParameters = Type.Object(
 		context: Type.Optional(Type.String({ maxLength: 8 * 1024 })),
 		contextPacket: Type.Optional(contextPacketParameters),
 		contextMode: Type.Optional(Type.Union([Type.Literal("fresh"), Type.Literal("fork")])),
+		kind: Type.Optional(taskContractKindParameters),
+		deliverable: Type.Optional(Type.String({ maxLength: 1024 })),
+		constraints: Type.Optional(Type.Array(Type.String({ maxLength: 1024 }), { minItems: 1, maxItems: 8 })),
+		nonGoals: Type.Optional(Type.Array(Type.String({ maxLength: 1024 }), { minItems: 1, maxItems: 8 })),
+		verification: Type.Optional(taskContractVerificationParameters),
 		checkInIntervalMs: Type.Optional(Type.Integer({ minimum: SUBAGENT_CHECKIN_INTERVAL_MS })),
 		execution: Type.Optional(subagentExecutionParameters),
 		resources: Type.Optional(resourceSelectionParameters),
@@ -11463,10 +11752,36 @@ function formatToolResult(result: SubagentResult, verification: SubagentVerifica
 			: result.reportMode === "structured_report"
 				? "Report mode: bounded structured JSON report."
 				: undefined;
+	const qualityModeRow =
+		result.qualityMode === "explore"
+			? "Quality mode: explore (evidence-limited; this result is not verified work)."
+			: result.qualityMode === "standard"
+				? "Quality mode: standard (evidence-backed completion expected)."
+				: result.qualityMode === "strict"
+					? "Quality mode: strict (acceptance criteria and verification gate apply)."
+					: undefined;
+	const assuranceRow = result.assurance ? `Assurance: ${SUBAGENT_ASSURANCE_LEVEL_TEXT[result.assurance]}.` : undefined;
+	const weakRunCodes = formatWeakRunDiagnostics(
+		buildSubagentQualityTelemetry({
+			taskContractHash: result.taskContractHash,
+			contextManifestHash: result.contextManifestHash,
+			qualityMode: result.qualityMode,
+			assurance: result.assurance,
+			reportMode: result.reportMode,
+			evidenceCount: result.evidence?.paths?.length,
+			unresolvedClaims: verification.unresolvedClaims.length,
+			criteriaTotal: result.requirementStates?.length,
+			criteriaVerified: result.requirementStates?.filter((state) => state.verified).length,
+			finalStatus: result.status,
+		}),
+	);
+	const weakRunRow = weakRunCodes.length > 0 ? `Weak-run diagnostics: ${weakRunCodes.join(", ")}.` : undefined;
 	const text = [
 		`Subagent ${result.status} (${result.profile}, ${result.runId}).`,
 		result.summary,
 		modeRow,
+		qualityModeRow,
+		assuranceRow,
 		verification.verified
 			? verification.kind === "plain_bounds"
 				? "Parent verification: plain answer accepted (lineage and output bound only; no structured verification)."
@@ -11479,11 +11794,35 @@ function formatToolResult(result: SubagentResult, verification: SubagentVerifica
 		verification.unresolvedClaims.length > 0
 			? `Unresolved claims for parent synthesis: ${verification.unresolvedClaims.join(" | ")}`
 			: undefined,
+		formatSubagentRepairRecommendation(result, verification),
+		weakRunRow,
 		result.truncated ? "Output was truncated; treat the report as partial evidence." : undefined,
 	]
 		.filter((part): part is string => part !== undefined)
 		.join("\n\n");
-	return truncateSubagentOutput(redactCredentialText(text), 16 * 1024).text;
+	return truncateSubagentOutput(redactCredentialText(text), SUBAGENT_PRESENTATION_LIMIT_BYTES).text;
+}
+
+/**
+ * Phase 4.2: bounded, deterministic same-session repair recommendation. The
+ * parent stays responsible for deciding to send manage_subagent follow_up;
+ * the runtime never relaunches or rewrites the child on its own.
+ */
+function formatSubagentRepairRecommendation(
+	result: SubagentResult,
+	verification: SubagentVerification,
+): string | undefined {
+	if (!verification.verified) {
+		const missingRequired = (result.requirementStates ?? [])
+			.filter((state) => state.required && !state.verified)
+			.map((state) => state.id)
+			.slice(0, 8);
+		if (missingRequired.length > 0) {
+			return `Recommended repair: manage_subagent follow_up asking the child to provide observed evidence for criteria ${missingRequired.join(", ")}.`;
+		}
+		return "Recommended repair: manage_subagent follow_up with the missing evidence or correction; accept the unresolved result if none is possible.";
+	}
+	return undefined;
 }
 
 function formatSubagentJobInspection(inspection: SubagentJobInspection): string {
@@ -11499,7 +11838,7 @@ function formatSubagentJobInspection(inspection: SubagentJobInspection): string 
 				? `Admission: active=${inspection.scheduling.ownerActiveJobs}, queued=${inspection.scheduling.ownerQueuedJobs}, cap=${inspection.scheduling.ownerActiveJobsCap}.`
 				: undefined,
 			inspection.job.contract
-				? `Accepted contract: thinking=${inspection.job.contract.thinking}, ${inspection.job.contract.timeoutMs === undefined ? "no child lifetime deadline" : `legacy timeout=${inspection.job.contract.timeoutMs}ms`}, check-in=${inspection.job.contract.checkInIntervalMs === undefined ? "legacy interval unavailable" : `${inspection.job.contract.checkInIntervalMs}ms`}${inspection.job.contract.maxOutputBytes !== undefined ? ", legacy output cap ignored" : ""}, tools=${inspection.job.contract.tools.join(",") || "none"}.`
+				? `Accepted contract: thinking=${inspection.job.contract.thinking}, no child lifetime deadline, check-in=${inspection.job.contract.checkInIntervalMs === undefined ? "legacy interval unavailable" : `${inspection.job.contract.checkInIntervalMs}ms`}, tools=${inspection.job.contract.tools.join(",") || "none"}.`
 				: undefined,
 			`Result ref: ${inspection.job.resultRef}.`,
 			result?.summary,
@@ -11523,8 +11862,11 @@ function formatSubagentJobInspection(inspection: SubagentJobInspection): string 
 						.filter((part): part is string => part !== undefined)
 						.join(" ")
 				: undefined,
-			result?.reportArtifact
-				? `Oversized report capture: ${result.reportArtifact.path} (${result.reportArtifact.originalBytes} bytes${result.reportArtifact.truncated ? ", artifact truncated" : ""}).`
+			result?.qualityMode
+				? `Quality mode: ${result.qualityMode}${result.taskContractHash ? `; task contract ${result.taskContractHash.slice(0, 12)}` : ""}.`
+				: undefined,
+			result?.output
+				? `Final output: ${result.output.captureStatus}; inline ${result.output.textBytes} bytes; original ${result.output.originalBytes} bytes${result.output.artifact ? `; artifactId=${result.output.artifact.id}; stored ${result.output.artifact.storedBytes} bytes${result.output.artifact.truncated ? ", truncated" : ""}` : "; no artifact"}. Use read_subagent_output for retained artifact content.`
 				: undefined,
 			result && result.diagnostics.length > 0
 				? `Diagnostics: ${result.diagnostics.map((diagnostic) => diagnostic.code).join(", ")}.`
@@ -11536,16 +11878,30 @@ function formatSubagentJobInspection(inspection: SubagentJobInspection): string 
 }
 
 function formatBatchToolResult(result: SubagentBatchResult): string {
+	const synthesis = summarizeBatchSynthesis(
+		result.items.map((item) => ({ taskId: item.taskId, result: item.result })),
+	);
 	const text = [
 		formatSubagentLaunchDigest(result.preflight),
 		`Subagent batch ${result.status} (${result.batchId}).`,
 		...result.items.map(
 			(item) =>
-				`Task ${item.taskId}: ${item.result.status}; verification ${item.verification.verified ? "passed" : "failed"}.\n${item.result.summary}`,
+				`Task ${item.taskId}: ${item.result.status}; verification ${formatSubagentVerificationWord(item.verification)}${formatSubagentArtifactSuffix(item.result)}.\n${item.result.summary}`,
 		),
+		renderBatchSynthesisSection(synthesis),
 		...result.diagnostics.map((diagnostic) => `Diagnostic: ${diagnostic.code}: ${diagnostic.message}`),
 	].join("\n\n");
-	return truncateSubagentOutput(redactCredentialText(text), 16 * 1024).text;
+	return truncateSubagentOutput(redactCredentialText(text), SUBAGENT_PRESENTATION_LIMIT_BYTES).text;
+}
+
+/** Phase 5.1: bounds-only verification is never presented as generic "passed". */
+function formatSubagentVerificationWord(verification: SubagentVerification): string {
+	if (!verification.verified) return "failed";
+	return verification.kind === "plain_bounds" ? "bounds-checked only (no structured verification)" : "passed";
+}
+
+function formatSubagentArtifactSuffix(result: SubagentResult): string {
+	return result.output?.artifact ? `; artifact ${result.output.artifact.id}` : "";
 }
 
 function formatReviewBatchToolResult(result: ReviewBatchResult): string {
@@ -11558,14 +11914,14 @@ function formatReviewBatchToolResult(result: ReviewBatchResult): string {
 					`${finding.severity} ${finding.category}: ${finding.claim} [${finding.evidence.map((ref) => ref.path).join(", ")}]`,
 			);
 			return [
-				`Reviewer ${reviewer.taskId} (${reviewer.dimension}; model ${reviewer.modelProvenance.resolved} via ${reviewer.modelProvenance.source}): ${reviewer.result.status}; verification ${reviewer.verification.verified ? "passed" : "failed"}.`,
+				`Reviewer ${reviewer.taskId} (${reviewer.dimension}; model ${reviewer.modelProvenance.resolved} via ${reviewer.modelProvenance.source}): ${reviewer.result.status}; verification ${formatSubagentVerificationWord(reviewer.verification)}${formatSubagentArtifactSuffix(reviewer.result)}.`,
 				reviewer.result.summary,
 				...findings,
 			].join("\n");
 		}),
 		...result.diagnostics.map((diagnostic) => `Diagnostic: ${diagnostic.code}: ${diagnostic.message}`),
 	].join("\n\n");
-	return truncateSubagentOutput(redactCredentialText(text), 16 * 1024).text;
+	return truncateSubagentOutput(redactCredentialText(text), SUBAGENT_PRESENTATION_LIMIT_BYTES).text;
 }
 
 function redactSubagentFinding(finding: ReviewFinding): ReviewFinding {
@@ -11743,14 +12099,6 @@ export function emitObservatoryUpdate<TDetails>(
 	} catch {
 		// Observability consumers are non-authoritative and must not affect execution.
 	}
-}
-
-function terminalProgressPhase(status: string): ObservatoryPhase {
-	if (status === "completed") return "completed";
-	if (status === "cancelled") return "cancelled";
-	if (status === "timed_out") return "timed_out";
-	if (status === "verification_failed") return "verification_failed";
-	return "failed";
 }
 
 function publishRuntimeProgress<TDetails>(
@@ -13174,11 +13522,11 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 			(record) => !["completed", "partial", "failed", "cancelled"].includes(record.state),
 		).length;
 		if (active >= SUBAGENT_BATCH_LIMITS.maxManagedBatches) {
-			throw new SubagentError("batch_budget_exhausted", "The owner reached the active managed-batch limit.");
+			throw new SubagentError("batch_admission_exhausted", "The owner reached the active managed-batch limit.");
 		}
 		pruneManagedBatches();
 		if (managedBatches.size >= SUBAGENT_BATCH_LIMITS.retainedManagedBatches) {
-			throw new SubagentError("batch_budget_exhausted", "The managed-batch result ledger is full.");
+			throw new SubagentError("batch_admission_exhausted", "The managed-batch result ledger is full.");
 		}
 		const record: ManagedSubagentBatchRecord = {
 			batchId,
@@ -13248,11 +13596,11 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 			(record) => record.state === "starting" || record.state === "running",
 		).length;
 		if (active + pendingManagedWriterAdmissions >= MANAGED_WRITER_LIMITS.maxActive) {
-			throw new SubagentError("batch_budget_exhausted", "The owner reached the active managed-writer limit.");
+			throw new SubagentError("batch_admission_exhausted", "The owner reached the active managed-writer limit.");
 		}
 		pruneManagedWriters();
 		if (managedWriters.size >= MANAGED_WRITER_LIMITS.retained) {
-			throw new SubagentError("batch_budget_exhausted", "The managed-writer result ledger is full.");
+			throw new SubagentError("batch_admission_exhausted", "The managed-writer result ledger is full.");
 		}
 		pendingManagedWriterAdmissions++;
 	};
@@ -14301,7 +14649,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 		name: "manage_subagent",
 		label: "manage_subagent",
 		description:
-			"Inspect, peek, wait, follow up, detach, stop, resume, or delete the same ICE child through one phase-aware owner-scoped lifecycle. Use the foreground runId returned by delegate: details.managed.runId for a live background launch, or details.result.runId for a retained terminal result. Do not pass a durable jobId, resultRef such as job:<id>, batchId, or taskId. Peek returns the latest bounded snapshot immediately. Wait blocks this tool call for at most waitMs until a terminal state; a wait expiry reports the current state and never changes child state. Detach retains the same live child under management so the parent can continue other work. Follow-up queues bounded untrusted task data through Ice steering, requires a stable requestId, and is rejected while a user has takeover control. Following up or detaching preserves run ID, model, profile, scope, and tool authority. Stop explicitly cancels a live child. Resume continues a retained completed child in its original session and authority; delete forgets a retained reusable session idempotently, while managed terminal observations stay peekable.",
+			"Inspect, peek, wait, follow up, detach, stop, resume, or delete the same ICE child through one phase-aware owner-scoped lifecycle. Use the foreground runId returned by delegate: details.managed.runId for a live background launch, or details.result.runId for a retained terminal result. Do not pass a durable jobId, resultRef such as job:<id>, batchId, or taskId. Peek returns the latest bounded snapshot immediately. Wait blocks this tool call for at most waitMs until a terminal state; a wait expiry reports the current state and never changes child state. Detach retains the same live child under management so the parent can continue other work. Follow-up queues bounded untrusted task data through Ice steering, requires a stable requestId, and is rejected while a user has takeover control. Following up or detaching preserves run ID, model, profile, scope, and tool authority and cannot widen owner-scoped output artifact access. Stop explicitly cancels a live child. Resume continues a retained completed child in its original session and authority; delete forgets a retained reusable session idempotently, while managed terminal observations stay peekable.",
 		promptSnippet: "Inspect, wait, follow up, stop, or manage a subagent run",
 		parameters: manageSubagentParameters,
 		renderCall: (args, theme, context) => renderObservatoryCall("manage_subagent", args, theme, context),
@@ -15464,6 +15812,15 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 				const projectTrusted = ctx.isProjectTrusted();
 				const settingsManager = getParentSettingsManager(ctx);
 				const unsafeAuthorization = authorizeUnsafeSubagentHostExecution(ctx, options, subYoloEnabled());
+				// Phase 6.1: reject exact duplicate sibling contracts while leaving
+				// legitimate overlapping (independent-review) scopes untouched.
+				const duplicatePair = findExactDuplicateBatchTasks(params.tasks)[0];
+				if (duplicatePair) {
+					throw new SubagentError(
+						"invalid_request",
+						`Batch tasks ${duplicatePair.firstId} and ${duplicatePair.duplicateId} are exact duplicates; differentiate their scopes, kinds, or briefs, or drop one sibling.`,
+					);
+				}
 				const parentContext = params.tasks.some((task) => task.contextMode === "fork")
 					? memoizeSubagentForkContextSource(ctx.sessionManager)
 					: undefined;
@@ -15478,6 +15835,11 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 							context: task.context,
 							contextPacket: task.contextPacket,
 							contextMode: task.contextMode,
+							kind: task.kind,
+							deliverable: task.deliverable,
+							constraints: task.constraints,
+							nonGoals: task.nonGoals,
+							verification: task.verification,
 							checkInIntervalMs: task.checkInIntervalMs,
 							execution: task.execution,
 							resources: task.resources,
@@ -16199,6 +16561,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 		jobs = new SubagentJobRegistry({
 			ownerSessionId: ctx.sessionManager.getSessionId(),
 			reportArtifactRoot: subagentArtifactRoot,
+			outputArtifacts,
 			persist: (snapshot) => ice.appendEntry(JOB_ENTRY_TYPE, snapshot),
 			notify: queueCompletion,
 			maxActiveJobs: concurrencyPolicy.defaultConcurrency,

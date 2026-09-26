@@ -46,6 +46,16 @@ export interface IceSubagentSettingsInput {
 	modelSelection?: { mode?: string };
 	/** Bounded active-child concurrency for batches and background jobs. */
 	concurrency?: SubagentConcurrencySettings;
+	/** Host-owned quality-tier route aliases resolved through the exact route policy. */
+	routeTiers?: SubagentRouteTierSettings;
+}
+
+/** Semantic worker tiers: mechanical (high-volume, low reasoning) vs judgment (reasoning-heavy). */
+export interface SubagentRouteTierSettings {
+	/** Exact provider/model reference used for mechanical task classes. */
+	mechanical?: string;
+	/** Exact provider/model reference used for judgment task classes. */
+	judgment?: string;
 }
 
 export interface IceHookDefinitionInput {
@@ -86,6 +96,7 @@ export const ICE_SUBAGENT_SETTINGS_LIMITS = {
 	maxHookIdBytes: 128,
 	maxHookTimeoutMs: 30_000,
 	maxHookOutputBytes: 32 * 1024,
+	maxRouteTierReferenceBytes: 256,
 } as const;
 
 export const ICE_SUBAGENT_THINKING_LEVELS: readonly SubagentThinkingLevel[] = Object.freeze([
@@ -107,8 +118,10 @@ const KNOWN_SUBAGENT_SETTINGS_KEYS = new Set([
 	"restrictions",
 	"modelSelection",
 	"concurrency",
+	"routeTiers",
 ]);
 const KNOWN_CONCURRENCY_KEYS = new Set(["default", "max"]);
+const KNOWN_ROUTE_TIER_KEYS = new Set(["mechanical", "judgment"]);
 const KNOWN_PREFERENCE_KEYS = new Set(["thinking", "checkInIntervalMs", "startupTimeoutMs", "temperature", "topP"]);
 const KNOWN_RESTRICTION_KEYS = new Set(["maxStartupTimeoutMs", "denyRoles", "denyTools"]);
 const KNOWN_HOOK_KEYS = new Set(["id", "event", "roles", "kind", "timeoutMs", "maxOutputBytes", "required"]);
@@ -224,6 +237,7 @@ export interface ParsedIceSubagentSettings {
 	};
 	modelSelection: { mode: "inherit-parent" | "configured" };
 	concurrency: SubagentConcurrencySettings;
+	routeTiers: SubagentRouteTierSettings;
 	diagnostics: readonly string[];
 }
 
@@ -237,6 +251,7 @@ export function parseIceSubagentSettings(input: unknown, path = "ice.subagents")
 			restrictions: { denyRoles: Object.freeze([]), denyTools: Object.freeze([]) },
 			modelSelection: { mode: "inherit-parent" },
 			concurrency: Object.freeze({}),
+			routeTiers: Object.freeze({}),
 			diagnostics: Object.freeze([]),
 		};
 	}
@@ -374,6 +389,29 @@ export function parseIceSubagentSettings(input: unknown, path = "ice.subagents")
 		}
 		concurrency = Object.freeze(concurrency);
 	}
+	let routeTiers: SubagentRouteTierSettings = {};
+	if (input.routeTiers !== undefined) {
+		if (!isRecord(input.routeTiers)) throw fail(`${path}.routeTiers`, "expected object");
+		for (const key of Object.keys(input.routeTiers)) {
+			if (!KNOWN_ROUTE_TIER_KEYS.has(key)) throw fail(`${path}.routeTiers.${key}`, `unknown key "${key}"`);
+		}
+		const raw = input.routeTiers as Record<string, unknown>;
+		for (const tier of ["mechanical", "judgment"] as const) {
+			const value = raw[tier];
+			if (value === undefined) continue;
+			if (
+				typeof value !== "string" ||
+				value.length === 0 ||
+				value.length > ICE_SUBAGENT_SETTINGS_LIMITS.maxRouteTierReferenceBytes ||
+				/\s/.test(value) ||
+				!value.includes("/")
+			) {
+				throw fail(`${path}.routeTiers.${tier}`, "expected an exact provider/model reference");
+			}
+			routeTiers[tier] = value;
+		}
+		routeTiers = Object.freeze(routeTiers);
+	}
 	return {
 		enabled,
 		defaults,
@@ -386,6 +424,7 @@ export function parseIceSubagentSettings(input: unknown, path = "ice.subagents")
 		}),
 		modelSelection,
 		concurrency,
+		routeTiers,
 		diagnostics: Object.freeze(diagnostics),
 	};
 }
@@ -595,6 +634,8 @@ export interface IceResolvedSubagentContract {
 	};
 	/** W06: caps that clamped a preference value (empty when none applied). */
 	restrictionsApplied: readonly string[];
+	/** Host-owned quality-tier route aliases from global settings; project layers cannot set them. */
+	routeTiers: { mechanical?: string; judgment?: string };
 	/** W06: configured tool denials are applied again at the child dispatch boundary. */
 	deniedTools: readonly string[];
 	/** W06: deny-first refusal, when the role itself is refused. */
@@ -824,6 +865,12 @@ export function resolveIceSubagentContract(input: IceResolverInput): IceResolved
 	const restrictionsApplied = diagnostics.some((entry) => entry.includes("startupTimeoutMs clamped"))
 		? ["startupTimeoutMs"]
 		: [];
+	// Quality-tier route aliases are host-owned global policy. A project layer
+	// may not broaden model access, so project routeTiers are ignored loudly.
+	if (Object.keys(projectParsed.routeTiers).length > 0) {
+		diagnostics.push("project ice.subagents.routeTiers ignored; tier routing is global host policy");
+	}
+	const routeTiers: { mechanical?: string; judgment?: string } = { ...globalParsed.routeTiers };
 
 	const contract: IceResolvedSubagentContract = {
 		enabled,
@@ -855,6 +902,7 @@ export function resolveIceSubagentContract(input: IceResolverInput): IceResolved
 			topP: topP.source,
 		},
 		restrictionsApplied: Object.freeze(restrictionsApplied),
+		routeTiers: Object.freeze(routeTiers),
 		...(denied ? { denied } : {}),
 	};
 	return Object.freeze(contract);

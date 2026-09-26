@@ -5,11 +5,18 @@ import { getAgentDir } from "./config.ts";
 import { matchesEntryType } from "./core/legacy-compat/identity.ts";
 import { isIceDelegableAdapterId } from "./ice-subagent-capabilities.ts";
 import { SUBAGENT_CONCURRENCY_LIMITS, type SubagentConcurrencyAdmission } from "./ice-subagent-concurrency.ts";
+import {
+	isSubagentOutput,
+	type SubagentOutput,
+	type SubagentOutputArtifactStore,
+} from "./ice-subagent-output-artifacts.ts";
 import type { IceModelCandidateSkip, IceSubagentRouteSnapshot } from "./ice-subagent-routing.ts";
 import type { IceHookDispatchRecord } from "./ice-subagent-settings.ts";
 import type {
 	ReviewFinding,
+	SubagentAssuranceLevel,
 	SubagentFailureCode,
+	SubagentQualityMode,
 	SubagentReportArtifact,
 	SubagentReportMode,
 	SubagentResult,
@@ -25,7 +32,7 @@ export const SUBAGENT_JOB_RETENTION_LIMIT = 32;
 export const SUBAGENT_JOB_DEFAULT_CONCURRENCY = SUBAGENT_CONCURRENCY_LIMITS.bundledDefault;
 /** Hard ceiling for active background jobs; shared admission may cap lower. */
 export const SUBAGENT_JOB_MAX_CONCURRENCY = SUBAGENT_CONCURRENCY_LIMITS.hardCap;
-export const SUBAGENT_JOB_QUEUE_LIMIT = 8;
+export const SUBAGENT_JOB_QUEUE_LIMIT = 16;
 // Historical snapshot validation only; new durable admission does not reserve output bytes.
 const LEGACY_JOB_OWNER_OUTPUT_BUDGET = 256 * 1024;
 const MAX_DURABLE_DIAGNOSTIC_BYTES = 1024;
@@ -55,10 +62,6 @@ export interface SubagentJobContract {
 	thinking: string;
 	/** Periodic supervisory check-in interval; omitted by legacy snapshots. */
 	checkInIntervalMs?: number;
-	/** Legacy accepted lifetime timeout; new background jobs do not have one. */
-	timeoutMs?: number;
-	/** Historical final-answer cap; decoded for inspection only and never applied to new work. */
-	maxOutputBytes?: number;
 	temperature?: number;
 	topP?: number;
 	tools: readonly string[];
@@ -90,8 +93,6 @@ export interface SubagentJobRecord {
 	createdAt: string;
 	queuedAt?: string;
 	queueOrder?: number;
-	plannedOutputBytes?: number;
-	reservedOutputBytes?: number;
 	startedAt?: string;
 	finishedAt?: string;
 	runId?: string;
@@ -108,6 +109,12 @@ export interface SubagentJobResultEnvelope {
 	summary?: string;
 	/** How the final answer was ingested; absent in snapshots persisted before this field existed. */
 	reportMode?: SubagentReportMode;
+	/** Host-derived semantic completion class; absent in snapshots persisted before this field existed. */
+	qualityMode?: SubagentQualityMode;
+	/** Deterministic hash of the normalized task contract; absent in legacy snapshots. */
+	taskContractHash?: string;
+	/** Runtime-derived assurance level; absent in snapshots persisted before this field existed. */
+	assurance?: SubagentAssuranceLevel;
 	evidence?: {
 		paths: readonly string[];
 	};
@@ -131,7 +138,12 @@ export interface SubagentJobResultEnvelope {
 	}[];
 	/** Runtime-owned bounded work projection preserved across report-protocol failures. */
 	workArtifact?: SubagentJobWorkArtifactView;
-	/** Stable local pointer for an oversized final or partial assistant capture. */
+	/** Pathless terminal output projection; artifact content is retrieved separately. */
+	output?: SubagentOutput;
+}
+
+interface PersistedSubagentJobResultEnvelope extends SubagentJobResultEnvelope {
+	/** Historical v1 path-bearing metadata; never returned by inspection APIs. */
 	reportArtifact?: SubagentReportArtifact;
 }
 
@@ -168,7 +180,7 @@ export interface PersistedSubagentJobSnapshot {
 	schemaVersion: 1;
 	sequence: number;
 	job: SubagentJobRecord;
-	result?: SubagentJobResultEnvelope;
+	result?: PersistedSubagentJobResultEnvelope;
 }
 
 export interface SubagentJobRunResult {
@@ -195,13 +207,7 @@ export interface SubagentJobAccepted {
 	resultRef: string;
 }
 
-export type SubagentJobFailureCode =
-	| "background_job_active"
-	| "queue_full"
-	| "job_budget_exhausted"
-	| "job_not_found"
-	| "job_persistence_failure"
-	| "job_invalid";
+export type SubagentJobFailureCode = "queue_full" | "job_not_found" | "job_persistence_failure" | "job_invalid";
 
 export class SubagentJobError extends Error {
 	readonly code: SubagentJobFailureCode;
@@ -220,8 +226,10 @@ interface SubagentJobRegistryOptions {
 	now?: () => Date;
 	maxActiveJobs?: number;
 	maxQueuedJobs?: number;
-	/** Parent-owned root under which runtime report artifacts are generated. */
+	/** Parent-owned root under which historical v1 report artifacts were generated. */
 	reportArtifactRoot?: string;
+	/** Shared owner-scoped output artifact store used by live jobs and restore. */
+	outputArtifacts?: SubagentOutputArtifactStore;
 	/** Shared permit accounting across batch and job admission; optional for legacy consumers. */
 	admission?: SubagentConcurrencyAdmission;
 }
@@ -388,23 +396,45 @@ function cloneHookRecords(
 	);
 }
 
-function cloneResult(result: SubagentJobResultEnvelope): SubagentJobResultEnvelope {
-	const { budget: _legacyBudget, ...resultWithoutLegacyBudget } = result as SubagentJobResultEnvelope & {
+function cloneResult(result: PersistedSubagentJobResultEnvelope): SubagentJobResultEnvelope {
+	const {
+		budget: _legacyBudget,
+		reportArtifact: _legacyReportArtifact,
+		...resultWithoutLegacyFields
+	} = result as SubagentJobResultEnvelope & {
 		budget?: unknown;
+		reportArtifact?: SubagentReportArtifact;
 	};
+	const output = result.output && isSubagentOutput(result.output) ? result.output : undefined;
 	return Object.freeze({
-		...resultWithoutLegacyBudget,
+		...resultWithoutLegacyFields,
 		...(result.summary ? { summary: result.summary } : {}),
 		...(result.evidence ? { evidence: Object.freeze({ paths: Object.freeze([...result.evidence.paths]) }) } : {}),
 		...(result.findings ? { findings: Object.freeze(result.findings.map(cloneFindingDeep)) } : {}),
 		...(result.verification ? { verification: Object.freeze({ ...result.verification }) } : {}),
 		...(result.payload ? { payload: cloneBoundedPayload(result.payload) } : {}),
 		...(result.observedTurns !== undefined ? { observedTurns: result.observedTurns } : {}),
-		...(result.reportArtifact ? { reportArtifact: Object.freeze({ ...result.reportArtifact }) } : {}),
+		...(output
+			? {
+					output: Object.freeze({
+						...output,
+						...(output.artifact ? { artifact: Object.freeze({ ...output.artifact }) } : {}),
+					}),
+				}
+			: {}),
 		...(cloneHookRecords(result.hookRecords) ? { hookRecords: cloneHookRecords(result.hookRecords) } : {}),
 		...(result.usage ? { usage: Object.freeze({ ...result.usage }) } : {}),
 		diagnostics: Object.freeze(result.diagnostics.map((diagnostic) => Object.freeze({ ...diagnostic }))),
 	});
+}
+
+function outputWithoutArtifact(output: SubagentOutput): SubagentOutput {
+	const { artifact: _artifact, ...projection } = output;
+	return Object.freeze({ ...projection, captureStatus: "artifact_unavailable" });
+}
+
+function durableOutputReferenceId(jobId: string): string {
+	return `durable:job:${jobId}`;
 }
 
 function cloneJob(job: SubagentJobRecord): SubagentJobRecord {
@@ -607,7 +637,7 @@ function validResultEnvelope(
 	value: unknown,
 	jobId: string,
 	reportArtifactRoot: string,
-): value is SubagentJobResultEnvelope {
+): value is PersistedSubagentJobResultEnvelope {
 	if (!isRecord(value) || value.schemaVersion !== 1 || value.jobId !== jobId) return false;
 	if (value.runId !== undefined && !isJobId(value.runId)) return false;
 	if (typeof value.status !== "string" || !TERMINAL_STATUSES.has(value.status as TerminalSubagentJobStatus))
@@ -644,6 +674,30 @@ function validResultEnvelope(
 	) {
 		return false;
 	}
+	if (
+		value.qualityMode !== undefined &&
+		value.qualityMode !== "explore" &&
+		value.qualityMode !== "standard" &&
+		value.qualityMode !== "strict"
+	) {
+		return false;
+	}
+	if (
+		value.taskContractHash !== undefined &&
+		(typeof value.taskContractHash !== "string" || !/^[a-f0-9]{64}$/.test(value.taskContractHash))
+	) {
+		return false;
+	}
+	if (
+		value.assurance !== undefined &&
+		value.assurance !== "unverified_plain" &&
+		value.assurance !== "evidence_checked" &&
+		value.assurance !== "criteria_verified" &&
+		value.assurance !== "verification_executed" &&
+		value.assurance !== "review_verified"
+	) {
+		return false;
+	}
 	if (value.payload !== undefined) {
 		if (!isRecord(value.payload)) return false;
 		try {
@@ -663,6 +717,11 @@ function validResultEnvelope(
 			value.runId === undefined)
 	)
 		return false;
+	if (value.output !== undefined) {
+		if (!isSubagentOutput(value.output)) return false;
+		if (value.output.artifact && (value.output.artifact.id === jobId || value.output.artifact.id === value.runId))
+			return false;
+	}
 	if (value.hookRecords !== undefined) {
 		if (!Array.isArray(value.hookRecords) || value.hookRecords.length > 64) return false;
 		if (
@@ -910,7 +969,7 @@ function normalizePersistedSnapshot(value: unknown): unknown {
 			changed = true;
 		}
 		if (isRecord(job.contract)) {
-			const obsoleteKeys = new Set(["maxTotalTokens", "maxTurns", "maxToolCalls"]);
+			const obsoleteKeys = new Set(["maxTotalTokens", "maxTurns", "maxToolCalls", "maxOutputBytes", "timeoutMs"]);
 			const contract = Object.fromEntries(Object.entries(job.contract).filter(([key]) => !obsoleteKeys.has(key)));
 			if (Object.keys(contract).length !== Object.keys(job.contract).length) {
 				job.contract = contract;
@@ -1025,7 +1084,7 @@ function projectResult(
 	const runtimeMessage =
 		runtimeError instanceof Error ? runtimeError.message : runtimeError ? String(runtimeError) : undefined;
 	const artifactView = projectWorkArtifactView(result);
-	const reportArtifact = result?.reportArtifact ? Object.freeze({ ...result.reportArtifact }) : undefined;
+	const output = result?.output && isSubagentOutput(result.output) ? result.output : undefined;
 	const hookRecords = cloneHookRecords(result?.hookRecords);
 	return {
 		schemaVersion: 1,
@@ -1033,6 +1092,9 @@ function projectResult(
 		...(result?.runId || retainedRunId ? { runId: result?.runId ?? retainedRunId } : {}),
 		status,
 		...(result?.reportMode !== undefined ? { reportMode: result.reportMode } : {}),
+		...(result?.qualityMode !== undefined ? { qualityMode: result.qualityMode } : {}),
+		...(result?.taskContractHash !== undefined ? { taskContractHash: result.taskContractHash } : {}),
+		...(result?.assurance !== undefined ? { assurance: result.assurance } : {}),
 		...(summary ? { summary } : {}),
 		...(evidence && evidence.length > 0 ? { evidence: { paths: evidence } } : {}),
 		...(findings && findings.length > 0 ? { findings } : {}),
@@ -1042,7 +1104,7 @@ function projectResult(
 		...(hookRecords ? { hookRecords } : {}),
 		...(cloneUsage(result?.usage) ? { usage: cloneUsage(result?.usage) } : {}),
 		...(artifactView ? { workArtifact: artifactView } : {}),
-		...(reportArtifact ? { reportArtifact } : {}),
+		...(output ? { output } : {}),
 		diagnostics: resultDiagnostics(result, runtimeError ? "job_runtime_failure" : undefined, runtimeMessage),
 	};
 }
@@ -1098,12 +1160,14 @@ export class SubagentJobRegistry {
 	private readonly maxActiveJobs: number;
 	private readonly maxQueuedJobs: number;
 	private readonly reportArtifactRoot: string;
+	private readonly outputArtifacts?: SubagentOutputArtifactStore;
 	private readonly admission?: SubagentConcurrencyAdmission;
 	private readonly listeners = new Set<() => void>();
 	private schedulerBlocked = false;
 	private readonly records = new Map<string, JobState>();
 	private readonly live = new Map<string, LiveJob>();
 	private readonly tombstones = new Map<string, SubagentJobTombstone>();
+	private readonly legacyReportArtifacts = new Map<string, SubagentReportArtifact>();
 	private readonly sequences = new Map<string, number>();
 	private readonly order = new Map<string, number>();
 	private orderCounter = 0;
@@ -1145,6 +1209,7 @@ export class SubagentJobRegistry {
 		this.maxActiveJobs = maxActiveJobs;
 		this.maxQueuedJobs = maxQueuedJobs;
 		this.reportArtifactRoot = resolve(reportArtifactRoot);
+		this.outputArtifacts = options.outputArtifacts;
 		this.admission = options.admission;
 		// Shared-admission wakeup: when a batch or another job releases a permit,
 		// queued jobs may be promoted. Listeners are non-authoritative scheduling hints.
@@ -1209,6 +1274,12 @@ export class SubagentJobRegistry {
 		}
 		if (typeof input.role !== "string" || input.role.length === 0 || typeof input.run !== "function") {
 			throw new SubagentJobError("job_invalid", "Subagent job launch contract is invalid.");
+		}
+		if (
+			input.contract &&
+			(Object.hasOwn(input.contract, "maxOutputBytes") || Object.hasOwn(input.contract, "timeoutMs"))
+		) {
+			throw new SubagentJobError("job_invalid", "Legacy durable job limits are no longer supported.");
 		}
 		const active = this.activeCount();
 		const queued = this.queuedCount();
@@ -1335,6 +1406,7 @@ export class SubagentJobRegistry {
 		this.records.clear();
 		this.live.clear();
 		this.tombstones.clear();
+		this.legacyReportArtifacts.clear();
 		this.sequences.clear();
 		this.order.clear();
 		this.orderCounter = 0;
@@ -1357,6 +1429,9 @@ export class SubagentJobRegistry {
 			latest.set(data.job.jobId, { snapshot: data, order: entryOrder, normalized });
 		}
 		for (const [jobId, value] of latest) {
+			if (value.snapshot.result?.reportArtifact) {
+				this.legacyReportArtifacts.set(jobId, Object.freeze({ ...value.snapshot.result.reportArtifact }));
+			}
 			const state: JobState = {
 				job: { ...value.snapshot.job },
 				...(value.snapshot.result ? { result: cloneResult(value.snapshot.result) } : {}),
@@ -1399,6 +1474,20 @@ export class SubagentJobRegistry {
 			if (isTerminal(state.job.status) && !deliveredJobIds.has(state.job.jobId)) notifications.push(state.job.jobId);
 		}
 		this.trimRetention();
+		for (const state of this.records.values()) {
+			const output = state.result?.output;
+			const artifact = output?.artifact;
+			if (!artifact) continue;
+			const registered = this.outputArtifacts?.registerDurable(
+				this.ownerSessionId,
+				artifact,
+				durableOutputReferenceId(state.job.jobId),
+			);
+			if (!registered && state.result) {
+				state.result = { ...state.result, output: outputWithoutArtifact(output) };
+			}
+		}
+		this.outputArtifacts?.finalizeRestore(this.ownerSessionId);
 		this.publishChange();
 		return notifications;
 	}
@@ -1459,11 +1548,20 @@ export class SubagentJobRegistry {
 
 	private persistState(state: JobState): void {
 		const sequence = (this.sequences.get(state.job.jobId) ?? 0) + 1;
+		const persistedResult = state.result ? cloneResult(state.result) : undefined;
+		const legacyReportArtifact = this.legacyReportArtifacts.get(state.job.jobId);
 		const snapshot: PersistedSubagentJobSnapshot = {
 			schemaVersion: 1,
 			sequence,
 			job: { ...state.job },
-			...(state.result ? { result: cloneResult(state.result) } : {}),
+			...(persistedResult
+				? {
+						result: {
+							...persistedResult,
+							...(legacyReportArtifact ? { reportArtifact: Object.freeze({ ...legacyReportArtifact }) } : {}),
+						},
+					}
+				: {}),
 		};
 		if (!validSnapshot(snapshot, this.reportArtifactRoot))
 			throw new SubagentJobError("job_persistence_failure", "Subagent job snapshot is invalid or oversized.");
@@ -1537,6 +1635,33 @@ export class SubagentJobRegistry {
 		}
 		const result = projectResult(live.job.jobId, live.requestedStop, runResult, runtimeError, live.job.runId);
 		if (runResult?.result.runId) live.job = { ...live.job, runId: runResult.result.runId };
+		const outputArtifact = result.output?.artifact;
+		if (outputArtifact) {
+			const referenceId = durableOutputReferenceId(live.job.jobId);
+			let retained = false;
+			if (outputArtifact.id !== live.job.jobId && outputArtifact.id !== live.job.runId) {
+				try {
+					retained =
+						this.outputArtifacts?.retainDurable(this.ownerSessionId, outputArtifact, referenceId) === true;
+				} catch {
+					retained = false;
+				}
+			}
+			if (!retained) {
+				result.output = outputWithoutArtifact(result.output!);
+				result.diagnostics = [
+					...result.diagnostics.slice(0, 31),
+					{ code: "output_artifact_unavailable", message: "Durable output retention failed." },
+				];
+				// Artifact availability is distinct from verification: retention
+				// failure degrades the output projection, never the terminal status.
+				try {
+					this.outputArtifacts?.release({ ownerSessionId: this.ownerSessionId, artifactId: outputArtifact.id });
+				} catch {
+					// Output cleanup is best-effort; the durable result remains bounded and explicit.
+				}
+			}
+		}
 		live.job = {
 			...live.job,
 			status: result.status,
@@ -1547,6 +1672,7 @@ export class SubagentJobRegistry {
 		try {
 			this.persistState(live);
 		} catch {
+			if (live.result) this.releaseDurableOutput(live.job.jobId, live.result);
 			this.schedulerBlocked = true;
 			this.records.set(live.job.jobId, {
 				job: { ...live.job, status: "failed" },
@@ -1659,6 +1785,20 @@ export class SubagentJobRegistry {
 		});
 	}
 
+	private releaseDurableOutput(jobId: string, result: SubagentJobResultEnvelope): void {
+		const artifact = result.output?.artifact;
+		if (!artifact) return;
+		try {
+			this.outputArtifacts?.release({
+				ownerSessionId: this.ownerSessionId,
+				artifactId: artifact.id,
+				referenceId: durableOutputReferenceId(jobId),
+			});
+		} catch {
+			// Retention state remains authoritative if filesystem cleanup fails.
+		}
+	}
+
 	private trimRetention(): void {
 		const terminal = [...this.records.keys()]
 			.filter((jobId) => {
@@ -1669,9 +1809,12 @@ export class SubagentJobRegistry {
 		for (const jobId of terminal.slice(SUBAGENT_JOB_RETENTION_LIMIT)) {
 			const state = this.records.get(jobId);
 			if (state) {
-				if (state.result?.reportArtifact) {
-					removeRetainedReportArtifact(state.result.reportArtifact, this.reportArtifactRoot, state.result.runId);
+				const legacyReportArtifact = this.legacyReportArtifacts.get(jobId);
+				if (legacyReportArtifact) {
+					removeRetainedReportArtifact(legacyReportArtifact, this.reportArtifactRoot, state.result?.runId);
+					this.legacyReportArtifacts.delete(jobId);
 				}
+				if (state.result) this.releaseDurableOutput(jobId, state.result);
 				// Retention expiry is explicit, not silent: keep a bounded tombstone so
 				// owner inspection can report "expired from full retention; final status X".
 				this.tombstones.set(jobId, {

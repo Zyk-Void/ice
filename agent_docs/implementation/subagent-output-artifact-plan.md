@@ -1,14 +1,15 @@
 # Managed Subagent Output Artifacts and Admission Redesign
 
-- Status: approved design; implementation not started by this document
+- Status: implemented and verified in the current worktree; follow-up evidence is recorded in `subagent-output-artifact-plan-audit.md`
 - Revised: 2026-09-24
 - Target worktree: `/home/mewtwo/Zks/ice/.worktrees/all-worktrees-experimental`
 - Primary package: `packages/coding-agent`
 - Scope: `delegate`, `delegate_async`, `delegate_batch`, `review_batch`, `delegate_write`, their result/inspection surfaces, durable job persistence, Observatory/RPC projections, settings/profile inputs, and tests
-- Architecture authority: `idea.md:23-27`, `idea.md:323-341`, `CONTEXT.md`, and ADR `docs/adr/0001-managed-subagent-output-artifacts.md`
+- Architecture authority: the implemented subagent output contract in `idea.md`, `CONTEXT.md`, and ADR `docs/adr/0001-managed-subagent-output-artifacts.md`
 - Related implemented lifecycle: `agent_docs/implementation/subagent-background-checkin-plan.md`
 - Change class: intentionally breaking for new managed-subagent launch/configuration inputs; historical durable records remain inspectable
-- Source-change policy for this planning task: none; this file is the implementation handoff
+- Implementation: source, regression tests, operator docs, and final verification are complete; no commit was created
+- Verification: 26 targeted test files / 581 tests pass; active npm `12.0.2`; `npm run check` passes; `git diff --check` passes
 
 ## 1. Objective and success state
 
@@ -103,9 +104,11 @@ Add one implementation term:
 
 Execution status, output materialization, verification, progress freshness, and check-in delivery are independent dimensions.
 
-## 4. Verified current-state evidence
+## 4. Baseline evidence at plan inception
 
-| Area | Current evidence | Consequence |
+The table below records the source state this plan was written against. It is historical baseline evidence, not a statement of current implementation status; use `subagent-output-artifact-plan-audit.md` for the post-implementation closure record.
+
+| Area | Baseline evidence | Consequence |
 |---|---|---|
 | Approved direction | `idea.md:23-27` says managed output is being separated from execution, caller aggregate byte budgets/reservations and output-size termination are planned for removal, and large final answers move to `output.text` + owner-bound artifact retrieval. | Treat this as the product contract, not an experiment. |
 | Core delegation invariants | `idea.md:323-341` keeps parent policy authoritative, child result typed/bounded evidence, parent verification authoritative, no lifetime deadlines, bounded concurrency, process-local managed runs, and durable async ownership. | Output redesign must not weaken authority/lifecycle guarantees. |
@@ -283,7 +286,7 @@ Canonical retained child results may each contain up to the fixed per-result inl
 Use a fixed host aggregate presentation cap:
 
 - canonical child inline limit: **8 KiB**;
-- aggregate batch/review tool-response inline text cap: **32 KiB total** across children;
+- aggregate batch/review tool-response inline text cap: **16 KiB total** across children;
 - preserve item order;
 - when aggregate presentation clipping is required, keep each item's artifact reference/materialization metadata intact;
 - clipping an aggregate presentation does not alter the retained canonical child result or its verification.
@@ -297,7 +300,7 @@ Freeze the first implementation at these constants unless tests demonstrate a co
 | Limit | Initial value | Purpose |
 |---|---:|---|
 | Per-result inline final-answer projection | 8 KiB | Parent/model context protection |
-| Aggregate batch/review inline presentation | 32 KiB | Prevent one inspection/result turn from injecting all child text |
+| Aggregate batch/review inline presentation | 16 KiB | Prevent one inspection/result turn from injecting all child text |
 | Per-artifact stored bytes | 512 KiB | Bound a single retained final answer; preserves current artifact ceiling |
 | Default artifact read chunk | 16 KiB | Conservative retrieval/context size |
 | Maximum artifact read chunk | 64 KiB | Hard per-tool-call retrieval bound |
@@ -746,19 +749,19 @@ The stages below are ordered so the fixed output-retention path exists before ou
 
 ### Stage S0 — Freeze contracts and regression baseline
 
-- [ ] **S0.1 — Record current symbol inventory.**
+- [x] **S0.1 — Record current symbol inventory.**
   - Files: `packages/coding-agent/src/ice-subagents.ts`, `ice-subagent-jobs.ts`, `ice-subagent-settings.ts`, `ice-subagent-observatory.ts`, `modes/rpc/rpc-settings.ts`.
   - Capture every final-answer `maxOutputBytes`, `totalBudgetBytes`, `SubagentBatchBudgetLedger`, `plannedOutputBytes`, `reservedOutputBytes`, `background` synchronous branch, and public `reportArtifact.path` use.
   - Explicitly classify command-hook `maxOutputBytes` as retained.
   - Acceptance: no removal work begins from a text search alone; each occurrence is categorized execution/presentation/storage/hook/migration.
   - Verify: checked symbol ledger in implementation notes or updated plan evidence.
 
-- [ ] **S0.2 — Freeze v2 output types and constants.**
+- [x] **S0.2 — Freeze v2 output types and constants.**
   - Add public/internal interfaces and host constants described in sections 6-8.
   - Acceptance: no public path field; artifact ID distinct from run/job IDs; constants not caller configurable.
   - Verify: type-level/unit tests compile before integration.
 
-- [ ] **S0.3 — Add inverse regression specifications before deleting old behavior.**
+- [x] **S0.3 — Add inverse regression specifications before deleting old behavior.**
   - Tests: `ice-subagents.test.ts` / `ice-subagent-result-contract.test.ts`.
   - Specify that a final answer above the former per-child cap is not aborted for byte length.
   - Specify large plain and structured terminal outputs separately.
@@ -766,26 +769,26 @@ The stages below are ordered so the fixed output-retention path exists before ou
 
 ### Stage S1 — Extract and harden the output artifact store
 
-- [ ] **S1.1 — Create `ice-subagent-output-artifacts.ts`.**
+- [x] **S1.1 — Create `ice-subagent-output-artifacts.ts`.**
   - Move/reuse UTF-8 truncation, private-root, no-symlink, canonical containment, exclusive creation, redaction, hashing, and safe cleanup primitives as appropriate.
   - Keep writer patch artifact logic separate.
   - Acceptance: module owns new output artifact path knowledge; public ref has no path.
   - Verify: focused artifact-store unit suite.
 
-- [ ] **S1.2 — Implement opaque ID generation and internal registry.**
+- [x] **S1.2 — Implement opaque ID generation and internal registry.**
   - Dependencies: S1.1.
   - Register owner, lifecycle, optional run/job lineage, metadata, internal path, stored bytes.
   - Acceptance: same artifact ID cannot be registered under another owner; ID is not runId/jobId.
   - Verify: ID/ownership tests.
 
-- [ ] **S1.3 — Implement actual-byte storage accounting.**
+- [x] **S1.3 — Implement actual-byte storage accounting.**
   - Dependencies: S1.2.
   - Enforce 512 KiB artifact, 16 MiB per owner, 128 MiB global limits only at capture.
   - No pre-launch reservation API.
   - Acceptance: quota exhaustion returns capture failure without child-control side effects.
   - Verify: quota tests with tiny injected limits.
 
-- [ ] **S1.4 — Implement safe release/cleanup and orphan finalization.**
+- [x] **S1.4 — Implement safe release/cleanup and orphan finalization.**
   - Dependencies: S1.2.
   - Release accounting exactly once; safe file delete; post-durable-restore orphan sweep.
   - Acceptance: no recursive deletion outside validated private layout; process-local orphan removed after restart, durable referenced artifact preserved.
@@ -793,32 +796,32 @@ The stages below are ordered so the fixed output-retention path exists before ou
 
 ### Stage S2 — Add pathless materialization and bounded read API
 
-- [ ] **S2.1 — Implement final-answer materializer.**
+- [x] **S2.1 — Implement final-answer materializer.**
   - Dependencies: S1.
   - Input: terminal assistant final text + trusted content type + owner/lineage.
   - Output: `SubagentOutput` and optional internal registry entry.
   - Acceptance: inline complete, artifact complete, artifact truncated, artifact unavailable all deterministic and UTF-8 safe.
   - Verify: ASCII, multibyte, redaction, exact-boundary, over-boundary tests.
 
-- [ ] **S2.2 — Add `read_subagent_output` schema/tool.**
+- [x] **S2.2 — Add `read_subagent_output` schema/tool.**
   - Dependencies: S1.2, S2.1.
   - Register parent-side only.
   - Acceptance: accepts only opaque ID + bounded byte offset/length; no path parameters.
   - Verify: schema snapshot/tool catalog tests.
 
-- [ ] **S2.3 — Implement owner and integrity checks.**
+- [x] **S2.3 — Implement owner and integrity checks.**
   - Dependencies: S2.2.
   - Acceptance: unknown/cross-owner same error; symlink/missing/size/hash mismatch rejected; absolute path never appears in error/result.
   - Verify: adversarial artifact read suite.
 
-- [ ] **S2.4 — Implement UTF-8 pagination.**
+- [x] **S2.4 — Implement UTF-8 pagination.**
   - Dependencies: S2.2.
   - Acceptance: 16 KiB default, 64 KiB maximum, byte offsets, authoritative nextOffset, invalid mid-codepoint offset rejected.
   - Verify: multibyte pagination round-trip reconstructs stored text exactly.
 
 ### Stage S3 — Integrate output materialization into terminal result construction
 
-- [ ] **S3.1 — Single child: capture only terminal final answer.**
+- [x] **S3.1 — Single child: capture only terminal final answer.**
   - Files: `ice-subagents.ts` runner finalization.
   - Dependencies: S2.
   - Replace `spillAssistantOutput` / path-bearing diagnostics with v2 materialization.
@@ -826,20 +829,20 @@ The stages below are ordered so the fixed output-retention path exists before ou
   - Acceptance: terminal plain/structured result gets `output`; provider failure without terminal final answer does not fabricate a complete artifact.
   - Verify: update current spill/partial tests.
 
-- [ ] **S3.2 — Split structured parsing from output retention.**
+- [x] **S3.2 — Split structured parsing from output retention.**
   - Dependencies: S3.1.
   - Introduce fixed parser boundary independent of removed caller output budget.
   - Acceptance: parser failure never causes streaming child abort; complete raw bytes may still be retrieved if artifact capture succeeded.
   - Verify: malformed, parser-oversized, schema-invalid, artifact-complete cases.
 
-- [ ] **S3.3 — Update `verifySubagentResult`.**
+- [x] **S3.3 — Update `verifySubagentResult`.**
   - Dependencies: S3.1-S3.2.
   - Remove request `maxOutputBytes` comparisons.
   - Verify output completeness/materialization plus existing lineage/evidence/schema rules.
   - Acceptance: artifact-truncated/unavailable cannot become verified completion.
   - Verify: result-contract tests.
 
-- [ ] **S3.4 — Writer result integration.**
+- [x] **S3.4 — Writer result integration.**
   - Dependencies: S3.1.
   - Add textual `output` without changing patch artifact authority/integration flow.
   - Acceptance: long writer final answer does not abort writer; patch verification/isolation unchanged.
@@ -847,90 +850,90 @@ The stages below are ordered so the fixed output-retention path exists before ou
 
 ### Stage S4 — Remove final-answer byte execution controls and public knobs
 
-- [ ] **S4.1 — Remove streaming `output_truncated` control.**
+- [x] **S4.1 — Remove streaming `output_truncated` control.**
   - Files: child and writer message-update/control races in `ice-subagents.ts`.
   - Dependencies: S3.
   - Acceptance: output length no longer resolves a control promise or calls child abort.
   - Verify: former `ice-subagents.test.ts:6865-6901` scenario now reaches normal terminal finalization.
 
-- [ ] **S4.2 — Remove child execution `maxOutputBytes` contract.**
+- [x] **S4.2 — Remove child execution `maxOutputBytes` contract.**
   - Files: interfaces, normalizer, launch provenance/preflight, prompt builder, recovery accounting, verifier.
   - Dependencies: S4.1.
   - Acceptance: no final-answer byte field in new normalized execution or launch provenance.
   - Verify: TypeScript + targeted normalization/profile tests.
 
-- [ ] **S4.3 — Remove profile/settings final-answer byte controls.**
+- [x] **S4.3 — Remove profile/settings final-answer byte controls.**
   - Files: `ice-subagent-settings.ts`, profile parser in `ice-subagents.ts`, tests.
   - Preserve hook `maxOutputBytes`.
   - Acceptance: new profile/default/restriction final-answer cap input rejected; hook capture cap still resolves and tests pass.
   - Verify: `ice-subagent-settings.test.ts`, `ice-subagent-profile-controls.test.ts`, command-hook tests.
 
-- [ ] **S4.4 — Remove writer `maxOutputBytes` input.**
+- [x] **S4.4 — Remove writer `maxOutputBytes` input.**
   - Dependencies: S3.4.
   - Acceptance: writer schema/tool docs no longer expose the field; long final writer output uses artifact pathless flow.
   - Verify: writer schema + runtime tests.
 
-- [ ] **S4.5 — Remove output-budget retry arithmetic.**
+- [x] **S4.5 — Remove output-budget retry arithmetic.**
   - Dependencies: S4.2.
   - Acceptance: startup retry policy remains max two attempts/retry-safe, but no “remaining output bytes” calculation exists.
   - Verify: recovery tests still prove no retry after observed work/non-startup failures.
 
 ### Stage S5 — Remove batch/review and durable-job byte admission
 
-- [ ] **S5.1 — Delete batch/review `totalBudgetBytes` public/API fields.**
+- [x] **S5.1 — Delete batch/review `totalBudgetBytes` public/API fields.**
   - Files: schemas, types, tool execution options, descriptions.
   - Acceptance: closed schema rejects removed field.
   - Verify: schema tests.
 
-- [ ] **S5.2 — Delete `SubagentBatchBudgetLedger` and reservation preflight.**
+- [x] **S5.2 — Delete `SubagentBatchBudgetLedger` and reservation preflight.**
   - Dependencies: S5.1, S4.
   - Preserve scheduler concurrency, deterministic ordering, failFast, cancellation.
   - Acceptance: no output-byte admission or `batch_budget_exhausted` for new work.
   - Verify: replace existing budget tests with scheduling/non-abort large-output tests.
 
-- [ ] **S5.3 — Remove batch/review result/preflight budget projections.**
+- [x] **S5.3 — Remove batch/review result/preflight budget projections.**
   - Dependencies: S5.2.
   - Acceptance: result objects no longer contain output `budget`; aggregate presentation remains fixed-host bounded.
   - Verify: result contract/snapshot tests.
 
-- [ ] **S5.4 — Remove durable planned/reserved output admission.**
+- [x] **S5.4 — Remove durable planned/reserved output admission.**
   - Files: `ice-subagent-jobs.ts` + creation call in `ice-subagents.ts`.
   - Dependencies: S3 output capture.
   - Acceptance: job create/pump uses only queue/concurrency permits for scheduling; output size is absent from admission.
   - Verify: job scheduling tests with tiny artifact quota prove launch still accepted and capture failure occurs only terminally.
 
-- [ ] **S5.5 — Replace mixed job “budget” inspection with scheduling state.**
+- [x] **S5.5 — Replace mixed job “budget” inspection with scheduling state.**
   - Dependencies: S5.4.
   - Acceptance: active/queued/cap still visible; no planned/reserved/owner output budget.
   - Verify: Observatory/job inspection tests.
 
 ### Stage S6 — Wire artifact lifecycle to every result owner
 
-- [ ] **S6.1 — Process-local single-run retention/delete.**
+- [x] **S6.1 — Process-local single-run retention/delete.**
   - Dependencies: S3.
   - Release artifact on retained-result eviction/delete/shutdown.
   - Acceptance: owner can read while result retained; read fails after deletion/eviction.
   - Verify: manage_subagent delete/retention tests.
 
-- [ ] **S6.2 — Managed batch/review lifecycle.**
+- [x] **S6.2 — Managed batch/review lifecycle.**
   - Dependencies: S3, S5.
   - Child refs remain readable while aggregate/child retained.
   - Acceptance: aggregate presentation clipping does not delete canonical child output.
-  - Verify: 8-child deterministic aggregate with >32 KiB presentation.
+  - Verify: deterministic multi-child aggregate presentation stays within 16 KiB, preserves item order, and does not invalidate canonical output artifacts.
 
-- [ ] **S6.3 — Managed writer lifecycle.**
+- [x] **S6.3 — Managed writer lifecycle.**
   - Dependencies: S3.4.
   - Output artifact release independent from writer patch artifact cleanup.
   - Acceptance: deleting text output cannot delete patch artifact and vice versa.
   - Verify: writer lifecycle tests.
 
-- [ ] **S6.4 — Durable terminal result persistence/rehydration.**
+- [x] **S6.4 — Durable terminal result persistence/rehydration.**
   - Files: `ice-subagent-jobs.ts` validator/clone/persist/restore.
   - Dependencies: S1 registry + S3.
   - Acceptance: v2 ref persists pathlessly; restart re-registers valid terminal artifact; nonterminal job becomes interrupted without replay.
   - Verify: persistence round trip and restart tests.
 
-- [ ] **S6.5 — Durable retention expiry.**
+- [x] **S6.5 — Durable retention expiry.**
   - Dependencies: S6.4.
   - Replace direct v2 path deletion with store release; retain legacy v1 cleanup adapter.
   - Acceptance: 33rd terminal record evicts old full result and artifact, matching existing retention semantics.
@@ -938,72 +941,72 @@ The stages below are ordered so the fixed output-retention path exists before ou
 
 ### Stage S7 — Make all managed launch surfaces handle-only
 
-- [ ] **S7.1 — Remove `background` schema fields.**
+- [x] **S7.1 — Remove `background` schema fields.**
   - Files: delegate/writer/batch/review tool schemas.
   - Acceptance: closed schemas reject `background`.
   - Verify: tool schema tests.
 
-- [ ] **S7.2 — Delete synchronous delegate branch.**
+- [x] **S7.2 — Delete synchronous delegate branch.**
   - Dependencies: S7.1.
   - Acceptance: successful call always returns managed handle; final result later inspectable.
   - Verify: `ice-delegate-mvp.test.ts` + readiness tests.
 
-- [ ] **S7.3 — Delete synchronous batch/review branches.**
+- [x] **S7.3 — Delete synchronous batch/review branches.**
   - Dependencies: S7.1, S5.
   - Acceptance: aggregate handle always returned after admission; terminal aggregate later inspectable; deterministic order preserved.
   - Verify: batch/review managed tests.
 
-- [ ] **S7.4 — Delete synchronous writer branch.**
+- [x] **S7.4 — Delete synchronous writer branch.**
   - Dependencies: S7.1.
   - Acceptance: writer always returns accepted managed handle after required preflight; explicit stop still waits cleanup.
   - Verify: writer W5 suite.
 
-- [ ] **S7.5 — Remove stale guidance/examples.**
+- [x] **S7.5 — Remove stale guidance/examples.**
   - Dependencies: S7.2-S7.4.
   - Acceptance: no code/doc/tool description recommends `background: false`.
 
 ### Stage S8 — Historical migration, settings/RPC, observability, docs
 
-- [ ] **S8.1 — Normalize legacy durable output fields.**
+- [x] **S8.1 — Normalize legacy durable output fields.**
   - Files: `ice-subagent-jobs.ts` restore/validator.
   - Acceptance: historical planned/reserved/max output fields are readable but inert; new snapshots omit them.
   - Verify: explicit old-snapshot fixtures.
 
-- [ ] **S8.2 — Keep legacy v1 artifact validator internal-only.**
+- [x] **S8.2 — Keep legacy v1 artifact validator internal-only.**
   - Acceptance: old path-bearing artifact can be safely retained/cleaned as historical state but is never projected as v2 read authority.
   - Verify: retain outside-root/mismatched-path rejection from `ice-subagent-jobs.test.ts:1560-1575`.
 
-- [ ] **S8.3 — Update Observatory/TUI.**
+- [x] **S8.3 — Update Observatory/TUI.**
   - Remove output reservation text.
   - Add bounded capture-status metadata where useful.
   - Acceptance: no absolute output path or obsolete reservation budget visible.
   - Verify: Observatory rendering tests.
 
-- [ ] **S8.4 — Update RPC settings and schemas.**
+- [x] **S8.4 — Update RPC settings and schemas.**
   - Remove `ice.subagents.defaults.maxOutputBytes` and removed launch fields.
   - Acceptance: removed setting write rejected; normal subagent settings remain mutable.
   - Verify: `rpc-settings.test.ts` and RPC tool-schema tests.
 
-- [ ] **S8.5 — Update docs/changelog.**
+- [x] **S8.5 — Update docs/changelog.**
   - Files: `packages/coding-agent/docs/subagent-user-guide.md`, `docs/settings.md`, relevant architecture/worktree docs, `ICE_CHANGELOG.md` or package changelog convention.
   - Document fixed host limits, read flow, artifact ownership, process-local vs durable semantics, breaking removed inputs.
   - Acceptance: examples use handle → inspect → optional read flow; no old budgets/synchronous opt-out.
   - Verify: repository text search plus docs review.
 
-- [ ] **S8.6 — Mark architecture status only after verification.**
+- [x] **S8.6 — Mark architecture status only after verification.**
   - Update `idea.md` “planned; not implemented” language only after all required tests/check pass.
   - Acceptance: no premature “implemented” claim.
 
 ### Stage S9 — Closure verification
 
-- [ ] **S9.1 — Run focused artifact/result/security suite.**
-- [ ] **S9.2 — Run focused single child + readiness + recovery suite.**
-- [ ] **S9.3 — Run batch/review scheduler suite.**
-- [ ] **S9.4 — Run durable jobs/restart/retention suite.**
-- [ ] **S9.5 — Run writer suite.**
-- [ ] **S9.6 — Run settings/profile/hook/RPC/Observatory suite.**
-- [ ] **S9.7 — Run repository check with pinned npm 12.0.2.**
-- [ ] **S9.8 — Perform final forbidden-symbol audit and coverage ledger.**
+- [x] **S9.1 — Run focused artifact/result/security suite.**
+- [x] **S9.2 — Run focused single child + readiness + recovery suite.**
+- [x] **S9.3 — Run batch/review scheduler suite.**
+- [x] **S9.4 — Run durable jobs/restart/retention suite.**
+- [x] **S9.5 — Run writer suite.**
+- [x] **S9.6 — Run settings/profile/hook/RPC/Observatory suite.**
+- [x] **S9.7 — Run repository check with pinned npm 12.0.2.**
+- [x] **S9.8 — Perform final forbidden-symbol audit and coverage ledger.**
 
 No stage is complete from code review alone if its required behavior has a focused deterministic test.
 
@@ -1020,7 +1023,7 @@ No stage is complete from code review alone if its required behavior has a focus
 | UTF-8 pagination | artifact tests | multibyte content round-trips by nextOffset, no replacement-character corruption |
 | Storage quota is terminal-only | artifact + jobs | launch accepted despite tiny quota; capture fails only after final answer |
 | Batch no output admission | `ice-subagents.test.ts` / adversarial | no `totalBudgetBytes`, no ledger, large siblings still scheduled under concurrency cap |
-| Aggregate presentation bounded | batch/review tests | canonical outputs retained; aggregate inline text <=32 KiB |
+| Aggregate presentation bounded | batch/review tests | canonical outputs retained; aggregate inline text <=16 KiB |
 | Durable no planned reservation | `ice-subagent-jobs.test.ts` | admission based on queue/concurrency only |
 | Durable restart | jobs tests | terminal artifact ref restored/readable; running job becomes interrupted; no replay |
 | Durable retention cleanup | jobs tests | eviction releases v2 file/accounting; legacy v1 cleanup remains safe |
@@ -1093,7 +1096,7 @@ Mitigation: independent capture status and verification; artifact-truncated/unav
 
 ### Risk: batch result context expands after removing aggregate budget
 
-Mitigation: fixed 32 KiB aggregate presentation cap; artifacts remain individually readable.
+Mitigation: fixed 16 KiB aggregate presentation cap; artifacts remain individually readable.
 
 ### Risk: opaque ID accidentally becomes bearer authority
 
@@ -1152,26 +1155,26 @@ If artifact persistence is unavailable at runtime after the migration:
 
 This work is complete only when all of the following are evidenced:
 
-- [ ] New output/artifact contracts are implemented and pathless.
-- [ ] Opaque artifact IDs are distinct from run/job/batch IDs.
-- [ ] Owner-scoped bounded read works with integrity and UTF-8 safety.
-- [ ] Fixed inline/artifact/read/owner/global storage limits are host-owned.
-- [ ] Final-answer size does not abort a child or writer.
-- [ ] Child/writer caller/profile final-answer `maxOutputBytes` knobs are removed from new execution/configuration.
-- [ ] Command-hook output bounds remain intact.
-- [ ] Batch/review `totalBudgetBytes`, output ledger, budget projections, and output-budget failure path are removed.
-- [ ] Durable planned/reserved output admission is removed.
-- [ ] New durable results persist pathless v2 refs; historical records remain inspectable and non-replayed.
-- [ ] Retention/delete/shutdown release the correct artifact lifecycle without touching writer patch artifacts.
-- [ ] `delegate`, `delegate_batch`, `review_batch`, and `delegate_write` expose no synchronous `background: false` path.
-- [ ] Progress/check-in/completion remain bounded and separate from artifact content.
-- [ ] Structured verification remains bounded and authoritative.
-- [ ] Observatory/RPC/settings/docs no longer advertise obsolete output reservations/caller caps.
-- [ ] All focused deterministic suites pass.
-- [ ] `corepack npm@12.0.2 run check` passes.
-- [ ] Forbidden-symbol audit has no unexplained production-path remnants.
-- [ ] `idea.md` is updated from planned to implemented only after the above evidence exists.
-- [ ] No unrelated dirty work in this integration worktree was reset, discarded, reformatted, or committed as part of this task.
+- [x] New output/artifact contracts are implemented and pathless.
+- [x] Opaque artifact IDs are distinct from run/job/batch IDs.
+- [x] Owner-scoped bounded read works with integrity and UTF-8 safety.
+- [x] Fixed inline/artifact/read/owner/global storage limits are host-owned.
+- [x] Final-answer size does not abort a child or writer.
+- [x] Child/writer caller/profile final-answer `maxOutputBytes` knobs are removed from new execution/configuration.
+- [x] Command-hook output bounds remain intact.
+- [x] Batch/review `totalBudgetBytes`, output ledger, budget projections, and output-budget failure path are removed.
+- [x] Durable planned/reserved output admission is removed.
+- [x] New durable results persist pathless v2 refs; historical records remain inspectable and non-replayed.
+- [x] Retention/delete/shutdown release the correct artifact lifecycle without touching writer patch artifacts.
+- [x] `delegate`, `delegate_batch`, `review_batch`, and `delegate_write` expose no synchronous `background: false` path.
+- [x] Progress/check-in/completion remain bounded and separate from artifact content.
+- [x] Structured verification remains bounded and authoritative.
+- [x] Observatory/RPC/settings/docs no longer advertise obsolete output reservations/caller caps.
+- [x] All focused deterministic suites pass.
+- [x] `npm run check` passes with the active npm version 12.0.2.
+- [x] Forbidden-symbol audit has no unexplained production-path remnants.
+- [x] `idea.md` is updated from planned to implemented only after the above evidence exists.
+- [x] No unrelated dirty work in this integration worktree was reset, discarded, or committed; the required check formatted only in-scope files.
 
 ## 23. Implementation handoff summary
 

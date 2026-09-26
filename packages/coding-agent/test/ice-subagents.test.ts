@@ -31,6 +31,7 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 import { importRufloAgentPack, mapAgentPackTools, unsupportedAgentPackFields } from "../src/ice-agent-packs.ts";
 import { IceAgentViewBridge } from "../src/ice-agent-view-bridge.ts";
 import { getIceDelegableTools, registerIceDelegableTool } from "../src/ice-subagent-capabilities.ts";
+import { SUBAGENT_CONCURRENCY_LIMITS } from "../src/ice-subagent-concurrency.ts";
 import { JOB_COMPLETION_MESSAGE_TYPE, JOB_ENTRY_TYPE, SubagentJobRegistry } from "../src/ice-subagent-jobs.ts";
 import { getProgressSnapshot } from "../src/ice-subagent-observatory.ts";
 import { SubagentOutputArtifactStore } from "../src/ice-subagent-output-artifacts.ts";
@@ -83,6 +84,7 @@ import iceSubagents, {
 	runResolvedSubagentBatch,
 	runSubagentWithRecovery,
 	SUBAGENT_BATCH_LIMITS,
+	SUBAGENT_PRESENTATION_LIMIT_BYTES,
 	SUBAGENT_PROFILE_ALIASES,
 	SUBAGENT_PROFILE_LIMITS,
 	SUBAGENT_PROFILES,
@@ -695,7 +697,9 @@ describe("ICE subagent contracts", () => {
 		for (const field of ["model", "profile", "scope", "tools", "execution", "maxOutputBytes"]) {
 			expect(schema.properties).not.toHaveProperty(field);
 		}
-		expect(manage?.description).toMatch(/preserves run ID.*model.*profile.*scope.*tool authority.*output budget/i);
+		expect(manage?.description).toMatch(
+			/preserves run ID.*model.*profile.*scope.*tool authority.*owner-scoped output artifact access/i,
+		);
 	});
 
 	it("validates the phase-aware manage_subagent contract as a closed schema that rejects widening", async () => {
@@ -771,8 +775,19 @@ describe("ICE subagent contracts", () => {
 		(harness.context as unknown as { cwd: string }).cwd = workspace.cwd;
 		const delegateWrite = harness.tools.get("delegate_write")!;
 		const manage = harness.tools.get("manage_subagent")!;
+		let shutdown = false;
 		try {
-			harness.faux.setResponses([fauxAssistantMessage("Writer completed without changing files.")]);
+			harness.faux.setResponses([
+				fauxAssistantMessage(
+					fauxToolCall(
+						"write",
+						{ path: "src/file.ts", content: "writer change\n" },
+						{ id: "writer-output-write" },
+					),
+					{ stopReason: "toolUse" },
+				),
+				fauxAssistantMessage("Writer completed. ".repeat(2_900)),
+			]);
 			const accepted = await delegateWrite.execute(
 				"writer-background",
 				{
@@ -791,6 +806,7 @@ describe("ICE subagent contracts", () => {
 				},
 			});
 			const runId = accepted.details.accepted.runId as string;
+			let writerResult: WriterResult | undefined;
 			await vi.waitFor(
 				async () => {
 					const inspection = await manage.execute(
@@ -800,13 +816,28 @@ describe("ICE subagent contracts", () => {
 						undefined,
 						harness.context,
 					);
-					expect(inspection.details.writer).toMatchObject({
+					const writer = inspection.details.writer as { result?: WriterResult };
+					writerResult = writer.result;
+					expect(writer).toMatchObject({
 						state: "completed",
 						result: { status: "completed", workspaceIsolation: "worktree", workspaceRemoved: true },
 					});
 				},
 				{ timeout: 5_000, interval: 10 },
 			);
+			const outputArtifactId = writerResult?.output?.artifact?.id;
+			const patchRef = writerResult?.patchArtifact?.patchRef;
+			if (!outputArtifactId || !patchRef) throw new Error("Expected independent writer output and patch artifacts.");
+			const readOutput = harness.tools.get("read_subagent_output")!;
+			expect(
+				await readOutput.execute(
+					"writer-output-before-shutdown",
+					{ artifactId: outputArtifactId, length: 8 },
+					undefined,
+					undefined,
+					harness.context,
+				),
+			).toMatchObject({ isError: false });
 
 			const rejected = await delegateWrite.execute(
 				"writer-preflight-rejected",
@@ -817,13 +848,126 @@ describe("ICE subagent contracts", () => {
 			);
 			expect(rejected).toMatchObject({ isError: true, details: { result: { status: "failed" } } });
 			expect(rejected.details).not.toHaveProperty("accepted");
+			await harness.handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, harness.context);
+			shutdown = true;
+			const releasedOutput = await readOutput.execute(
+				"writer-output-after-shutdown",
+				{ artifactId: outputArtifactId, length: 8 },
+				undefined,
+				undefined,
+				harness.context,
+			);
+			expect(releasedOutput).toMatchObject({
+				isError: true,
+				details: { error: { code: "artifact_storage_failure" } },
+			});
+			expect(await readFile(patchRef, "utf8")).toContain("writer change");
+		} finally {
+			if (!shutdown)
+				await harness.handlers.get("session_shutdown")!(
+					{ type: "session_shutdown", reason: "quit" },
+					harness.context,
+				);
+			harness.faux.unregister();
+			if (previousAgentDir === undefined) delete process.env.ICE_CODING_AGENT_DIR;
+			else process.env.ICE_CODING_AGENT_DIR = previousAgentDir;
+		}
+	});
+
+	it("evicts writer text output without deleting its independent patch artifact", async () => {
+		const workspace = await createGitWorkspace();
+		const harness = await createAsyncToolHarness({
+			activeTools: ["delegate_write", "read", "write", "edit", "grep", "find", "ls"],
+		});
+		const previousAgentDir = process.env.ICE_CODING_AGENT_DIR;
+		const agentDir = await mkdtemp(join(tmpdir(), "ice-subagent-writer-retention-agent-"));
+		tempDirs.push(agentDir);
+		process.env.ICE_CODING_AGENT_DIR = agentDir;
+		(harness.context as unknown as { cwd: string }).cwd = workspace.cwd;
+		const delegateWrite = harness.tools.get("delegate_write")!;
+		const manage = harness.tools.get("manage_subagent")!;
+		const readOutput = harness.tools.get("read_subagent_output")!;
+		harness.faux.setResponses([
+			fauxAssistantMessage(
+				fauxToolCall("write", { path: "src/file.ts", content: "writer patch\n" }, { id: "writer-retention-write" }),
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("Writer output retained. ".repeat(2_100)),
+			...Array.from({ length: 16 }, () => fauxAssistantMessage("No patch required.")),
+		]);
+		const launchAndWait = async (index: number) => {
+			const accepted = await delegateWrite.execute(
+				`writer-retention-launch-${index}`,
+				{
+					task: "Inspect the scoped source and report completion.",
+					baseCommit: workspace.head,
+					scope: { roots: ["src"] },
+				},
+				undefined,
+				undefined,
+				harness.context,
+			);
+			expect(accepted.isError).toBe(false);
+			const runId = accepted.details.accepted.runId as string;
+			let result: WriterResult | undefined;
+			await vi.waitFor(
+				async () => {
+					const inspection = await manage.execute(
+						`writer-retention-inspect-${index}`,
+						{ runId, action: "inspect" },
+						undefined,
+						undefined,
+						harness.context,
+					);
+					result = (inspection.details.writer as { result?: WriterResult }).result;
+					expect(result?.status).toBe("completed");
+				},
+				{ timeout: 5_000, interval: 10 },
+			);
+			return result!;
+		};
+
+		try {
+			const first = await launchAndWait(0);
+			const outputArtifactId = first.output?.artifact?.id;
+			const patchRef = first.patchArtifact?.patchRef;
+			if (!outputArtifactId || !patchRef) throw new Error("Expected writer text and patch artifacts.");
+			expect(
+				await readOutput.execute(
+					"writer-retention-read-initial",
+					{ artifactId: outputArtifactId, length: 8 },
+					undefined,
+					undefined,
+					harness.context,
+				),
+			).toMatchObject({ isError: false });
+			for (let index = 1; index < 16; index++) await launchAndWait(index);
+			expect(
+				await readOutput.execute(
+					"writer-retention-read-before-eviction",
+					{ artifactId: outputArtifactId, length: 8 },
+					undefined,
+					undefined,
+					harness.context,
+				),
+			).toMatchObject({ isError: false });
+			await launchAndWait(16);
+			const expiredOutput = await readOutput.execute(
+				"writer-retention-read-after-eviction",
+				{ artifactId: outputArtifactId, length: 8 },
+				undefined,
+				undefined,
+				harness.context,
+			);
+			expect(expiredOutput).toMatchObject({ isError: true, details: { error: { code: "artifact_not_found" } } });
+			expect(await readFile(patchRef, "utf8")).toContain("writer patch");
 		} finally {
 			await harness.handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, harness.context);
 			harness.faux.unregister();
 			if (previousAgentDir === undefined) delete process.env.ICE_CODING_AGENT_DIR;
 			else process.env.ICE_CODING_AGENT_DIR = previousAgentDir;
 		}
-	});
+	}, 60_000);
 
 	it("stops an admitted background writer and waits for isolated-worktree cleanup", async () => {
 		const workspace = await createGitWorkspace();
@@ -930,7 +1074,7 @@ describe("ICE subagent contracts", () => {
 					id,
 					role: "self",
 					self: { instructions: instruction, capabilities: ["read", "grep", "find", "ls"] },
-					task: "Inspect the source tree.",
+					task: `Inspect the source tree for ${id}.`,
 					scope: { roots: ["src"] },
 				})),
 			});
@@ -984,7 +1128,7 @@ describe("ICE subagent contracts", () => {
 						id,
 						role: "self",
 						self: { instructions: instruction, capabilities: ["read", "grep", "find", "ls"] },
-						task: "Inspect the source tree.",
+						task: `Inspect the source tree for ${id}.`,
 						scope: { roots: ["src"] },
 					})),
 				},
@@ -1318,8 +1462,8 @@ describe("ICE subagent contracts", () => {
 		};
 		try {
 			harness.faux.setResponses([
-				fauxAssistantMessage("first answer ".repeat(900)),
-				fauxAssistantMessage("resumed answer ".repeat(900)),
+				fauxAssistantMessage("first answer ".repeat(4_000)),
+				fauxAssistantMessage("resumed answer ".repeat(4_000)),
 			]);
 			const accepted = await harness.tools
 				.get("delegate")!
@@ -1410,7 +1554,7 @@ describe("ICE subagent contracts", () => {
 	it("retains batch output while its aggregate owner survives child deletion", async () => {
 		const harness = await createAsyncToolHarness();
 		const longReport = JSON.stringify({
-			summary: "long structured result ".repeat(500),
+			summary: "long structured result ".repeat(2_200),
 			evidence: { paths: ["src"] },
 			findings: [],
 		});
@@ -1421,7 +1565,7 @@ describe("ICE subagent contracts", () => {
 				instructions: "Inspect the approved scope and return structured evidence.",
 				capabilities: ["read", "grep", "find", "ls"],
 			},
-			task: "Inspect the source tree.",
+			task: `Inspect the source tree for ${id}.`,
 			scope: { roots: ["src"] },
 		}));
 		try {
@@ -1435,11 +1579,13 @@ describe("ICE subagent contracts", () => {
 			const batchId = accepted.details.accepted.batchId as string;
 			const taskRuns = accepted.details.accepted.tasks as Array<{ taskId: string; runId: string }>;
 			let aggregate: { items: Array<{ taskId: string; result: SubagentResult }> } | undefined;
+			let aggregateText = "";
 			await vi.waitFor(
 				async () => {
 					const inspection = await harness.tools
 						.get("inspect_subagent_batch")!
 						.execute("batch-artifact-inspect", { batchId }, undefined, undefined, harness.context);
+					aggregateText = inspection.content[0]?.text ?? "";
 					aggregate = inspection.details.inspection.result as
 						| { items: Array<{ taskId: string; result: SubagentResult }> }
 						| undefined;
@@ -1448,6 +1594,7 @@ describe("ICE subagent contracts", () => {
 				},
 				{ timeout: 5_000, interval: 10 },
 			);
+			expect(Buffer.byteLength(aggregateText)).toBeLessThanOrEqual(SUBAGENT_PRESENTATION_LIMIT_BYTES);
 			const artifactItem = aggregate?.items.find((item) => item.result.output?.artifact);
 			const artifactId = artifactItem?.result.output?.artifact?.id;
 			const childRunId = taskRuns.find((task) => task.taskId === artifactItem?.taskId)?.runId;
@@ -1487,6 +1634,115 @@ describe("ICE subagent contracts", () => {
 			harness.faux.unregister();
 		}
 	});
+
+	it("releases the final batch-owned output reference when its retained aggregate is evicted", async () => {
+		const harness = await createAsyncToolHarness();
+		const delegateBatch = harness.tools.get("delegate_batch")!;
+		const inspectBatch = harness.tools.get("inspect_subagent_batch")!;
+		const readOutput = harness.tools.get("read_subagent_output")!;
+		const manage = harness.tools.get("manage_subagent")!;
+		const longReport = JSON.stringify({
+			summary: "large retained answer ".repeat(2_300),
+			evidence: { paths: ["src"] },
+			findings: [],
+		});
+		const shortReport = '{"summary":"Retained result.","evidence":{"paths":["src"]},"findings":[]}';
+		const responseCount = 33 * 2;
+		harness.faux.setResponses(
+			Array.from({ length: responseCount }, (_, index) =>
+				fauxAssistantMessage(index === 0 ? longReport : shortReport),
+			),
+		);
+		const tasksForBatch = (index: number) =>
+			["left", "right"].map((side) => ({
+				id: `${side}-${index}`,
+				role: "self",
+				self: {
+					instructions: "Inspect the approved scope and return structured evidence.",
+					capabilities: ["read", "grep", "find", "ls"],
+				},
+				task: `Inspect the source tree for ${side}.`,
+				scope: { roots: ["src"] },
+			}));
+		const launchAndWait = async (index: number) => {
+			const accepted = await delegateBatch.execute(
+				`batch-retention-launch-${index}`,
+				{ tasks: tasksForBatch(index) },
+				undefined,
+				undefined,
+				harness.context,
+			);
+			expect(accepted.isError).toBe(false);
+			const { batchId, tasks } = accepted.details.accepted as {
+				batchId: string;
+				tasks: Array<{ taskId: string; runId: string }>;
+			};
+			let inspectionResult: { items: Array<{ taskId: string; result: SubagentResult }> } | undefined;
+			await vi.waitFor(
+				async () => {
+					const inspection = await inspectBatch.execute(
+						`batch-retention-inspect-${index}`,
+						{ batchId },
+						undefined,
+						undefined,
+						harness.context,
+					);
+					inspectionResult = inspection.details.inspection.result as typeof inspectionResult;
+					expect(inspectionResult).toBeDefined();
+				},
+				{ timeout: 5_000, interval: 10 },
+			);
+			return { batchId, tasks, result: inspectionResult! };
+		};
+
+		try {
+			const first = await launchAndWait(0);
+			const artifactItem = first.result.items.find((item) => item.result.output?.artifact);
+			const artifactId = artifactItem?.result.output?.artifact?.id;
+			const childRunId = first.tasks.find((task) => task.taskId === artifactItem?.taskId)?.runId;
+			if (!artifactId || !childRunId) throw new Error("Expected the first batch to retain a child output artifact.");
+			const childDeleted = await manage.execute(
+				"batch-retention-delete-child",
+				{ runId: childRunId, action: "delete" },
+				undefined,
+				undefined,
+				harness.context,
+			);
+			expect(childDeleted.isError).toBe(false);
+			expect(
+				await readOutput.execute(
+					"batch-retention-read-before-eviction",
+					{ artifactId, length: 8 },
+					undefined,
+					undefined,
+					harness.context,
+				),
+			).toMatchObject({ isError: false });
+
+			for (let index = 1; index < 32; index++) await launchAndWait(index);
+			expect(
+				await readOutput.execute(
+					"batch-retention-read-while-retained",
+					{ artifactId, length: 8 },
+					undefined,
+					undefined,
+					harness.context,
+				),
+			).toMatchObject({ isError: false });
+			await launchAndWait(32);
+			const expiredRead = await readOutput.execute(
+				"batch-retention-read-after-eviction",
+				{ artifactId, length: 8 },
+				undefined,
+				undefined,
+				harness.context,
+			);
+			expect(expiredRead).toMatchObject({ isError: true, details: { error: { code: "artifact_not_found" } } });
+		} finally {
+			await harness.handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, harness.context);
+			harness.faux.unregister();
+		}
+	}, 30_000);
 
 	it("routes manage_subagent actions through owner-scoped validation with phase gates", async () => {
 		const harness = await createAsyncToolHarness();
@@ -3115,7 +3371,7 @@ describe("ICE subagent contracts", () => {
 		const agentDir = await mkdtemp(join(tmpdir(), "ice-subagents-agent-"));
 		tempDirs.push(agentDir);
 		await mkdir(join(agentDir, "prompts"), { recursive: true });
-		await writeFile(join(agentDir, "prompts", "oversized.md"), "x".repeat(64 * 1024 + 1));
+		await writeFile(join(agentDir, "prompts", "oversized.md"), "x".repeat(128 * 1024 + 1));
 		expect(() => resolveSubagentResources({ prompts: ["oversized"] }, { cwd, agentDir })).toThrowError(/too large/i);
 	});
 
@@ -3125,7 +3381,7 @@ describe("ICE subagent contracts", () => {
 		tempDirs.push(agentDir);
 		await mkdir(join(agentDir, "prompts"), { recursive: true });
 		for (const name of ["one", "two", "three", "four", "five"]) {
-			await writeFile(join(agentDir, "prompts", `${name}.md`), "x".repeat(60 * 1024));
+			await writeFile(join(agentDir, "prompts", `${name}.md`), "x".repeat(110 * 1024));
 		}
 		expect(() =>
 			resolveSubagentResources({ prompts: ["one", "two", "three", "four", "five"] }, { cwd, agentDir }),
@@ -3317,9 +3573,9 @@ describe("ICE subagent contracts", () => {
 	});
 
 	it("uses deterministic recent UTF-8 fork suffixes and caps each message", () => {
-		const messages: AgentMessage[] = Array.from({ length: 35 }, (_, index) => ({
+		const messages: AgentMessage[] = Array.from({ length: 67 }, (_, index) => ({
 			role: "user" as const,
-			content: `${index}: ${"😀".repeat(index === 34 ? 5000 : 1)}`,
+			content: `${index}: ${"😀".repeat(index === 66 ? 5000 : 1)}`,
 			timestamp: index,
 		}));
 		const snapshot = normalizeSubagentForkContext({
@@ -3327,10 +3583,10 @@ describe("ICE subagent contracts", () => {
 			getLeafId: () => null,
 			buildSessionContext: () => ({ messages, thinkingLevel: "low", model: null }),
 		});
-		expect(snapshot.messages).toHaveLength(32);
+		expect(snapshot.messages).toHaveLength(64);
 		expect(snapshot.messages[0]?.index).toBe(3);
-		expect(snapshot.messages.at(-1)?.index).toBe(34);
-		expect(snapshot.messages.at(-1)?.bytes).toBeLessThanOrEqual(8 * 1024);
+		expect(snapshot.messages.at(-1)?.index).toBe(66);
+		expect(snapshot.messages.at(-1)?.bytes).toBeLessThanOrEqual(32 * 1024);
 		expect(snapshot.messages.map((message) => message.index)).toEqual(
 			snapshot.messages.map((message) => message.index).sort((left, right) => left - right),
 		);
@@ -3339,8 +3595,8 @@ describe("ICE subagent contracts", () => {
 
 	it("enforces the combined packet and fork handoff budget during normalization", async () => {
 		const cwd = await createWorkspace();
-		const forkContent = "f".repeat(8 * 1024);
-		const packetContent = "p".repeat(7 * 1024);
+		const forkContent = "f".repeat(32 * 1024);
+		const packetContent = "p".repeat(30 * 1024);
 		expect(() =>
 			normalizeSubagentRequest(
 				{
@@ -3398,7 +3654,7 @@ describe("ICE subagent contracts", () => {
 		const digest = formatSubagentLaunchDigest(preflight);
 		const invalidCombinedRequest = {
 			...normalized,
-			forkContext: { ...normalized.forkContext, totalBytes: 64 * 1024 },
+			forkContext: { ...normalized.forkContext, totalBytes: 256 * 1024 },
 		};
 		expect(() =>
 			buildSubagentLaunchPreflight(
@@ -3423,7 +3679,7 @@ describe("ICE subagent contracts", () => {
 			packetBytes: Buffer.byteLength("packet body"),
 			forkBytes: Buffer.byteLength("fork body"),
 			totalBytes: Buffer.byteLength("packet bodyfork body"),
-			maxBytes: 64 * 1024,
+			maxBytes: 256 * 1024,
 		});
 		expect(digest).not.toContain("fork body");
 		expect(digest).not.toContain("packet body");
@@ -3797,7 +4053,7 @@ describe("ICE subagent contracts", () => {
 		).toThrowError(/unique/i);
 		expect(() =>
 			normalizeSubagentContextPacket({
-				items: [{ id: "large", kind: "parent_note", content: "x".repeat(8 * 1024 + 1) }],
+				items: [{ id: "large", kind: "parent_note", content: "x".repeat(32 * 1024 + 1) }],
 			}),
 		).toThrowError(/item/i);
 		expect(() =>
@@ -3805,13 +4061,13 @@ describe("ICE subagent contracts", () => {
 				items: Array.from({ length: 9 }, (_, index) => ({
 					id: `item-${index}`,
 					kind: "parent_note" as const,
-					content: "x".repeat(8 * 1024),
+					content: "x".repeat(30 * 1024),
 				})),
 			}),
 		).toThrowError(/aggregate/i);
 		expect(() =>
 			normalizeSubagentContextPacket({
-				items: [{ id: "unicode", kind: "parent_note", content: "😀".repeat(2049) }],
+				items: [{ id: "unicode", kind: "parent_note", content: "😀".repeat(8193) }],
 			}),
 		).toThrowError(/item/i);
 	});
@@ -6694,7 +6950,7 @@ describe("ICE subagent contracts", () => {
 
 	it("rejects reports above the fixed parser input limit and records observed bytes", async () => {
 		const cwd = await createWorkspace();
-		const rawReport = JSON.stringify({ summary: "x".repeat(25 * 1024), evidence: { paths: ["src"] } });
+		const rawReport = JSON.stringify({ summary: "x".repeat(50 * 1024), evidence: { paths: ["src"] } });
 		const childMessages: AgentMessage[] = [];
 		const fakeSession = {
 			sessionId: "child-over-cap",
@@ -6780,8 +7036,8 @@ describe("ICE subagent contracts", () => {
 			createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
 		}).run(request(cwd), ["delegate", "read"]);
 		expect(result.status).toBe("failed");
-		expect(result.reportArtifact).toBeUndefined();
 		expect(result.output).toBeUndefined();
+		expect(JSON.stringify(result)).not.toContain("reportArtifact");
 		expect(JSON.stringify(result)).not.toContain("partial-secret");
 	});
 
@@ -7142,7 +7398,7 @@ describe("ICE subagent contracts", () => {
 		};
 		let notify: ((event: AgentSessionEvent) => void) | undefined;
 		const abort = vi.fn(async () => {});
-		const finalAnswer = "x".repeat(30_000);
+		const finalAnswer = "x".repeat(60_000);
 		const fakeSession = {
 			sessionId: "child-output-no-cutoff",
 			model: testModel("faux", "faux"),
@@ -7177,7 +7433,7 @@ describe("ICE subagent contracts", () => {
 
 		expect(result.status).toBe("completed");
 		expect(result.output).toMatchObject({
-			text: finalAnswer.slice(0, 8 * 1024),
+			text: finalAnswer.slice(0, 48 * 1024),
 			originalBytes: Buffer.byteLength(finalAnswer),
 			captureStatus: "artifact_complete",
 			artifact: { storedBytes: Buffer.byteLength(finalAnswer), truncated: false },
@@ -9515,7 +9771,7 @@ describe("ICE subagent contracts", () => {
 
 	it("reads large final output through the shared owner-scoped parent tool", async () => {
 		const harness = await createAsyncToolHarness();
-		const finalAnswer = "large final answer 🌿\\n".repeat(900);
+		const finalAnswer = "large final answer 🌿\\n".repeat(2_400);
 		try {
 			harness.faux.setResponses([fauxAssistantMessage(finalAnswer)]);
 			const launched = await settleManagedDelegate(
@@ -9593,17 +9849,17 @@ describe("ICE subagent contracts", () => {
 
 	it("accepts children beyond the default active-job concurrency into the durable FIFO queue", async () => {
 		const harness = await createAsyncToolHarness();
+		const names = Array.from(
+			{ length: SUBAGENT_CONCURRENCY_LIMITS.bundledDefault + 1 },
+			(_, index) => `child-${index + 1}`,
+		);
 		try {
-			harness.faux.setResponses([
-				fauxAssistantMessage('{"summary":"one","evidence":{"paths":["src"]}}'),
-				fauxAssistantMessage('{"summary":"two","evidence":{"paths":["src"]}}'),
-				fauxAssistantMessage('{"summary":"three","evidence":{"paths":["src"]}}'),
-				fauxAssistantMessage('{"summary":"four","evidence":{"paths":["src"]}}'),
-				fauxAssistantMessage('{"summary":"five","evidence":{"paths":["src"]}}'),
-			]);
+			harness.faux.setResponses(
+				names.map((name) => fauxAssistantMessage(`{"summary":"${name}","evidence":{"paths":["src"]}}`)),
+			);
 			const tool = harness.tools.get("delegate_async");
 			const accepted = await Promise.all(
-				["one", "two", "three", "four", "five"].map((name) =>
+				names.map((name) =>
 					tool.execute(
 						`async-${name}`,
 						{
@@ -9621,14 +9877,12 @@ describe("ICE subagent contracts", () => {
 					),
 				),
 			);
-			expect(accepted.map((result) => result.details.accepted.status)).toEqual([
-				"created",
-				"created",
-				"created",
-				"created",
-				"queued",
-			]);
-			expect(accepted[4]).toMatchObject({ isError: false, details: { accepted: { status: "queued" } } });
+			const statuses = accepted.map((result) => result.details.accepted.status);
+			expect(statuses.filter((status) => status === "created")).toHaveLength(
+				SUBAGENT_CONCURRENCY_LIMITS.bundledDefault,
+			);
+			expect(statuses.at(-1)).toBe("queued");
+			expect(accepted.at(-1)).toMatchObject({ isError: false, details: { accepted: { status: "queued" } } });
 		} finally {
 			await harness.handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, harness.context);
 			harness.faux.unregister();

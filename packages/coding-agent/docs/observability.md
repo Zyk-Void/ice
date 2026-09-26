@@ -13,7 +13,11 @@ ice --observe -p "fix the tests"   # also works in print mode
 - **The tape** — a live event grid: tool calls (with arguments, result preview, duration, and error state), user and assistant messages, skill invocations, compaction runs, auto-retries, and queue updates. Every row has the same field anatomy: time, kind, subject, state, duration.
 - **The book pane** — drill-down for the selected row: full arguments as pretty JSON, full result text, timing, and streaming-update counts. Click a row, or move with the arrow keys.
 - **Status strip** — session, model, thinking level, context-window pressure, token totals, and cost, rendered as segmented readouts updated once per second.
-- **Subagent lanes** — delegation fan-out appears in the bottom rail with role, phase, elapsed time, and current tool, projected from delegation progress snapshots.
+- **Subagent lanes** — delegation fan-out appears in the bottom rail with role, phase, elapsed time, and current tool, projected from delegation progress snapshots. Runtime attention for each child also carries bounded quality state: observed path count, the last successful action, and advisory-only repeated-failure/doom-loop signals that never stop a child by themselves.
+
+## Subagent quality fields
+
+Subagent results and durable job detail views expose bounded quality metadata: the semantic quality mode (`explore`, `standard`, `strict`), the runtime-derived assurance level (`unverified_plain` through `review_verified`), the task-contract hash, and a `Quality mode` row in durable job details. A quality regression can be traced from these fields plus the quality benchmark harness (see the subagent user guide) without opening full transcripts.
 
 ## Controls
 

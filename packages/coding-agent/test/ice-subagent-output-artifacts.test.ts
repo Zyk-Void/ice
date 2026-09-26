@@ -1,14 +1,21 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	isSubagentOutput,
 	SubagentOutputArtifactStore,
 	type SubagentOutputArtifactStoreLimits,
 } from "../src/ice-subagent-output-artifacts.ts";
 
 const roots: string[] = [];
 const stores: SubagentOutputArtifactStore[] = [];
+
+function artifactFilePath(root: string, ownerSessionId: string, artifactId: string): string {
+	const ownerDirectory = createHash("sha256").update(ownerSessionId, "utf8").digest("hex");
+	return join(root, ownerDirectory, artifactId, "output.txt");
+}
 
 function createStore(limits: Partial<SubagentOutputArtifactStoreLimits> = {}) {
 	const root = mkdtempSync(join(tmpdir(), "ice-subagent-output-"));
@@ -148,7 +155,7 @@ describe("subagent output artifacts", () => {
 		});
 		stores.push(restored);
 		expect(restored.registerDurable("owner-a", artifact)).toBe(true);
-		restored.finalizeRestore();
+		restored.finalizeRestore("owner-a");
 		const saved = restored.read({ ownerSessionId: "owner-a", artifactId: artifact.id, length: 32 });
 		expect(saved.text).toBe("Bearer [REDACTED]");
 		expect(saved.text).not.toContain("secret");
@@ -163,16 +170,18 @@ describe("subagent output artifacts", () => {
 		});
 		const durable = store.capture({ ownerSessionId: "owner-a", text: "durable output", lifecycle: "durable" });
 		const ephemeral = store.capture({ ownerSessionId: "owner-a", text: "temporary output" });
+		const otherOwner = store.capture({ ownerSessionId: "owner-b", text: "other owner output" });
 		const restored = new SubagentOutputArtifactStore({
 			artifactRoot: root,
 			limits: { inlineBytes: 4, maxArtifactBytes: 32 },
 		});
 		stores.push(restored);
 		expect(restored.registerDurable("owner-a", durable.artifact!)).toBe(true);
-		restored.finalizeRestore();
+		restored.finalizeRestore("owner-a");
 
-		expect(existsSync(join(root, durable.artifact!.id, "output.txt"))).toBe(true);
-		expect(existsSync(join(root, ephemeral.artifact!.id, "output.txt"))).toBe(false);
+		expect(existsSync(artifactFilePath(root, "owner-a", durable.artifact!.id))).toBe(true);
+		expect(existsSync(artifactFilePath(root, "owner-a", ephemeral.artifact!.id))).toBe(false);
+		expect(existsSync(artifactFilePath(root, "owner-b", otherOwner.artifact!.id))).toBe(true);
 		expect(restored.read({ ownerSessionId: "owner-a", artifactId: durable.artifact!.id }).text).toBe(
 			"durable output",
 		);
@@ -197,12 +206,31 @@ describe("subagent output artifacts", () => {
 	it("rejects tampered artifact bytes before returning a chunk", () => {
 		const { root, store } = createStore();
 		const output = store.capture({ ownerSessionId: "owner-a", text: "hello world" });
-		const path = join(root, output.artifact!.id, "output.txt");
+		const path = artifactFilePath(root, "owner-a", output.artifact!.id);
 		unlinkSync(path);
 		writeFileSync(path, "tampered data");
 
 		expect(() => store.read({ ownerSessionId: "owner-a", artifactId: output.artifact!.id })).toThrow(
 			"Subagent output artifact integrity check failed.",
+		);
+	});
+
+	it("rejects persisted artifact objects that contain a filesystem path", () => {
+		const { store } = createStore();
+		const output = store.capture({ ownerSessionId: "owner-a", text: "hello world" });
+		expect(isSubagentOutput({ ...output, artifact: { ...output.artifact, path: "/tmp/output.txt" } })).toBe(false);
+	});
+
+	it("promotes capture ownership to a durable per-job reference", () => {
+		const { store } = createStore();
+		const output = store.capture({ ownerSessionId: "owner-a", text: "hello world" });
+		const artifactId = output.artifact!.id;
+		expect(store.retainDurable("owner-a", output.artifact!, "durable:job:job-1")).toBe(true);
+		expect(store.release({ ownerSessionId: "owner-a", artifactId })).toBe(false);
+		expect(store.read({ ownerSessionId: "owner-a", artifactId }).text).toBe("hell");
+		expect(store.release({ ownerSessionId: "owner-a", artifactId, referenceId: "durable:job:job-1" })).toBe(true);
+		expect(() => store.read({ ownerSessionId: "owner-a", artifactId })).toThrow(
+			"Subagent output artifact was not found.",
 		);
 	});
 

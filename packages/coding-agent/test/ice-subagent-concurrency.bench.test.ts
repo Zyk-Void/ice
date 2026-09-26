@@ -83,6 +83,13 @@ async function runLevel(concurrency: number, cwd: string): Promise<BenchSample> 
 				status: "completed" as const,
 				summary: "ok",
 				observedOutputBytes: 2,
+				output: {
+					text: "ok",
+					textBytes: 2,
+					originalBytes: 2,
+					inlineTruncated: false,
+					captureStatus: "inline_complete" as const,
+				},
 				partial: false,
 				diagnostics: [],
 				usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 },

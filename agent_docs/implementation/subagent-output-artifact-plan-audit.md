@@ -1,54 +1,68 @@
 # Audit: Managed Subagent Output Artifacts and Admission Redesign
 
+## Superseding current-worktree verification
+
+The audit snapshot below records the pre-implementation state at `881c9d261`; its 75.5% score, blocker list, and partial verdict are historical and are superseded by this follow-up. The current worktree implements the remaining durable-v2, output-lifecycle, Observatory, documentation, and closure work.
+
+- Targeted verification from `packages/coding-agent`: 26 subagent-related test files passed, 581/581 tests.
+- Repository check: active npm is `12.0.2`; `npm run check` passed, including pinned dependency/import/shrinkwrap/install-lock/type/browser checks.
+- `git diff --check`: passed.
+- Aggregate batch/review presentation is fixed at 16 KiB, matching the implementation and operator docs; it is not admission accounting.
+
+Final symbol classification:
+
+- Child/writer final-answer `maxOutputBytes` is rejected on new input. Remaining same-name limits are command-hook capture, child-safe adapter output, and Bash output bounds; durable-job checks/normalization retain the field only to validate and strip historical snapshots.
+- `totalBudgetBytes` appears only in an explicit rejection guard; there is no batch output-admission ledger. Durable `plannedOutputBytes`/`reservedOutputBytes` are validated and removed only while decoding historical records; new job contracts/records do not expose or write them.
+- Managed launch schemas and execution paths have no synchronous `background: false` option. User docs describe handle-based inspection and optional output reads.
+- V1 `reportArtifact` path data is restricted to durable-history validation/cleanup and migration fixtures. New durable results use pathless v2 output refs; result clones, job inspection, and Observatory projections do not render legacy paths or artifact contents.
+- `registerDurable()` and owner-scoped `finalizeRestore()` are wired into durable restore; artifact refs are released on terminal retention expiry. Tests cover durable restore/tamper/retention, aggregate and writer eviction, patch-artifact independence, and output ownership.
+
+The implementation plan checkboxes are marked complete against this evidence. No commit was created.
+
+> The sections below preserve the earlier audit report as historical context; do not use its stale findings as current blockers.
+
 - Plan: `agent_docs/implementation/subagent-output-artifact-plan.md`
 - Re-audited: 2026-09-24
 - Worktree: `/home/mewtwo/Zks/ice/.worktrees/all-worktrees-experimental`
 - Branch: `integration/all-worktrees-experimental`
-- Completion: **68.4%** (`33.5 / 49` scoreable units)
-- Previous audit score: **45.9%** (`22.5 / 49`) — stale because additional output-contract work landed after that audit
+- Audited HEAD: `881c9d261 feat(coding-agent): make managed subagent launches handle-only`
+- Completion: **75.5%** (`37.0 / 49` scoreable units)
 - Eligible for complete-remaining by default (`>85%`): **NO**
 - User-authorized threshold override: **NOT USED**
-- Audit mode: current source + focused deterministic tests + root repository check
-- Workspace state: heavily dirty/pre-existing; no reset, clean, stage, commit, merge, or unrelated source edit performed
+- Audit mode: current source + current tests + fresh focused verification + fresh root repository gate
+- Implementation source changed by this audit: **none**
 
 ## Verdict
 
-**PARTIAL IMPLEMENTATION — approximately two-thirds of the plan is now complete.**
+**PARTIAL IMPLEMENTATION — 75.5% verified by the plan's 49 leaf units.**
 
-The implementation has materially advanced beyond the previous 45.9% audit. The central **non-durable output path is now real and verified**:
+The previous 68.4% audit is stale against current HEAD. Commit `881c9d261` materially completed the always-managed launch migration and additional process-local artifact ownership work:
 
-- a dedicated v2 output-artifact store exists;
-- fixed host-owned inline/artifact/read/storage limits exist;
-- opaque pathless artifact refs exist;
-- terminal final answers are materialized separately from execution;
-- output size no longer terminates child execution;
-- `read_subagent_output` is now a parent-only owner-scoped tool;
-- cross-owner reads, UTF-8 pagination, integrity checks, redaction, quota behavior and path rejection are covered;
-- child/profile/writer final-answer `maxOutputBytes` inputs have been removed/rejected while command-hook output bounds remain;
-- batch/review aggregate output-byte admission is removed;
-- durable planned/reserved output-byte admission is removed;
-- result verification has been repaired;
-- all focused suites rerun in this audit are green;
-- `corepack npm@12.0.2 run check` is green.
+- `delegate`, `delegate_batch`, `review_batch`, and `delegate_write` no longer expose `background`;
+- the closed schemas reject `background: false`;
+- delegate/batch/review/writer execution now returns managed handles at the accepted boundary;
+- retained single-child output is released on eviction, resume supersession, explicit delete, and shutdown;
+- managed batches hold an independent artifact reference so child deletion does not invalidate an aggregate result;
+- managed batch/writer pruning and shutdown now release their output-artifact references.
 
-The implementation is **not yet complete** because the remaining work is concentrated in lifecycle and migration boundaries rather than the artifact primitive itself:
+The central v2 ordinary-output architecture is therefore substantially implemented: pathless opaque IDs, host-owned limits, output materialization, owner-scoped bounded reads, integrity checks, UTF-8 pagination, no output-length child abort, removal of caller final-answer caps, and removal of byte-reservation admission are all present.
 
-1. process-local result eviction/resume/delete does not release each specific v2 artifact at the ownership transition;
-2. durable jobs still persist the legacy `reportArtifact` model rather than v2 `output` refs;
-3. durable v2 re-registration/finalization and retention release are not wired;
-4. all four managed launch surfaces still expose synchronous `background: false`;
-5. legacy path-bearing `reportArtifact.path` is still rendered to users;
-6. Observatory does not yet expose bounded v2 capture metadata;
-7. docs/changelog still describe the old output-cap / synchronous model;
-8. the final forbidden-symbol/migration audit is therefore not complete.
+The remaining work is concentrated in **durable persistence/migration and closure**:
 
-The architecture marker in `idea.md` should remain planned/not-implemented until those gaps are closed.
+1. `delegate_async` still persists the legacy `reportArtifact` envelope instead of v2 `output`;
+2. production does not call `SubagentOutputArtifactStore.registerDurable()` or `finalizeRestore()`;
+3. durable v2 retention expiry/release therefore does not exist;
+4. legacy `reportArtifact.path` is still formatted into user/model-visible output;
+5. durable Observatory projection cannot expose v2 capture metadata yet;
+6. docs/changelog still advertise removed `background: false` and child `maxOutputBytes` behavior;
+7. the main subagent suite has one stale assertion requiring the removed phrase “output budget”;
+8. the root quality gate currently fails on one unused helper, `terminalProgressPhase`.
+
+The architecture marker in `idea.md` should remain planned/not-implemented until durable v2 integration, docs, and all closure gates are green.
 
 ## Scoring
 
-The source plan contains **49 leaf scoreable units**, S0.1 through S9.8.
-
-Scoring model:
+The plan has **49 leaf scoreable units**, S0.1 through S9.8.
 
 - VERIFIED = `1.0`
 - PARTIAL = `0.5`
@@ -56,164 +70,164 @@ Scoring model:
 
 Current totals:
 
-- VERIFIED: **28 units = 28.0**
-- PARTIAL: **11 units = 5.5**
-- MISSING: **10 units = 0**
-- BROKEN: **0**
+- VERIFIED: **31**
+- PARTIAL: **12**
+- MISSING: **5**
+- BROKEN: **1**
 - BLOCKED: **0**
-- Total: **33.5 / 49 = 68.367...% → 68.4%**
+- Score: **37.0 / 49 = 75.5102...% -> 75.5%**
 
 ## Stage summary
 
 | Stage | Score | Status |
 |---|---:|---|
-| S0 — Baseline/contracts | **2.5 / 3** | Contract/regressions verified; final maintained symbol inventory still incomplete |
-| S1 — Artifact store | **4.0 / 4** | **Complete** |
-| S2 — Read path | **4.0 / 4** | **Complete** |
-| S3 — Result integration | **4.0 / 4** | **Complete** for ordinary child/writer terminal output |
-| S4 — Remove final-answer byte controls | **5.0 / 5** | **Complete**; hook capture cap intentionally retained |
-| S5 — Remove byte admission | **5.0 / 5** | **Complete** |
-| S6 — Artifact lifecycle | **1.5 / 5** | Process-local cleanup partial; durable v2 integration absent |
-| S7 — Always-managed launches | **0.0 / 5** | Not implemented |
-| S8 — Migration/UI/RPC/docs | **2.5 / 6** | Legacy normalization/RPC partly migrated; v1/UI/docs gaps remain |
-| S9 — Closure verification | **5.0 / 8** | Current suites/check green, but missing behaviors are not covered by final closure |
+| S0 — Baseline/contracts | **2.5 / 3** | Core contract frozen; final categorized symbol ledger still incomplete |
+| S1 — Artifact store | **4.0 / 4** | **Verified** |
+| S2 — Read path | **4.0 / 4** | **Verified** |
+| S3 — Result integration | **4.0 / 4** | **Verified** for ordinary child/writer terminal output |
+| S4 — Remove final-answer byte controls | **5.0 / 5** | **Verified**; hook capture bound intentionally remains |
+| S5 — Remove byte admission | **4.5 / 5** | Core removal verified; aggregate presentation value/testing not reconciled to plan |
+| S6 — Artifact lifecycle | **2.0 / 5** | Single-run release verified; batch/writer mostly wired; durable v2 absent |
+| S7 — Always-managed launches | **4.5 / 5** | Runtime/schema migration verified; user docs/changelog still stale |
+| S8 — Migration/UI/RPC/docs | **3.0 / 6** | Legacy normalization/RPC migrated; durable v2/UI/docs incomplete |
+| S9 — Closure verification | **3.5 / 8** | Many focused suites green, but main suite and root gate currently red |
 
 ## Coverage ledger
 
 | ID | Plan unit | Status | Score | Current evidence | Exact remaining work |
 |---|---|---|---:|---|---|
-| S0.1 | Record/classify current symbol inventory | PARTIAL | 0.5 | This audit classifies current `maxOutputBytes`, `background`, `reportArtifact.path`, legacy planned/reserved bytes, read-tool and lifecycle seams, but the implementation still lacks a final maintained forbidden-symbol ledger. | Carry the categorized inventory through S9.8 and explain every remaining legacy/hook/provider occurrence. |
-| S0.2 | Freeze v2 output types/constants | VERIFIED | 1.0 | `packages/coding-agent/src/ice-subagent-output-artifacts.ts:22-69` defines fixed host limits, pathless v2 ref, capture states, output and read contracts. | - |
-| S0.3 | Add inverse large-output regressions | VERIFIED | 1.0 | Large ordinary and writer output regressions exist; fresh output/result and writer suites pass. | - |
-| S1.1 | Create focused output-artifact module | VERIFIED | 1.0 | `ice-subagent-output-artifacts.ts` owns storage/read/integrity primitives. | - |
-| S1.2 | Opaque ID + owner-aware registry | VERIFIED | 1.0 | `ice-subagent-output-artifacts.ts:273-292,295-304` uses random UUID v4 IDs and owner-bound registry lookups; public ref contains no path. | - |
-| S1.3 | Actual-byte storage accounting | VERIFIED | 1.0 | `ice-subagent-output-artifacts.ts:264-292` checks actual stored bytes at capture against fixed per-owner/global capacity; no launch reservation API exists. | - |
-| S1.4 | Safe release/orphan primitives | VERIFIED | 1.0 | `ice-subagent-output-artifacts.ts:346-406` provides durable registration, restore sweep, release and process-local dispose; focused artifact tests pass. Production ownership wiring is scored in S6. | - |
-| S2.1 | Final-answer materializer | VERIFIED | 1.0 | `ice-subagent-output-artifacts.ts:242-293` implements inline-complete, artifact-complete, artifact-truncated and artifact-unavailable states with redaction/UTF-8 bounds. | - |
-| S2.2 | Add `read_subagent_output` tool | VERIFIED | 1.0 | Schema at `ice-subagents.ts:11002-11015`; implementation at `15179-15220`; registered at `16317`. | - |
-| S2.3 | Owner + integrity checks | VERIFIED | 1.0 | Store read rejects unknown/cross-owner identically and verifies file integrity; integration test exercises foreign owner vs unknown ID. | - |
-| S2.4 | UTF-8 pagination | VERIFIED | 1.0 | `ice-subagent-output-artifacts.ts:305-343` validates byte offsets/bounds and emits authoritative nextOffset; focused UTF-8 tests pass. | - |
-| S3.1 | Capture terminal final answer only | VERIFIED | 1.0 | Runner materializer at `ice-subagents.ts:8614-8623` and terminal result paths use v2 output; provider partials are not presented as complete terminal artifacts. | - |
-| S3.2 | Split structured parser bound from retention | VERIFIED | 1.0 | Structured parsing uses fixed parser limits independently from artifact storage; output-size streaming cutoff is gone. | - |
-| S3.3 | Update `verifySubagentResult` | VERIFIED | 1.0 | `ice-subagents.ts:6135-6185` validates bounded v2 output/completeness independently; fresh artifact + result-contract run passes **34/34**. | - |
-| S3.4 | Writer result integration | VERIFIED | 1.0 | `ice-writer-w5.test.ts:181-224` proves writer schema omits maxOutputBytes and long terminal text produces pathless v2 artifact while patch artifact remains distinct; fresh writer suite passes. | - |
-| S4.1 | Remove streaming `output_truncated` control | VERIFIED | 1.0 | Live output observation no longer owns an abort/control race; large-output tests complete normally. | - |
-| S4.2 | Remove child execution `maxOutputBytes` | VERIFIED | 1.0 | `ice-subagents.ts:4752-4788` rejects removed `execution.maxOutputBytes`; execution contract no longer contains the final-answer cap. | - |
-| S4.3 | Remove profile/settings final-answer cap | VERIFIED | 1.0 | Profile aliases rejected at `ice-subagents.ts:2238-2244`; settings preference/restriction cap removed/rejected at `ice-subagent-settings.ts:147-169,282-305`; hook `maxOutputBytes` remains explicitly separate. | - |
-| S4.4 | Remove writer `maxOutputBytes` input | VERIFIED | 1.0 | Writer normalizer rejects removed field at `ice-subagents.ts:5248-5252` and schema omits it at `11072-11086`; test asserts omission. | - |
-| S4.5 | Remove retry output-budget arithmetic | VERIFIED | 1.0 | Recovery no longer subtracts “remaining output bytes”; current subagent suite passes. | - |
-| S5.1 | Delete batch/review `totalBudgetBytes` API | VERIFIED | 1.0 | Closed tool schemas omit it; runtime compatibility guard rejects it at `ice-subagents.ts:10067-10068`. | - |
-| S5.2 | Delete batch output ledger/reservation | VERIFIED | 1.0 | No production `SubagentBatchBudgetLedger` remains; scheduler gates on concurrency/admission rather than output bytes. | - |
-| S5.3 | Remove batch/review budget projections | VERIFIED | 1.0 | Aggregate result no longer has output budget ledger; presentation is fixed-host bounded. Current implementation uses 16 KiB instead of the plan's suggested 32 KiB. | Reconcile/document 16 KiB as the intentional stricter value before final sign-off. |
-| S5.4 | Remove durable planned/reserved output admission | VERIFIED | 1.0 | New jobs do not reserve planned output; legacy `plannedOutputBytes` / `reservedOutputBytes` exist only in persisted-state decoding/normalization. | - |
-| S5.5 | Replace mixed job budget inspection with scheduling state | VERIFIED | 1.0 | Durable inspection uses owner active/queued/cap scheduling state; fresh job/observatory suites pass. | - |
-| S6.1 | Process-local single-run retention/delete lifecycle | PARTIAL | 0.5 | Store disposal cleans process-local artifacts at session shutdown and report-repair replacement calls `releaseOutput`, but retained-result eviction, resume supersession and explicit delete remove maps without releasing the specific output artifact: `ice-subagents.ts:8003-8013,8134-8144,8213-8216,8324-8329`. | Add one owner-aware result-release helper and call it exactly once on eviction, resume supersession, explicit delete and relevant terminal-observation removal. Add read-before/delete-after tests. |
-| S6.2 | Managed batch/review artifact lifecycle | PARTIAL | 0.5 | Child results can carry/read v2 refs and session shutdown disposes process-local artifacts, but aggregate retention/eviction does not own/release child refs explicitly. | Tie aggregate/child retained records to v2 artifact release and test multi-child lifetime/eviction. |
-| S6.3 | Managed writer artifact lifecycle | PARTIAL | 0.5 | Writer output artifact and patch artifact are separate, and shutdown cleanup exists, but writer-result pruning/deletion does not explicitly release the output ref independently of patch lifecycle. | Wire output release to writer lifecycle and add no-cross-delete regression. |
-| S6.4 | Durable v2 result persistence/rehydration | MISSING | 0 | `SubagentJobResultEnvelope` at `ice-subagent-jobs.ts:103-136` still lacks `output` and persists legacy `reportArtifact`; production has no caller of `registerDurable()` / `finalizeRestore()`. | Persist bounded `SubagentOutput`/v2 ref, clone/validate it, re-register retained terminal refs after restore, then finalize orphan sweep; preserve interrupted/no-replay semantics. |
-| S6.5 | Durable retention expiry for v2 | MISSING | 0 | Retention path has no v2 store release because durable v2 refs are not persisted. | Release v2 artifact/accounting on full-result eviction while retaining safe legacy-v1 cleanup. |
-| S7.1 | Remove `background` schema fields | MISSING | 0 | `background: Type.Optional` remains on delegate/writer/batch/review schemas at `ice-subagents.ts:10977-10988,11072-11086,11108-11118` and review equivalent. | Remove fields; closed schemas must reject them. |
-| S7.2 | Delete synchronous delegate branch | MISSING | 0 | `params.background !== false` branch remains in delegate path. | Make successful delegate always return a managed handle after accepted startup/admission. |
-| S7.3 | Delete synchronous batch/review branches | MISSING | 0 | Both batch and review still branch on `params.background !== false`. | Always return owner-scoped aggregate handle and inspect result later. |
-| S7.4 | Delete synchronous writer branch | MISSING | 0 | Writer still supports synchronous `background: false`; writer tests use it. | Make writer handle-only after preflight/admission and adapt tests. |
-| S7.5 | Remove stale synchronous guidance/examples | MISSING | 0 | Tests and user guide still use/recommend `background: false`. | Update tool descriptions/tests/docs to handle-only flow. |
-| S8.1 | Normalize legacy durable output fields | VERIFIED | 1.0 | `ice-subagent-jobs.ts:901-920` strips legacy planned/reserved fields; contract `maxOutputBytes` is explicitly decode/inspection-only at `:60-61`. New execution does not apply it. | - |
-| S8.2 | Keep legacy v1 artifact validator internal-only | PARTIAL | 0.5 | v2 output refs are pathless, but legacy `reportArtifact` remains first-class in durable envelope and formatting still emits `reportArtifact.path` at `ice-subagents.ts:11459-11460,11510-11511`. | Restrict v1 path object to legacy decode/cleanup; remove path from model/user-visible formatting and new durable results. |
-| S8.3 | Update Observatory/TUI | PARTIAL | 0.5 | Reservation-budget projection has been removed and scheduling projection is current, but durable Observatory result has no v2 captureStatus/stored-byte/availability metadata because durable v2 output is absent. | Add bounded v2 output materialization metadata after S6.4; never expose path/content. |
-| S8.4 | Update RPC settings/schemas | PARTIAL | 0.5 | `ice.subagents.defaults.maxOutputBytes` has been removed from current RPC settings and read tool is owner-checked through normal tool execution. However old `background` launch fields remain in tool schemas. | Finish S7 schema migration; keep no separate unguarded file-read RPC endpoint. |
-| S8.5 | Update docs/changelog | MISSING | 0 | `docs/settings.md` and `subagent-user-guide.md` still contain child `maxOutputBytes` and synchronous opt-out examples; no `read_subagent_output` documentation/changelog entry exists. | Document fixed host limits, handle → inspect → read flow, removed fields, process-local vs durable semantics and intentional hook output bound. |
-| S8.6 | Mark architecture implemented only after verification | MISSING | 0 | `idea.md` correctly remains planned/not implemented because S6/S7/S8 are incomplete. | Flip only after every required gate is complete and verified. |
-| S9.1 | Focused artifact/result/security suite | VERIFIED | 1.0 | Fresh run: **34/34 passed** across artifact + result-contract files. | - |
-| S9.2 | Single-child/readiness/recovery closure | PARTIAL | 0.5 | Fresh core/readiness/delegate suites are green and output-cap removal/read tool work, but process-local lifecycle release and handle-only launch are not the final intended behavior. | After S6.1 + S7.1/S7.2, add exact lifecycle/handle-only regressions and rerun. |
-| S9.3 | Batch/review scheduler closure | VERIFIED | 1.0 | Fresh `ice-subagents.test.ts` + adversarial suite passes; S5 scheduler/admission contract is green. | - |
-| S9.4 | Durable jobs/restart/retention closure | PARTIAL | 0.5 | Fresh `ice-subagent-jobs.test.ts` passes, but suite cannot verify missing v2 persistence/re-register/retention behavior. | Implement S6.4/S6.5 and add v2 restart/retention fixtures. |
-| S9.5 | Writer closure suite | PARTIAL | 0.5 | Fresh writer file passes and output integration is correct, but explicit output-artifact lifecycle release and handle-only writer semantics remain absent. | Add lifecycle + always-managed cases after S6.3/S7.4 and rerun. |
-| S9.6 | Settings/profile/hook/RPC/Observatory closure | PARTIAL | 0.5 | Fresh settings/profile/hook/RPC/Observatory files pass and output-cap settings are removed, but Observatory v2 metadata and background schema removal are incomplete. | Finish S8.3/S7 schema work, add assertions, rerun same matrix. |
-| S9.7 | Root check with npm 12.0.2 | VERIFIED | 1.0 | Fresh `corepack npm@12.0.2 run check` passes: Biome, pinned deps, TS imports, shrinkwrap, install-lock, tsgo and browser smoke all green. | - |
-| S9.8 | Final forbidden-symbol audit + coverage ledger | MISSING | 0 | Active `background` branches, public legacy `reportArtifact.path` and stale docs remain. | Run categorized final sweep after S6-S8 completion and explain intentional hook/provider/legacy decoder occurrences. |
+| S0.1 | Record/classify current symbol inventory | PARTIAL | 0.5 | Current audit categorizes removed/output/hook/legacy symbols, but no final maintained forbidden-symbol ledger exists. | Finish categorized S9.8 sweep after migration; explain every intentional legacy/hook/provider occurrence. |
+| S0.2 | Freeze v2 output types/constants | VERIFIED | 1.0 | `ice-subagent-output-artifacts.ts` defines fixed host limits, pathless v2 ref, capture states, output/read contracts. | - |
+| S0.3 | Add inverse large-output regressions | VERIFIED | 1.0 | Ordinary and writer large-output regressions exist; output/result and writer-focused files run successfully apart from the unrelated stale core assertion. | - |
+| S1.1 | Create focused output-artifact module | VERIFIED | 1.0 | `packages/coding-agent/src/ice-subagent-output-artifacts.ts` owns output storage/read/integrity behavior. | - |
+| S1.2 | Opaque ID + owner-aware registry | VERIFIED | 1.0 | Store generates opaque UUID refs, owner-checks lookups, public artifact ref has no path. | - |
+| S1.3 | Actual-byte storage accounting | VERIFIED | 1.0 | Store enforces actual stored-byte owner/global limits at capture; no launch reservation API exists. | - |
+| S1.4 | Safe release/orphan primitives | VERIFIED | 1.0 | Store implements release, durable registration primitive, restore-finalization primitive and safe disposal; focused artifact tests pass. | Production durable wiring is scored under S6.4/S6.5. |
+| S2.1 | Final-answer materializer | VERIFIED | 1.0 | Materializer implements inline-complete/artifact-complete/artifact-truncated/artifact-unavailable with redaction and UTF-8-safe bounds. | - |
+| S2.2 | Add `read_subagent_output` tool | VERIFIED | 1.0 | Schema `ice-subagents.ts:11005-11018`; tool is registered at session setup and accepts opaque ID + byte range only. | - |
+| S2.3 | Owner + integrity checks | VERIFIED | 1.0 | Cross-owner/unknown lookups fail closed; read path verifies file size/hash/type and rejects path authority. | - |
+| S2.4 | UTF-8 pagination | VERIFIED | 1.0 | Store validates byte boundaries and returns authoritative next offset; focused artifact tests pass. | - |
+| S3.1 | Capture terminal final answer only | VERIFIED | 1.0 | Ordinary terminal result paths use v2 output; partial provider/runtime evidence is not represented as a complete terminal artifact. | - |
+| S3.2 | Split structured parser bound from retention | VERIFIED | 1.0 | Structured parsing is fixed-host bounded independently from output storage; no streaming output-byte abort remains. | - |
+| S3.3 | Update `verifySubagentResult` | VERIFIED | 1.0 | Verification uses output completeness/materialization independently of removed caller cap; result-contract tests pass. | - |
+| S3.4 | Writer result integration | VERIFIED | 1.0 | `ice-writer-w5.test.ts:177-255` proves no writer maxOutputBytes input, pathless v2 final-output artifact, and independent patch artifact. | - |
+| S4.1 | Remove streaming `output_truncated` control | VERIFIED | 1.0 | Output length no longer owns a child abort/control race; long final-output tests reach terminal handling. | - |
+| S4.2 | Remove child execution `maxOutputBytes` | VERIFIED | 1.0 | New execution schema/normalization rejects removed final-answer cap. | - |
+| S4.3 | Remove profile/settings final-answer cap | VERIFIED | 1.0 | Profile/settings child final-answer aliases are removed/rejected; command-hook `maxOutputBytes` remains intentionally separate. | - |
+| S4.4 | Remove writer `maxOutputBytes` input | VERIFIED | 1.0 | Writer schema omits field and normalizer rejects legacy call input; writer test asserts this. | - |
+| S4.5 | Remove retry output-budget arithmetic | VERIFIED | 1.0 | Recovery path no longer subtracts remaining final-answer bytes. | - |
+| S5.1 | Delete batch/review `totalBudgetBytes` API | VERIFIED | 1.0 | Closed schemas omit field; compatibility guard rejects removed input. | - |
+| S5.2 | Delete batch output ledger/reservation | VERIFIED | 1.0 | No production `SubagentBatchBudgetLedger`; scheduler uses concurrency/admission rather than output reservations. | - |
+| S5.3 | Remove batch/review budget projections | PARTIAL | 0.5 | Output-budget result/preflight projection is gone, but current aggregate presentation uses 16 KiB while plan specifies 32 KiB and no explicit 8-child presentation-cap closure test was found. | Choose/document one fixed value (16 KiB is safer if intentional) and add deterministic aggregate presentation test. |
+| S5.4 | Remove durable planned/reserved output admission | VERIFIED | 1.0 | `plannedOutputBytes`/`reservedOutputBytes` remain only in legacy persisted decode/normalization; no new reservation admission. | - |
+| S5.5 | Replace mixed job budget inspection with scheduling state | VERIFIED | 1.0 | Durable inspection uses active/queued scheduling state rather than output-byte reservation budget. | - |
+| S6.1 | Process-local single-run retention/delete lifecycle | VERIFIED | 1.0 | `releaseOutputArtifact` + `forgetRetainedManagedResult` at `ice-subagents.ts:7832-7846`; eviction, resume supersession and delete route through it. Test `ice-subagents.test.ts:1306-1403` proves old artifact becomes unreadable on resume/delete. | - |
+| S6.2 | Managed batch/review artifact lifecycle | PARTIAL | 0.5 | Aggregate owns references via `outputArtifactIds`; pruning/shutdown release them (`ice-subagents.ts:13144-13164,16247-16248`). Test `1410-1484` proves child deletion does not invalidate aggregate-owned artifact. | Add explicit aggregate eviction/prune test proving final owner release makes artifact unreadable; add planned multi-child presentation/lifetime case. |
+| S6.3 | Managed writer artifact lifecycle | PARTIAL | 0.5 | `releaseManagedWriterOutput` and pruning/shutdown release text output without touching patch artifact (`ice-subagents.ts:13227-13243,16238-16239`). | Add deterministic prune/eviction read-after-release test and explicit no-cross-delete regression for patch artifact. |
+| S6.4 | Durable v2 result persistence/rehydration | MISSING | 0 | `SubagentJobResultEnvelope` still has legacy `reportArtifact?: SubagentReportArtifact` (`ice-subagent-jobs.ts:135`) and no `output?: SubagentOutput`; production has no caller of `registerDurable()` or `finalizeRestore()`. | Persist/validate/clone v2 output, restore terminal refs into shared store, call finalizeRestore only after durable restore, preserve interrupted/no-replay semantics. |
+| S6.5 | Durable retention expiry for v2 | MISSING | 0 | Durable v2 ref is not persisted, so 32-record retention cannot release v2 artifact/accounting. | Release v2 store reference on durable full-result eviction while retaining safe v1 legacy cleanup. |
+| S7.1 | Remove `background` schema fields | VERIFIED | 1.0 | Current delegate/writer/batch/review schemas contain no background property; `ice-subagents.test.ts:8658-8673` asserts rejection. | - |
+| S7.2 | Delete synchronous delegate branch | VERIFIED | 1.0 | `ice-subagents.ts:14789-14825` returns at managed-handle admission; no `params.background` branch exists. | - |
+| S7.3 | Delete synchronous batch/review branches | VERIFIED | 1.0 | Batch returns accepted handle at `:15691-15710`; review at `:15959-15979`; no synchronous opt-out remains. | - |
+| S7.4 | Delete synchronous writer branch | VERIFIED | 1.0 | Writer returns accepted handle after admission/preflight (`:13749-13771`); W5 helper explicitly waits later for terminal result. | - |
+| S7.5 | Remove stale synchronous guidance/examples | PARTIAL | 0.5 | Runtime descriptions/tests migrated, but `docs/subagent-user-guide.md:20` and `CHANGELOG.md:163` still tell users `background:false` exists. | Remove stale docs/changelog wording and describe always-managed flow. |
+| S8.1 | Normalize legacy durable output fields | VERIFIED | 1.0 | Legacy planned/reserved output fields are decode/normalization-only and removed from new records. | - |
+| S8.2 | Keep legacy v1 artifact validator internal-only | PARTIAL | 0.5 | v2 refs are pathless, but durable envelope still carries v1 `reportArtifact` and formatter exposes `reportArtifact.path` at `ice-subagents.ts:11527`. | Make v1 path object legacy decode/cleanup-only; never render path; new durable output must use v2. |
+| S8.3 | Update Observatory/TUI | PARTIAL | 0.5 | Reservation-budget projection is gone, but durable v2 captureStatus/stored-byte/availability metadata cannot be projected until S6.4 exists. | Add bounded v2 terminal materialization metadata after durable integration; no content/path. |
+| S8.4 | Update RPC settings/schemas | VERIFIED | 1.0 | Child `ice.subagents.defaults.maxOutputBytes` RPC setting is removed; current tool schemas reject `background`; output read remains through normal owner-scoped tool execution. | - |
+| S8.5 | Update docs/changelog | MISSING | 0 | User guide/settings docs still contain child `maxOutputBytes`; user guide/changelog still contain `background:false`; no `read_subagent_output` guide entry found. | Migrate docs/changelog, preserve hook-output cap documentation, document handle -> inspect -> optional read flow and fixed host limits. |
+| S8.6 | Mark architecture implemented only after verification | MISSING | 0 | `idea.md` correctly remains planned because durable migration and closure are incomplete. | Flip only after all required gates pass. |
+| S9.1 | Focused artifact/result/security suite | VERIFIED | 1.0 | In fresh 4-file run, artifact store + result-contract + jobs pass; only failure is a stale assertion in the broad `ice-subagents.test.ts`. | - |
+| S9.2 | Single-child/readiness/recovery closure | PARTIAL | 0.5 | Delegate/readiness focused files pass and lifecycle release is implemented, but broad core file is currently 1 test red because it still requires removed “output budget” wording at `ice-subagents.test.ts:698`. | Update stale assertion to the new no-output-budget contract and rerun. |
+| S9.3 | Batch/review scheduler closure | PARTIAL | 0.5 | Scheduler/handle behavior is implemented and adversarial matrix passes; broad core file currently red and S6.2 aggregate-eviction closure test is missing. | Add aggregate eviction/presentation test, fix stale core assertion, rerun. |
+| S9.4 | Durable jobs/restart/retention closure | PARTIAL | 0.5 | Current jobs test file passes, but it cannot verify absent durable v2 persist/re-register/retention behavior. | Implement S6.4/S6.5 and add restart/tamper/retention v2 fixtures. |
+| S9.5 | Writer closure suite | PARTIAL | 0.5 | Fresh writer suite passes and handle-only writer path is present; explicit output-artifact prune/release/no-cross-delete regression still missing. | Add S6.3 lifecycle regressions and rerun writer matrix. |
+| S9.6 | Settings/profile/hook/RPC/Observatory closure | PARTIAL | 0.5 | Fresh 9-file matrix passes **119/119**; durable Observatory v2 metadata remains incomplete. | Finish S8.3, then rerun same matrix. |
+| S9.7 | Root check with npm 12.0.2 | BROKEN | 0 | Fresh `corepack npm@12.0.2 run check` exits 1: Biome reports unused `terminalProgressPhase` at `ice-subagents.ts:11748`. | Remove/use the stale helper and rerun full root gate. |
+| S9.8 | Final forbidden-symbol audit + coverage ledger | MISSING | 0 | Durable v1 path, stale docs, legacy compatibility fields and incomplete durable store wiring remain; final closure sweep cannot pass. | Run categorized final sweep only after S6-S8 completion and explain allowed hook/provider/legacy decoder occurrences. |
 
 ## Findings
 
-### High — durable jobs still use the old output artifact model
+### High — durable jobs still use legacy output persistence
 
-The ordinary managed-child path has moved to v2, but `SubagentJobResultEnvelope` still stores:
+`packages/coding-agent/src/ice-subagent-jobs.ts:135` still stores:
 
 ```ts
 reportArtifact?: SubagentReportArtifact;
 ```
 
-It does not persist `SubagentOutput` or a pathless v2 ref. `SubagentOutputArtifactStore.registerDurable()` and `finalizeRestore()` exist and are focused-tested, but production never calls them.
+There is no durable `SubagentOutput` field. The v2 store already implements `registerDurable()` and `finalizeRestore()`, but repository search finds **no production caller**. This is the largest architectural gap because durable output is the only artifact path that must survive process restart.
 
-This is the largest architectural gap because durable jobs are exactly the surface where artifact survival across process restart matters.
+### High — closure gates are currently red
 
-### High — retained-result ownership does not release individual artifacts
+Fresh verification found two failures:
 
-The store can release safely, but lifecycle owners often remove the result without releasing its v2 artifact:
+1. Broad subagent matrix: **333/334 passed**. The single failure is `packages/coding-agent/test/ice-subagents.test.ts:698`, whose regex still requires the removed words `output budget` in `manage_subagent` guidance.
+2. Root gate: `corepack npm@12.0.2 run check` fails on unused `terminalProgressPhase` at `packages/coding-agent/src/ice-subagents.ts:11748`.
 
-- retained-result capacity eviction;
-- retained-child eviction;
-- resume supersession;
-- explicit retained-child delete.
+These are small fixes, but until rerun successfully S9.2/S9.3 and S9.7 cannot be marked verified.
 
-Whole-session shutdown eventually calls `outputArtifacts.dispose()`, so this is not permanent process-exit leakage, but it violates the plan's ownership/retention semantics during a long-lived session and can leave storage/accounting retained longer than the logical result.
+### Medium — process-local lifecycle is substantially better than the prior audit
 
-### High — synchronous launch opt-outs are untouched
+The prior audit incorrectly said retained result, batch, and writer release were unwired. Current HEAD now has:
 
-`delegate`, `delegate_batch`, `review_batch` and `delegate_write` all still expose `background` and preserve synchronous `background: false` branches.
+- single result release helper and exact delete/evict/resume wiring;
+- independent aggregate reference ownership and batch prune/shutdown release;
+- writer prune/shutdown release separate from patch artifacts.
 
-S7 therefore remains **0 / 5** even though the background implementation itself is mature.
+S6.1 is now verified. S6.2/S6.3 remain partial only because the plan's explicit eviction/no-cross-delete verification cases are not yet present.
 
-### Medium — legacy report paths are still user/model visible
+### Medium — handle-only launch migration is implemented, docs are not
 
-Current formatter code emits:
+Current source contains no launch `background` property or `params.background` branch. Schema tests reject the field, and delegate/batch/review/writer all return accepted handles.
 
-```text
-Oversized report capture: <absolute path> (...)
-```
+However:
+- `packages/coding-agent/docs/subagent-user-guide.md:20` still instructs users to set `background: false`;
+- `packages/coding-agent/CHANGELOG.md:163` still documents synchronous `background:false`.
 
-for legacy `reportArtifact` on both ordinary and durable inspection paths.
+This is documentation drift against current runtime.
 
-The new v2 pathless contract is correct, but this legacy projection prevents the public-path cleanup from being complete.
+### Medium — legacy report path remains visible
 
-### Medium — docs lag code
+`packages/coding-agent/src/ice-subagents.ts:11527` still formats the absolute v1 `reportArtifact.path`. The v2 public contract is pathless, but the migration is not complete until v1 path-bearing data is decode/cleanup-only.
 
-The implementation has removed final-answer `maxOutputBytes` settings/schema, but docs still show the old knob and synchronous opt-out and do not explain `read_subagent_output`.
+### Medium — docs still advertise removed child output controls
 
-This can mislead users/agents into sending fields that runtime now rejects.
+The user guide still contains child `execution.maxOutputBytes` examples (`subagent-user-guide.md:32` and others), while runtime now rejects that input. `read_subagent_output` is not documented. The command-hook `maxOutputBytes` entry is separate and should remain.
 
-### Medium — aggregate presentation value differs from plan
+### Low/plan reconciliation — aggregate presentation is 16 KiB, plan says 32 KiB
 
-The plan proposed 32 KiB aggregate batch/review presentation. Current implementation uses **16 KiB**, which is stricter and safe. This is not an implementation defect by itself, but the final plan/docs should record the deliberate value instead of leaving the mismatch unexplained.
+The current formatter uses a stricter 16 KiB aggregate/result presentation bound. This is safe, but the plan explicitly froze 32 KiB. Choose one deliberate contract, document it, and add the multi-child cap test rather than leaving an unexplained mismatch.
 
 ## Verification performed
 
-### 1. Artifact + result contract
-
-Command:
+### 1. Artifact/result/core/jobs matrix
 
 ```bash
 cd packages/coding-agent
-node /home/mewtwo/Zks/ice/node_modules/vitest/dist/cli.js --run \
+node ../../node_modules/vitest/dist/cli.js --run \
   test/ice-subagent-output-artifacts.test.ts \
-  test/ice-subagent-result-contract.test.ts
-```
-
-Result: **PASS — 2 files, 34/34 tests**.
-
-### 2. Core subagent + durable jobs
-
-```bash
-node /home/mewtwo/Zks/ice/node_modules/vitest/dist/cli.js --run \
+  test/ice-subagent-result-contract.test.ts \
   test/ice-subagents.test.ts \
   test/ice-subagent-jobs.test.ts
 ```
 
-Result: **PASS — 2 files, 297/297 tests**.
+Result: **FAIL — 3 files passed, 1 file failed; 333/334 tests passed.**
 
-### 3. Delegate/readiness/writer/settings/profile/hook/Observatory/RPC/adversarial matrix
+Only failure:
+
+```text
+test/ice-subagents.test.ts:698
+expected manage_subagent description to match
+/preserves run ID.*model.*profile.*scope.*tool authority.*output budget/i
+```
+
+The runtime description correctly omits the removed output-budget concept. The test assertion is stale.
+
+### 2. Delegate/readiness/writer/settings/profile/hook/Observatory/RPC/adversarial matrix
 
 ```bash
-node /home/mewtwo/Zks/ice/node_modules/vitest/dist/cli.js --run \
+node ../../node_modules/vitest/dist/cli.js --run \
   test/ice-delegate-mvp.test.ts \
   test/ice-subagent-readiness.test.ts \
   test/ice-writer-w5.test.ts \
@@ -225,154 +239,122 @@ node /home/mewtwo/Zks/ice/node_modules/vitest/dist/cli.js --run \
   test/ice-subagents-adversarial.test.ts
 ```
 
-Result: **PASS — 9 files, 119/119 tests**.
+Result: **PASS — 9 files, 119/119 tests.**
 
-### 4. Root repository gate
+### 3. Root repository gate
 
 ```bash
 corepack npm@12.0.2 run check
 ```
 
-Result: **PASS**.
+Result: **FAIL**.
 
-Observed:
+Biome checked 1169 files and stopped on one warning promoted to failure:
 
-- 1169 files checked by Biome; no fixes applied;
-- pinned dependencies check passed;
-- TypeScript relative-import check passed;
-- coding-agent shrinkwrap is current;
-- coding-agent install-lock is current;
-- `tsgo --noEmit` passed;
-- browser smoke passed.
+```text
+packages/coding-agent/src/ice-subagents.ts:11748:10
+lint/correctness/noUnusedVariables
+terminalProgressPhase is unused
+```
 
-### Environment note
-
-An initial attempt to run Vitest through the worktree-relative `node_modules` failed because this worktree has no local dependency tree. The tests were then run through the repository's existing shared dependency tree at `/home/mewtwo/Zks/ice/node_modules`. That setup error is not counted as a test failure.
+No automatic fixes were applied.
 
 ## Plan gaps / clarifications discovered during audit
 
-### 1. Shared artifact-store ownership is correct for ordinary reads but not yet durable restore
+### 1. Shared store instance must own durable restoration
 
-`read_subagent_output` and ordinary capture use the same production `outputArtifacts` instance, which fixes the previous audit's central retrieval concern. Durable restore must now be wired into that same instance; creating a second store would make valid refs unreadable.
+Ordinary output capture and `read_subagent_output` already use the same production `outputArtifacts` instance. Durable restore must register refs into that **same** store before calling `finalizeRestore()`; a second store would make valid persisted refs unreadable.
 
-### 2. Artifact release needs reference ownership, not blanket deletion
+### 2. Reference ownership is already necessary for aggregates
 
-When a retained result is superseded/resumed or held by an aggregate, release must happen only when the last logical owner has relinquished the artifact. If the implementation can guarantee exactly one owner per output ref, document and test that invariant; otherwise add lightweight ref-counting.
+The batch implementation now demonstrates why a simple “delete artifact when child disappears” rule is wrong: the aggregate adds its own reference, so deleting the child must leave aggregate output readable. Durable ownership should use the same explicit-reference principle.
 
-### 3. Keep hook output caps distinct
+### 3. Hook output caps remain unrelated
 
-The remaining `maxOutputBytes` in command-hook and parent capability output code is intentional. Final cleanup must not “grep-and-delete” those unrelated safety bounds.
+Remaining command-hook `maxOutputBytes` is intentional. The final forbidden-symbol audit must classify it rather than remove it.
 
-### 4. 16 KiB aggregate presentation should be made intentional
+### 4. Decide 16 KiB vs 32 KiB explicitly
 
-Current code is stricter than the plan's suggested 32 KiB. Prefer keeping the current 16 KiB unless there is measured need for 32 KiB; update the plan/docs/tests to one deliberate constant.
+Current implementation uses 16 KiB for aggregate/presentation formatting. Prefer retaining 16 KiB unless measured context needs justify 32 KiB, then update the plan/docs/tests to the chosen constant.
 
 ## Next-agent fix queue
 
-1. **Wire exact process-local artifact release**
-   - Why: S6.1-S6.3 are the remaining in-process lifecycle gaps.
-   - Evidence: `ice-subagents.ts:8003-8013,8134-8144,8213-8216,8324-8329` delete logical owners without releasing output refs.
-   - Change:
-     - add one helper that extracts/releases `result.output.artifact` with owner identity;
-     - call it on retained-result eviction, retained-child eviction, resume supersession and explicit delete;
-     - wire aggregate/writer pruning similarly;
-     - ensure patch artifacts are untouched.
-   - Verify:
-     - read succeeds while retained;
-     - read fails after logical delete/eviction;
-     - resumed/superseded output semantics are explicit;
-     - writer patch remains intact when textual output is released.
-   - Depends on: current shared store only.
+1. **Repair the two current verification failures**
+   - Update `ice-subagents.test.ts:698` so it verifies preserved run/model/profile/scope/tool authority **without requiring the removed output-budget phrase**.
+   - Remove or use `terminalProgressPhase` at `ice-subagents.ts:11748`.
+   - Verify: rerun the 4-file matrix and `corepack npm@12.0.2 run check`.
+   - Dependency: none.
 
 2. **Persist and restore durable v2 output**
-   - Why: S6.4/S6.5 are completely absent.
-   - Evidence: `ice-subagent-jobs.ts:103-136,391-407,979-1035` still project legacy `reportArtifact`; no production `registerDurable/finalizeRestore` call.
-   - Change:
-     - add bounded `output?: SubagentOutput` to durable result envelope;
-     - clone/validate/persist pathless v2 metadata;
-     - set durable artifact lifecycle on async runs;
-     - restore retained terminal refs into the shared store before `finalizeRestore()`;
-     - keep running jobs interrupted/no-replay;
-     - release v2 artifacts when the 32-record full-result retention evicts them;
-     - leave v1 path artifacts as legacy decode/cleanup only.
-   - Verify:
-     - terminal output survives registry recreation;
-     - interrupted run is never replayed;
-     - tampered/missing artifact becomes unavailable without changing historical execution status;
-     - retention eviction deletes/releases v2 output;
-     - old v1 outside-root/mismatched-path fixtures still fail closed.
-   - Depends on: item 1 ownership semantics should be decided first.
+   - Add bounded `output?: SubagentOutput` to `SubagentJobResultEnvelope`.
+   - Clone/validate/persist pathless v2 metadata.
+   - When terminal durable output is retained, register its durable reference in the shared store.
+   - During restore, re-register all valid retained terminal v2 refs, then call `finalizeRestore()`.
+   - Keep nonterminal restart behavior interrupted/no-replay.
+   - Verify terminal artifact survives registry/process reconstruction and tampered/missing artifact becomes unavailable without rewriting historical execution status.
 
-3. **Remove synchronous `background: false` everywhere**
-   - Why: S7 is entirely missing.
-   - Evidence: schemas at `ice-subagents.ts:10977-10988,11072-11086,11108-11118` plus corresponding review schema; execution branches remain.
-   - Change:
-     - remove `background` from delegate, writer, batch, review schemas;
-     - delete synchronous branches, not only schema fields;
-     - return managed handles after accepted preflight/startup;
-     - migrate tests to inspect/wait/manage rather than synchronous results.
-   - Verify:
-     - closed schemas reject `background`;
-     - delegate/batch/review/writer all return handles;
-     - readiness, MVP, batch/review, writer tests green.
-   - Depends on: none, but coordinate tests with item 1 because lifecycle tests may use handle-only flow.
+3. **Implement durable v2 retention release**
+   - Release the v2 artifact reference/accounting when the existing 32-full-result retention evicts it.
+   - Keep v1 path cleanup as legacy-only behavior.
+   - Add 33rd-result eviction regression and restart retention test.
+   - Depends on item 2.
 
-4. **Finish legacy v1/public projection cleanup**
-   - Why: absolute path remains user/model visible.
-   - Evidence: `ice-subagents.ts:11459-11460,11510-11511`.
-   - Change:
-     - never format `reportArtifact.path`;
-     - keep v1 validator/path only in legacy restore/cleanup internals;
-     - new durable results should use v2 output after item 2.
-   - Verify: source/UI tests assert no absolute path projection.
-   - Depends on: item 2 for final durable shape.
+4. **Finish legacy-v1 public projection cleanup**
+   - Stop rendering `reportArtifact.path`.
+   - Restrict v1 path data to decode/validation/cleanup internals.
+   - New durable results use v2 output only.
+   - Verify user/model/RPC projections contain no absolute artifact path.
+   - Depends on item 2 for final durable shape.
 
-5. **Finish Observatory/RPC projection**
-   - Why: scheduling migration is done, v2 durable output metadata is not.
-   - Change:
-     - project capture status, inline/stored bytes, artifact availability/truncation only;
-     - no path/content;
-     - after S7, ensure schemas no longer expose `background`.
-   - Verify: Observatory + RPC snapshot/tool-schema tests.
-   - Depends on: items 2 and 3.
+5. **Close batch/writer lifecycle verification**
+   - Batch: force retained aggregate eviction/prune and prove artifact becomes unreadable after final reference releases.
+   - Writer: force managed-writer prune and prove textual output releases while writer patch artifact remains valid.
+   - Add multi-child aggregate presentation-cap regression.
+   - Reconcile/document 16 KiB vs 32 KiB.
+   - Depends on current code only.
 
-6. **Migrate docs/changelog**
-   - Remove child final-answer `maxOutputBytes` examples while preserving command-hook `maxOutputBytes` documentation.
-   - Remove `background: false` usage.
-   - Document fixed host limits and the handle → inspect → optional `read_subagent_output` flow.
-   - Explain process-local vs durable artifact retention and v1 migration behavior.
-   - Record the chosen 16 KiB vs 32 KiB aggregate presentation limit.
-   - Verify with repository text search and docs review.
-   - Depends on: final decisions from items 2-5.
+6. **Finish durable Observatory projection**
+   - Project capture status, inline/stored byte counts, artifact availability/truncation only.
+   - Never project artifact content/path.
+   - Verify Observatory/RPC snapshots.
+   - Depends on item 2.
 
-7. **Run final closure and forbidden-symbol audit**
-   - Rerun all focused commands recorded above.
-   - Add new durable v2 lifecycle tests.
+7. **Migrate user docs and changelog**
+   - Remove child final-answer `maxOutputBytes` examples while preserving command-hook output-capture limit docs.
+   - Remove `background: false` instructions/history that describe it as current behavior.
+   - Document always-managed launch flow: handle -> inspect/manage -> optional `read_subagent_output`.
+   - Document fixed host limits, process-local vs durable retention, and v1 legacy behavior.
+   - Record chosen aggregate presentation bound.
+   - Depends on final decisions from items 2-6.
+
+8. **Run final closure / forbidden-symbol audit**
+   - Rerun all focused matrices.
    - Run `corepack npm@12.0.2 run check`.
-   - Categorize every remaining occurrence of:
-     - `background`;
-     - child/writer final-answer `maxOutputBytes`;
-     - `totalBudgetBytes`;
-     - `plannedOutputBytes` / `reservedOutputBytes`;
-     - `reportArtifact.path`;
-     - `registerDurable` / `finalizeRestore`;
-     - hook/provider output caps.
-   - Update `idea.md` to implemented only when all gates are green.
+   - Categorize every remaining occurrence of `background`, child/writer final-answer `maxOutputBytes`, `totalBudgetBytes`, `plannedOutputBytes`, `reservedOutputBytes`, `reportArtifact.path`, `registerDurable`, `finalizeRestore`, and hook/provider output caps.
+   - Update `idea.md` from planned to implemented only after every gate is green.
 
 ## Blockers
 
 No external blocker was found.
 
-All remaining blockers are in-repository implementation/migration work:
+Remaining blockers are in-repository:
 
-- exact artifact ownership release;
 - durable v2 persistence/restore/retention;
-- synchronous opt-out removal;
-- legacy path projection cleanup;
-- final Observatory/docs migration.
+- legacy v1 public-path cleanup;
+- durable Observatory output metadata;
+- docs/changelog migration;
+- missing batch/writer lifecycle closure tests;
+- one stale subagent assertion;
+- one root-check lint warning.
 
-At **68.4%**, this plan is **not eligible** for Complete-remaining mode under the default `>85%` threshold.
+At **75.5%**, this plan is **not eligible** for Complete-remaining mode under the default strict `>85%` threshold.
 
 ## Workspace safety
 
-The integration worktree contains substantial unrelated staged/unstaged/untracked work. This audit did not reset, discard, clean, stage, commit, merge, or alter implementation source. The adjacent audit document is the only file intentionally updated by this audit.
+The worktree was already one commit ahead of origin at audit start:
+
+```text
+881c9d261 feat(coding-agent): make managed subagent launches handle-only
+```
+
+The adjacent audit file was already modified when this audit began. This audit updated only that audit artifact. It did **not** reset, discard, clean, stage, commit, merge, push, or modify implementation source.

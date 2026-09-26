@@ -30,6 +30,7 @@ function runtimeAttention(overrides: Partial<SubagentRuntimeAttention> = {}): Su
 		state: "running",
 		lifetimeDeadline: false,
 		activeElapsedMs: 45_000,
+		observedPathCount: 1,
 		lastActivities: [
 			{
 				toolCallId: "call-1",

@@ -18,6 +18,9 @@ export type SubagentSupervisorStopReason = "cancelled";
 const ACTIVITY_LIMIT = 12;
 const ACTIVITY_TEXT_MAX_BYTES = 512;
 const REPEATED_FAILURE_THRESHOLD = 2;
+/** Identical (tool + args digest) successful calls before a doom-loop advisory. */
+const REPEATED_ACTION_THRESHOLD = 3;
+const OBSERVED_PATHS_LIMIT = 64;
 
 export interface SubagentToolActivityDigest {
 	readonly toolCallId: string;
@@ -25,6 +28,8 @@ export interface SubagentToolActivityDigest {
 	readonly action?: string;
 	readonly status: SubagentToolActivityOutcome;
 	readonly path?: string;
+	/** Bounded digest of serialized tool arguments; enables identical-call detection. */
+	readonly argsDigest?: string;
 	readonly startedAtMs: number;
 	readonly finishedAtMs?: number;
 	readonly exitCode?: number;
@@ -32,6 +37,16 @@ export interface SubagentToolActivityDigest {
 }
 
 export interface SubagentRepeatedFailureAdvisory {
+	readonly action: string;
+	readonly count: number;
+}
+
+/**
+ * Phase 4.4: advisory-only doom-loop signal — the same tool with materially
+ * identical arguments succeeding repeatedly without new evidence. It never
+ * stops a child; host-owned run-shape policy owns hard stops.
+ */
+export interface SubagentRepeatedActionAdvisory {
 	readonly action: string;
 	readonly count: number;
 }
@@ -45,6 +60,11 @@ export interface SubagentRuntimeAttention {
 	readonly lastProgressAtMs?: number;
 	readonly lastActivities: readonly SubagentToolActivityDigest[];
 	readonly repeatedFailure?: SubagentRepeatedFailureAdvisory;
+	readonly repeatedAction?: SubagentRepeatedActionAdvisory;
+	/** Phase 4.1: distinct in-scope paths the child has successfully observed. */
+	readonly observedPathCount: number;
+	/** Phase 4.1: the most recent successful tool action, redacted and bounded. */
+	readonly lastSuccessfulAction?: string;
 	readonly usage?: SubagentUsageSnapshot;
 }
 
@@ -124,6 +144,7 @@ function freezeActivity(activity: SubagentToolActivityDigest): SubagentToolActiv
 		toolName: boundedText(activity.toolName),
 		...(activity.action ? { action: boundedText(activity.action) } : {}),
 		...(activity.path ? { path: boundedText(activity.path) } : {}),
+		...(activity.argsDigest ? { argsDigest: boundedText(activity.argsDigest) } : {}),
 		...(activity.exitCode !== undefined && Number.isSafeInteger(activity.exitCode)
 			? { exitCode: activity.exitCode }
 			: {}),
@@ -159,6 +180,9 @@ export class SubagentRunSupervisor<TResult> {
 	private readonly activities = new Map<string, SubagentToolActivityDigest>();
 	private readonly activityOrder: string[] = [];
 	private readonly recentFailureCounts = new Map<string, { action: string; count: number }>();
+	private readonly observedPaths = new Set<string>();
+	private lastSuccessfulAction: string | undefined;
+	private consecutiveIdentical: { key: string; action: string; count: number } | undefined;
 	private readonly lifecycleWaiters = new Set<() => void>();
 	private lastObservedState: SubagentSupervisorState = "running";
 
@@ -181,6 +205,7 @@ export class SubagentRunSupervisor<TResult> {
 		const progressAgeMs =
 			this.lastProgressAtMs === undefined ? undefined : Math.max(0, this.now() - this.lastProgressAtMs);
 		const repeatedFailure = this.repeatedFailureAdvisory();
+		const repeatedAction = this.repeatedActionAdvisory();
 		return Object.freeze({
 			runId: this.runId,
 			...(this.childSessionId ? { childSessionId: this.childSessionId } : {}),
@@ -196,6 +221,9 @@ export class SubagentRunSupervisor<TResult> {
 					.filter((item): item is SubagentToolActivityDigest => item !== undefined),
 			),
 			...(repeatedFailure ? { repeatedFailure } : {}),
+			...(repeatedAction ? { repeatedAction } : {}),
+			observedPathCount: this.observedPaths.size,
+			...(this.lastSuccessfulAction ? { lastSuccessfulAction: this.lastSuccessfulAction } : {}),
 			...(this.usage ? { usage: this.usage } : {}),
 			...(this.terminalStatus ? { terminalStatus: this.terminalStatus } : {}),
 		});
@@ -280,7 +308,39 @@ export class SubagentRunSupervisor<TResult> {
 			if (oldest) this.activities.delete(oldest);
 		}
 		this.trackRepeatedFailure(normalized, wasError);
+		this.trackIdenticalAction(normalized);
+		this.trackObservedPath(normalized);
 		this.markProgress(activity.finishedAtMs ?? activity.startedAtMs);
+	}
+
+	private trackIdenticalAction(activity: SubagentToolActivityDigest): void {
+		if (activity.status === "error" || activity.status === "aborted") {
+			this.consecutiveIdentical = undefined;
+			return;
+		}
+		const key = `${activity.toolName}:${activity.argsDigest ?? activity.action ?? activity.toolName}`;
+		if (this.consecutiveIdentical?.key === key) {
+			this.consecutiveIdentical.count += 1;
+			return;
+		}
+		this.consecutiveIdentical = {
+			key,
+			action: boundedText(activity.action ?? activity.toolName),
+			count: 1,
+		};
+	}
+
+	private repeatedActionAdvisory(): SubagentRepeatedActionAdvisory | undefined {
+		const entry = this.consecutiveIdentical;
+		return entry && entry.count >= REPEATED_ACTION_THRESHOLD
+			? Object.freeze({ action: entry.action, count: entry.count })
+			: undefined;
+	}
+
+	private trackObservedPath(activity: SubagentToolActivityDigest): void {
+		if (activity.status !== "ok") return;
+		this.lastSuccessfulAction = boundedText(activity.action ?? activity.toolName);
+		if (activity.path && this.observedPaths.size < OBSERVED_PATHS_LIMIT) this.observedPaths.add(activity.path);
 	}
 
 	private trackRepeatedFailure(activity: SubagentToolActivityDigest, wasAlreadyCounted: boolean): void {

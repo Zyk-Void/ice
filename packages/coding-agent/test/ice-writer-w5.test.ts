@@ -200,7 +200,7 @@ describe("W5 writer workflow end-to-end adversarial gate", () => {
 		const agentDir = await mkdtemp(join(tmpdir(), "ice-w5-agent-"));
 		tempDirs.push(agentDir);
 		const { faux, model, modelRegistry } = await createFauxRuntime();
-		const finalAnswer = "writer final answer\n".repeat(900);
+		const finalAnswer = "writer final answer\n".repeat(2_600);
 		faux.setResponses([
 			fauxAssistantMessage([fauxToolCall("write", { path: "src/child.ts", content: "child\n" })], {
 				stopReason: "toolUse",
@@ -231,7 +231,7 @@ describe("W5 writer workflow end-to-end adversarial gate", () => {
 			const result = toolDetails<{ result: WriterResult }>(delegated).result;
 			expect(result.output).toMatchObject({
 				captureStatus: "artifact_complete",
-				text: finalAnswer.slice(0, 8 * 1024),
+				text: finalAnswer.slice(0, 48 * 1024),
 				originalBytes: Buffer.byteLength(finalAnswer),
 				artifact: { schemaVersion: 2, storedBytes: Buffer.byteLength(finalAnswer), truncated: false },
 			});

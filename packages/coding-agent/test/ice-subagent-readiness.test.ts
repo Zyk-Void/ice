@@ -11,6 +11,7 @@ import { ModelRegistry } from "../src/core/model-registry.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { registerIceDelegableTool } from "../src/ice-subagent-capabilities.ts";
+import { SUBAGENT_CONCURRENCY_LIMITS } from "../src/ice-subagent-concurrency.ts";
 import { registerIceSubagentHook } from "../src/ice-subagent-settings.ts";
 import iceSubagents, {
 	type IceSubagentMcpAdapter,
@@ -337,10 +338,10 @@ describe("production file/self delegation acceptance", () => {
 			};
 		});
 		const first = await h.call("delegate_async", h.request);
-		await h.call("delegate_async", h.request);
-		await h.call("delegate_async", h.request);
-		await h.call("delegate_async", h.request);
-		await vi.waitFor(() => expect(releases).toHaveLength(4));
+		for (let index = 1; index < SUBAGENT_CONCURRENCY_LIMITS.bundledDefault; index += 1) {
+			await h.call("delegate_async", h.request);
+		}
+		await vi.waitFor(() => expect(releases).toHaveLength(SUBAGENT_CONCURRENCY_LIMITS.bundledDefault));
 		const queued = await h.call("delegate_async", h.request);
 		expect(queued.details.accepted.status).toBe("queued");
 		const inspect = await h.call("inspect_subagent_job", { jobId: first.details.accepted.jobId });
@@ -361,12 +362,12 @@ describe("production file/self delegation acceptance", () => {
 			expect(state.details.inspection.job.status).toBe("failed");
 			expect(state.details.inspection.result.summary).toMatch(/capabilities changed/i);
 		});
-		// The four already-started jobs invoked the runner; the queued job failed
+		// The already-started jobs invoked the runner; the queued job failed
 		// contract revalidation before its runner was invoked.
-		expect(spy).toHaveBeenCalledTimes(4);
-		releases[1]!();
-		releases[2]!();
-		releases[3]!();
+		expect(spy).toHaveBeenCalledTimes(SUBAGENT_CONCURRENCY_LIMITS.bundledDefault);
+		for (let index = 1; index < SUBAGENT_CONCURRENCY_LIMITS.bundledDefault; index += 1) {
+			releases[index]?.();
+		}
 	});
 	it("discovery includes self without needing any file or consuming a provider call", async () => {
 		const h = await harness();

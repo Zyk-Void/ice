@@ -155,6 +155,7 @@ describe("ICE no-lifetime subagent supervision", () => {
 				state: "running",
 				lifetimeDeadline: false,
 				activeElapsedMs: 1234,
+				observedPathCount: 0,
 				lastActivities: [],
 			},
 		});
