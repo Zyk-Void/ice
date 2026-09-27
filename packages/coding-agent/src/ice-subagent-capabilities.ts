@@ -62,6 +62,8 @@ const MANAGEMENT_TOOLS = new Set([
 	"manage_subagent",
 	"inspect_subagent_job",
 	"cancel_subagent_job",
+	"inspect_subagent_batch",
+	"cancel_subagent_batch",
 	"list_subagent_profiles",
 	"integrate_writer_patch",
 	"inspect_writer_patch",

@@ -1043,6 +1043,14 @@ describe("ICE subagent contracts", () => {
 				.get(toolName)!
 				.execute(`launch-${toolName}`, params as never, undefined, undefined, harness.context);
 			expect(accepted).toMatchObject({ isError: false, details: { accepted: { batchId: expect.any(String) } } });
+			// The visible ack must carry the child runIds so the parent can manage
+			// each child without a separate inspection round trip.
+			const acceptedTasks = accepted.details.accepted.tasks as Array<{ taskId: string; runId: string }>;
+			expect(acceptedTasks.length).toBeGreaterThan(1);
+			const ackText = accepted.content?.[0]?.text ?? "";
+			for (const task of acceptedTasks) {
+				expect(ackText).toContain(`${task.taskId}=${task.runId}`);
+			}
 			const batchId = accepted.details.accepted.batchId as string;
 			await vi.waitFor(
 				async () => {

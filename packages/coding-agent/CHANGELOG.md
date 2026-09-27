@@ -195,6 +195,11 @@
 
 ### Fixed
 
+- Fixed subagent evidence verification resolving declared paths against the parent cwd only; report evidence, reviewer finding evidence, and requirement-claim evidence now also resolve against each approved scope root, so children scoped to sibling worktrees are no longer failed for root-relative paths that exist inside their own scope. Canonical in-scope containment checks are unchanged.
+- Fixed the subagent final-report parser rejecting the required JSON envelope when models wrap it in a Markdown fence or a short prose preamble; a bounded string-aware extraction now finds the first parseable JSON object, and full envelope validation is unchanged.
+- Fixed the one-time subagent report repair prompt repeating only the generic envelope demand; it now names the exact prior validation failure so the child can repair the actual defect.
+- Fixed `delegate_batch` and `review_batch` acknowledgments omitting child run IDs from the visible tool result text; per-child `taskId=runId` handles are now rendered in the ack (they were previously only in structured details).
+- Fixed ICE plan/build mode tool gating hiding and blocking `inspect_subagent_batch` and `cancel_subagent_batch` even though the batch tools instruct parents to use them; both are now active in plan and build tool sets and reserved from external adapter registration.
 - Fixed concurrent compactions appending duplicate entries by serializing manual and automatic compaction paths with the existing session lock.
 - Fixed Blackhole summary extraction for noisy tool input, file-operation context, goal limits, and repeated tool errors; concurrent compaction now treats an already-completed compaction as success.
 - Fixed observability pulse bars from reshuffling near moving time-window edges by using stable epoch-anchored bins.

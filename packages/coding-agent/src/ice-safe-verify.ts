@@ -46,6 +46,8 @@ const PLAN_TOOLS = [
 	"cancel_subagent_job",
 	"delegate_batch",
 	"review_batch",
+	"inspect_subagent_batch",
+	"cancel_subagent_batch",
 	...GOAL_TOOLS,
 ];
 const BUILD_TOOLS = [

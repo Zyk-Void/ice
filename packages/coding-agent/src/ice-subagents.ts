@@ -6227,6 +6227,46 @@ export function extractCandidateEvidencePaths(text: string): string[] {
 	return candidates;
 }
 
+const SUBAGENT_REPORT_JSON_CANDIDATE_LIMIT = 8;
+
+/**
+ * Models frequently wrap the required envelope in a Markdown fence or a short
+ * prose preamble. Direct JSON.parse first; on failure, a bounded string-aware
+ * scan for the first parseable JSON object. Full shape validation still applies
+ * to whatever is extracted, so this never relaxes the envelope contract.
+ */
+function extractSubagentReportJson(text: string): unknown {
+	let start = text.indexOf("{");
+	for (let candidates = 0; start !== -1 && candidates < SUBAGENT_REPORT_JSON_CANDIDATE_LIMIT; candidates += 1) {
+		let depth = 0;
+		let inString = false;
+		let escaped = false;
+		for (let index = start; index < text.length; index += 1) {
+			const char = text[index];
+			if (inString) {
+				if (escaped) escaped = false;
+				else if (char === "\\") escaped = true;
+				else if (char === '"') inString = false;
+				continue;
+			}
+			if (char === '"') inString = true;
+			else if (char === "{") depth += 1;
+			else if (char === "}") {
+				depth -= 1;
+				if (depth === 0) {
+					try {
+						return JSON.parse(text.slice(start, index + 1));
+					} catch {
+						break;
+					}
+				}
+			}
+		}
+		start = text.indexOf("{", start + 1);
+	}
+	return undefined;
+}
+
 /**
  * Parse a child final report into an explicit outcome instead of throwing.
  * A malformed or truncated report must never discard the work that preceded it,
@@ -6246,7 +6286,11 @@ export function parseSubagentReportOutcome(
 	try {
 		parsed = JSON.parse(text);
 	} catch {
-		return { kind: "malformed", diagnostic: "Child report was not valid JSON." };
+		const extracted = extractSubagentReportJson(text);
+		if (extracted === undefined) {
+			return { kind: "malformed", diagnostic: "Child report was not valid JSON." };
+		}
+		parsed = extracted;
 	}
 	if (!isRecord(parsed) || typeof parsed.summary !== "string" || !isRecord(parsed.evidence)) {
 		return { kind: "malformed", diagnostic: "Child report must contain summary and evidence fields." };
@@ -6376,8 +6420,8 @@ export function normalizeReviewFindings(
 			) {
 				throw new SubagentError("verification_failure", "Reviewer finding evidence is invalid.");
 			}
-			const candidate = resolve(request.cwd, reference.path);
-			if (!existsSync(candidate)) {
+			const candidate = resolveSubagentEvidencePath(request, reference.path);
+			if (!candidate) {
 				throw new SubagentError("verification_failure", `Finding evidence path does not exist: ${reference.path}`);
 			}
 			const canonicalCandidate = canonicalPath(candidate);
@@ -6391,6 +6435,24 @@ export function normalizeReviewFindings(
 		});
 		return { severity: finding.severity, category: finding.category, claim: finding.claim, evidence };
 	});
+}
+
+/**
+ * Evidence paths are cited from the child's view of its approved scope. Resolve
+ * against the parent cwd first, then each approved scope root, so a child scoped
+ * to another worktree is not failed for a root-relative path that exists inside
+ * its own scope. The canonical scope check below still applies to whichever
+ * candidate resolves.
+ */
+function resolveSubagentEvidencePath(request: NormalizedSubagentRequest, path: string): string | undefined {
+	const direct = resolve(request.cwd, path);
+	if (existsSync(direct)) return direct;
+	if (isAbsolute(path)) return undefined;
+	for (const root of request.scope.roots) {
+		const candidate = resolve(root, path);
+		if (existsSync(candidate)) return candidate;
+	}
+	return undefined;
 }
 
 export function verifySubagentResult(result: SubagentResult, request: NormalizedSubagentRequest): SubagentVerification {
@@ -6505,8 +6567,8 @@ export function verifySubagentResult(result: SubagentResult, request: Normalized
 		) {
 			return reject("Result evidence contains an invalid or oversized path.", canonicalPaths);
 		}
-		const candidate = resolve(request.cwd, path);
-		if (!existsSync(candidate)) {
+		const candidate = resolveSubagentEvidencePath(request, path);
+		if (!candidate) {
 			return reject(`Evidence path does not exist: ${path}`, canonicalPaths);
 		}
 		let canonicalCandidate: string;
@@ -6607,8 +6669,8 @@ function verifySubagentRequirements(
 			let evidenceValid = true;
 			if (claim.evidencePaths) {
 				for (const path of claim.evidencePaths) {
-					const candidate = resolve(request.cwd, path);
-					if (!existsSync(candidate)) {
+					const candidate = resolveSubagentEvidencePath(request, path);
+					if (!candidate) {
 						evidenceValid = false;
 						note = `declared path evidence does not exist: ${path}`;
 						break;
@@ -9944,8 +10006,16 @@ export class NativeSubagentRunner {
 					const turnsBefore = observedTurns;
 					const repairStartIndex = session.messages.length;
 					updatePresentation({ finalizationStarted: true, protocolReportPending: true });
+					// The child can only repair what it can see; name the exact prior
+					// validation failure instead of repeating the generic envelope demand.
+					const priorFailure = preserved.diagnostics.find(
+						(entry) => entry.code === "report_protocol_failure",
+					)?.message;
+					const repairPrompt = priorFailure
+						? `${SUBAGENT_REPORT_REPAIR_PROMPT} The specific validation failure was: ${priorFailure}`
+						: SUBAGENT_REPORT_REPAIR_PROMPT;
 					const outcome = await awaitPrompt(
-						session.prompt(SUBAGENT_REPORT_REPAIR_PROMPT, {
+						session.prompt(repairPrompt, {
 							expandPromptTemplates: false,
 							source: "extension",
 						}),
@@ -16139,7 +16209,9 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					content: [
 						{
 							type: "text",
-							text: `Managed batch ${batchId} accepted with ${tasks.length} scoped children. Inspect with that bare batchId; each child has its own runId.`,
+							text: `Managed batch ${batchId} accepted with ${tasks.length} scoped children. Inspect with that bare batchId. Child runIds (taskId=runId): ${tasks
+								.map((task) => `${task.id}=${task.request.runId}`)
+								.join(", ")}.`,
 						},
 					],
 					details: {
@@ -16407,7 +16479,9 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					content: [
 						{
 							type: "text",
-							text: `Review batch ${batchId} accepted with ${tasks.length} independent reviewers. Inspect with that bare batchId; each child has its own runId.`,
+							text: `Review batch ${batchId} accepted with ${tasks.length} independent reviewers. Inspect with that bare batchId. Reviewer runIds (taskId=runId): ${tasks
+								.map((task) => `${task.id}=${task.request.runId}`)
+								.join(", ")}.`,
 						},
 					],
 					details: {

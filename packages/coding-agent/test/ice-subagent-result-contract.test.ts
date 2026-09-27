@@ -158,6 +158,17 @@ describe("subagent final report parse outcomes", () => {
 		}
 	});
 
+	it("parses the envelope when it arrives fenced or prose-wrapped", () => {
+		const report = validReport();
+		const fenced = `\`\`\`json\n${report}\n\`\`\``;
+		const wrapped = `All four questions answered from observed output. Final report:\n${report}`;
+		for (const text of [fenced, wrapped, `Result:\n\`\`\`${report}\`\`\``]) {
+			const outcome = parseSubagentReportOutcome(text, 64 * 1024);
+			expect(outcome.kind, text).toBe("valid");
+			if (outcome.kind === "valid") expect(outcome.report.paths).toEqual(["src/app.ts"]);
+		}
+	});
+
 	it("returns a bounded truncated outcome for oversized reports", () => {
 		const outcome = parseSubagentReportOutcome(validReport("x".repeat(4096)), 1024);
 		expect(outcome.kind).toBe("truncated");
@@ -418,6 +429,9 @@ describe("result contract: malformed reports preserve work artifacts", () => {
 		// Repair prompts request only the internal envelope and never a new task.
 		expect(child.prompts[1]).toContain("[ICE VOID SUBAGENT REPORT REPAIR]");
 		expect(child.prompts[1]).not.toContain("Inspect the scoped app entry point.");
+		// The repair names the exact prior validation failure so the child can fix it.
+		expect(child.prompts[1]).toContain("The specific validation failure was:");
+		expect(child.prompts[1]).toContain("Child report was not valid JSON");
 	});
 
 	it("never triggers report repair for parent cancellation", async () => {
@@ -584,6 +598,22 @@ describe("requirement-level verification", () => {
 		);
 		expect(outside.verified).toBe(false);
 		expect(outside.reason).toMatch(/outside approved scope/);
+	});
+
+	it("resolves evidence paths against an approved scope root outside the parent cwd", async () => {
+		const parent = await mkdtemp(join(tmpdir(), "ice-result-contract-scoped-"));
+		tempDirs.push(parent);
+		await mkdir(join(parent, "child", "src"), { recursive: true });
+		await writeFile(join(parent, "child", "src", "app.ts"), "export const app = true;\n");
+		const normalized = normalizeSubagentRequest(request(parent, { scope: { roots: ["child"] } }), parent);
+		// The child cites "src/app.ts" relative to its own scope root; the parent
+		// cwd has no such path and must not fail the report for that.
+		const verification = verifySubagentResult(
+			resultWith(normalized, { summary: "inspected the child scope" }),
+			normalized,
+		);
+		expect(verification.verified).toBe(true);
+		expect(verification.paths?.[0]?.endsWith(join("child", "src", "app.ts"))).toBe(true);
 	});
 
 	it("requires declared path evidence for path-evidence criteria", async () => {
