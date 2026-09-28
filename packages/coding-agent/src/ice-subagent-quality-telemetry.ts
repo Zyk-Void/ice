@@ -13,6 +13,15 @@ export type SubagentTelemetryAssuranceLevel =
 	| "review_verified";
 export type SubagentTelemetryReportMode = "plain_final_turn" | "structured_report";
 export type SubagentTelemetryReviewerOutcome = "verified" | "disagreed" | "none";
+export type SubagentTelemetryWorkerTier = "mechanical" | "judgment";
+export type SubagentTelemetryRouteSource = "explicit" | "tier" | "parent";
+export interface SubagentTelemetryEvidenceTypes {
+	readonly path: number;
+	readonly command: number;
+	readonly artifact: number;
+	readonly diff: number;
+	readonly blocked: number;
+}
 
 const QUALITY_MODES: readonly SubagentTelemetryQualityMode[] = ["explore", "standard", "strict"];
 const ASSURANCE_LEVELS: readonly SubagentTelemetryAssuranceLevel[] = [
@@ -24,6 +33,8 @@ const ASSURANCE_LEVELS: readonly SubagentTelemetryAssuranceLevel[] = [
 ];
 const REPORT_MODES: readonly SubagentTelemetryReportMode[] = ["plain_final_turn", "structured_report"];
 const REVIEWER_OUTCOMES: readonly SubagentTelemetryReviewerOutcome[] = ["verified", "disagreed", "none"];
+const WORKER_TIERS: readonly SubagentTelemetryWorkerTier[] = ["mechanical", "judgment"];
+const ROUTE_SOURCES: readonly SubagentTelemetryRouteSource[] = ["explicit", "tier", "parent"];
 
 /** Parent-facing "why this run is weak" diagnostic codes; emitted only when evidenced (plan 7.2). */
 export const SUBAGENT_WEAK_RUN_DIAGNOSTIC_CODES = [
@@ -50,6 +61,8 @@ export interface SubagentQualityTelemetry {
 	readonly qualityMode?: SubagentTelemetryQualityMode;
 	readonly assurance?: SubagentTelemetryAssuranceLevel;
 	readonly reportMode?: SubagentTelemetryReportMode;
+	readonly workerTier?: SubagentTelemetryWorkerTier;
+	readonly routeSource?: SubagentTelemetryRouteSource;
 	/** Redacted reasoning setting label; at most 16 bytes. */
 	readonly reasoningLevel?: string;
 	readonly criteriaTotal: number;
@@ -57,6 +70,7 @@ export interface SubagentQualityTelemetry {
 	readonly criteriaVerified: number;
 	readonly unresolvedClaims: number;
 	readonly evidenceCount: number;
+	readonly evidenceTypes?: SubagentTelemetryEvidenceTypes;
 	readonly followUpCount: number;
 	readonly repeatedFailureCount: number;
 	readonly reviewerUsed: boolean;
@@ -79,12 +93,15 @@ export interface SubagentQualityTelemetryInput {
 	readonly qualityMode?: unknown;
 	readonly assurance?: unknown;
 	readonly reportMode?: unknown;
+	readonly workerTier?: unknown;
+	readonly routeSource?: unknown;
 	readonly reasoningLevel?: unknown;
 	readonly criteriaTotal?: unknown;
 	readonly criteriaRequired?: unknown;
 	readonly criteriaVerified?: unknown;
 	readonly unresolvedClaims?: unknown;
 	readonly evidenceCount?: unknown;
+	readonly evidenceTypes?: Partial<Record<keyof SubagentTelemetryEvidenceTypes, unknown>>;
 	readonly followUpCount?: unknown;
 	readonly repeatedFailureCount?: unknown;
 	readonly reviewerUsed?: unknown;
@@ -127,6 +144,16 @@ function boundedCount(value: unknown): number {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
+function boundedEvidenceTypes(value: SubagentQualityTelemetryInput["evidenceTypes"]): SubagentTelemetryEvidenceTypes {
+	return Object.freeze({
+		path: boundedCount(value?.path),
+		command: boundedCount(value?.command),
+		artifact: boundedCount(value?.artifact),
+		diff: boundedCount(value?.diff),
+		blocked: boundedCount(value?.blocked),
+	});
+}
+
 function contextManifestHashFrom(input: SubagentQualityTelemetryInput): string | undefined {
 	const direct = hexHash64(input.contextManifestHash);
 	if (direct) return direct;
@@ -145,6 +172,8 @@ export function buildSubagentQualityTelemetry(input: SubagentQualityTelemetryInp
 	const qualityMode = unionMember(QUALITY_MODES, input.qualityMode);
 	const assurance = unionMember(ASSURANCE_LEVELS, input.assurance);
 	const reportMode = unionMember(REPORT_MODES, input.reportMode);
+	const workerTier = unionMember(WORKER_TIERS, input.workerTier);
+	const routeSource = unionMember(ROUTE_SOURCES, input.routeSource);
 	const reasoningLevel = boundedRedactedText(input.reasoningLevel, REASONING_LEVEL_MAX_BYTES);
 	const reviewerOutcome = unionMember(REVIEWER_OUTCOMES, input.reviewerOutcome);
 	const finalStatus = boundedRedactedText(input.finalStatus, FINAL_STATUS_MAX_BYTES) ?? "unknown";
@@ -154,12 +183,15 @@ export function buildSubagentQualityTelemetry(input: SubagentQualityTelemetryInp
 		...(qualityMode !== undefined ? { qualityMode } : {}),
 		...(assurance !== undefined ? { assurance } : {}),
 		...(reportMode !== undefined ? { reportMode } : {}),
+		...(workerTier !== undefined ? { workerTier } : {}),
+		...(routeSource !== undefined ? { routeSource } : {}),
 		...(reasoningLevel !== undefined ? { reasoningLevel } : {}),
 		criteriaTotal: boundedCount(input.criteriaTotal),
 		criteriaRequired: boundedCount(input.criteriaRequired),
 		criteriaVerified: boundedCount(input.criteriaVerified),
 		unresolvedClaims: boundedCount(input.unresolvedClaims),
 		evidenceCount: boundedCount(input.evidenceCount),
+		...(input.evidenceTypes !== undefined ? { evidenceTypes: boundedEvidenceTypes(input.evidenceTypes) } : {}),
 		followUpCount: boundedCount(input.followUpCount),
 		repeatedFailureCount: boundedCount(input.repeatedFailureCount),
 		reviewerUsed: input.reviewerUsed === true,
@@ -182,6 +214,8 @@ export function renderSubagentQualityTelemetry(telemetry: SubagentQualityTelemet
 	if (telemetry.qualityMode !== undefined) lines.push(`quality mode: ${telemetry.qualityMode}`);
 	if (telemetry.assurance !== undefined) lines.push(`assurance: ${telemetry.assurance}`);
 	if (telemetry.reportMode !== undefined) lines.push(`report mode: ${telemetry.reportMode}`);
+	if (telemetry.workerTier !== undefined) lines.push(`worker tier: ${telemetry.workerTier}`);
+	if (telemetry.routeSource !== undefined) lines.push(`route source: ${telemetry.routeSource}`);
 	if (telemetry.reasoningLevel !== undefined) lines.push(`reasoning level: ${telemetry.reasoningLevel}`);
 	lines.push(
 		`criteria total: ${telemetry.criteriaTotal}`,
@@ -189,6 +223,11 @@ export function renderSubagentQualityTelemetry(telemetry: SubagentQualityTelemet
 		`criteria verified: ${telemetry.criteriaVerified}`,
 		`unresolved claims: ${telemetry.unresolvedClaims}`,
 		`evidence count: ${telemetry.evidenceCount}`,
+		...(telemetry.evidenceTypes
+			? [
+					`evidence types: path=${telemetry.evidenceTypes.path}, command=${telemetry.evidenceTypes.command}, artifact=${telemetry.evidenceTypes.artifact}, diff=${telemetry.evidenceTypes.diff}, blocked=${telemetry.evidenceTypes.blocked}`,
+				]
+			: []),
 		`follow-up count: ${telemetry.followUpCount}`,
 		`repeated failure count: ${telemetry.repeatedFailureCount}`,
 		`reviewer used: ${telemetry.reviewerUsed}`,

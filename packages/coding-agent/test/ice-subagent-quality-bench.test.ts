@@ -21,13 +21,13 @@ import {
 	type SubagentQualityRunRecord,
 	serializeQualityBenchmarkJson,
 } from "../src/ice-subagent-quality-bench.ts";
+import { executeLiveQualityBenchmark } from "../src/ice-subagent-quality-live-bench.ts";
 import { qualityCaseManifest } from "./fixtures/quality/cases.ts";
 
 /**
- * Deterministic scoring tests for the ICE subagent quality benchmark. No
- * provider is contacted and no tokens are consumed; the live baseline hook at
- * the bottom is skipped unless ICE_QUALITY_BENCH_LIVE=1 is set, and even then
- * the scaffold fails closed until the live baseline is implemented.
+ * Deterministic scoring tests for the ICE subagent quality benchmark. Normal
+ * test execution never contacts a provider or consumes tokens. The model-backed
+ * baseline is opt-in behind ICE_QUALITY_BENCH_LIVE=1.
  *
  * Run from the repo root:
  *   /usr/bin/node node_modules/vitest/vitest.mjs --run packages/coding-agent/test/ice-subagent-quality-bench.test.ts
@@ -545,27 +545,30 @@ describe("live baseline gate", () => {
 		expectBenchError(() => beginQualityBenchLiveBaseline({}), "credentials_required");
 	});
 
-	it("refuses to run the unimplemented live scaffold even with a route", () => {
-		expectBenchError(
-			() => beginQualityBenchLiveBaseline({ modelRoute: "bench/fixture-model" }),
-			"live_not_implemented",
-		);
+	it("admits a syntactically valid route without making a provider call", () => {
+		expect(beginQualityBenchLiveBaseline({ modelRoute: "bench/fixture-model" })).toEqual({
+			modelRoute: "bench/fixture-model",
+		});
 	});
 });
 
 const liveEnabled = process.env.ICE_QUALITY_BENCH_LIVE === "1";
 
 describe.skipIf(!liveEnabled)("ICE quality bench live baseline (opt-in)", () => {
-	it("fails closed before any provider call in this scaffold", () => {
-		// CI never reaches this block: ICE_QUALITY_BENCH_LIVE is not set there.
-		// Phase 1 replaces this scaffold with the real model-backed baseline.
-		try {
-			beginQualityBenchLiveBaseline({ modelRoute: process.env.ICE_QUALITY_BENCH_LIVE_MODEL });
-			throw new Error("Live baseline scaffold must fail closed; no provider calls are allowed yet.");
-		} catch (error) {
-			expect(error).toBeInstanceOf(SubagentQualityBenchError);
-		}
-	});
+	it("runs one real production-path sample when explicitly enabled", async () => {
+		const run = await executeLiveQualityBenchmark({
+			modelRoute: process.env.ICE_QUALITY_BENCH_LIVE_MODEL,
+			fixture: manifest,
+			gitCommit: process.env.ICE_QUALITY_BENCH_LIVE_COMMIT ?? "live-test",
+			worktreePath: fixtureRoot,
+			repeats: 1,
+			modes: ["contract"],
+			caseIds: [manifest.cases[0]!.id],
+		});
+		expect(run.runs).toHaveLength(1);
+		expect(run.runs[0]?.record.modelRoute).toBeTruthy();
+		expect(run.runs[0]?.record.notes).toMatch(/live mode=contract/);
+	}, 120_000);
 });
 
 /**

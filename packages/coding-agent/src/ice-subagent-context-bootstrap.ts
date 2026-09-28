@@ -462,7 +462,7 @@ function readPackageName(cwd: string): string | undefined {
 	try {
 		const parsed: unknown = JSON.parse(read.data.toString("utf8"));
 		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-		const name = (parsed as Record<string, unknown>)["name"];
+		const name = (parsed as Record<string, unknown>).name;
 		return typeof name === "string" && name.length > 0 ? name : undefined;
 	} catch {
 		return undefined;

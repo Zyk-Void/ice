@@ -119,6 +119,16 @@ export interface SubagentJobResultEnvelope {
 	followUpCount?: number;
 	/** Resolved reasoning level applied to the run; absent in legacy snapshots. */
 	reasoningLevel?: string;
+	/** Bounded semantic route provenance used for quality diagnosis. */
+	semanticWorkerTier?: "mechanical" | "judgment";
+	routeSource?: "explicit" | "tier" | "parent";
+	evidenceTypes?: {
+		path: number;
+		command: number;
+		artifact: number;
+		diff: number;
+		blocked: number;
+	};
 	evidence?: {
 		paths: readonly string[];
 	};
@@ -717,6 +727,28 @@ function validResultEnvelope(
 	) {
 		return false;
 	}
+	if (
+		value.semanticWorkerTier !== undefined &&
+		value.semanticWorkerTier !== "mechanical" &&
+		value.semanticWorkerTier !== "judgment"
+	) {
+		return false;
+	}
+	if (
+		value.routeSource !== undefined &&
+		value.routeSource !== "explicit" &&
+		value.routeSource !== "tier" &&
+		value.routeSource !== "parent"
+	) {
+		return false;
+	}
+	if (value.evidenceTypes !== undefined) {
+		if (!isRecord(value.evidenceTypes)) return false;
+		for (const key of ["path", "command", "artifact", "diff", "blocked"] as const) {
+			const count = value.evidenceTypes[key];
+			if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0 || count > 100000) return false;
+		}
+	}
 	if (value.payload !== undefined) {
 		if (!isRecord(value.payload)) return false;
 		try {
@@ -1116,6 +1148,9 @@ function projectResult(
 		...(result?.assurance !== undefined ? { assurance: result.assurance } : {}),
 		...(result?.followUpCount !== undefined ? { followUpCount: result.followUpCount } : {}),
 		...(result?.reasoningLevel !== undefined ? { reasoningLevel: result.reasoningLevel } : {}),
+		...(result?.semanticWorkerTier !== undefined ? { semanticWorkerTier: result.semanticWorkerTier } : {}),
+		...(result?.routeSource !== undefined ? { routeSource: result.routeSource } : {}),
+		...(result?.evidenceTypes !== undefined ? { evidenceTypes: { ...result.evidenceTypes } } : {}),
 		...(summary ? { summary } : {}),
 		...(evidence && evidence.length > 0 ? { evidence: { paths: evidence } } : {}),
 		...(findings && findings.length > 0 ? { findings } : {}),

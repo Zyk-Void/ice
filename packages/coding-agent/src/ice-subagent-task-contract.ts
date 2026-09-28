@@ -439,10 +439,19 @@ export function renderSubagentTaskContractSection(
  */
 export function recommendSubagentReviewerGate(contract: SubagentTaskContract): string | undefined {
 	if (contract.kind !== "implement" && contract.kind !== "verify") return undefined;
-	if (contract.verification.mode !== "none") return undefined;
+	const policyText = [contract.objective, contract.deliverable, ...contract.constraints, ...contract.nonGoals]
+		.join("\n")
+		.toLowerCase();
+	const highRisk =
+		/\b(security|migration|migrate|refactor|shared infrastructure|shared runtime|core infrastructure)\b/u.test(
+			policyText,
+		);
+	if (contract.verification.mode !== "none" && !highRisk) return undefined;
+	if (contract.verification.mode === "review") return undefined;
+	const reason = highRisk ? "high-risk change" : "deterministic verification gap";
 	return (
-		"Reviewer gate recommended: this task declares no executable verification, so deterministic checks " +
-		"cannot establish correctness. Run review_batch over the produced change (security/correctness/regression " +
-		"dimensions) before integrating it."
+		`Reviewer gate recommended (${reason}). ` +
+		"Run review_batch over the produced change before integrating it; reuse the existing " +
+		"security/correctness/regression review dimensions rather than launching a second reviewer framework."
 	);
 }

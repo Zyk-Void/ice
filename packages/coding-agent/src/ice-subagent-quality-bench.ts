@@ -47,6 +47,8 @@ export interface QualityCaseExpectedOutcome {
 	requiredCriterionIds: readonly string[];
 	/** Ground-truth paths (relative to the fixture repo root) a correct run must cite as evidence. */
 	requiredEvidencePaths: readonly string[];
+	/** Case-insensitive answer fragments used by the live benchmark's independent quality scorer. */
+	requiredAnswerFragments?: readonly string[];
 	/** False when the fixture is an unsolvable trap (correct runs must report insufficient evidence). */
 	solvable: boolean;
 }
@@ -76,6 +78,28 @@ export interface ResolvedQualityCaseManifest {
 }
 
 export type SubagentQualityVerificationKind = "structured" | "plain_bounds" | "none";
+
+export type LiveQualityBenchMode =
+	| "plain"
+	| "structured"
+	| "contract"
+	| "contract-no-context"
+	| "file"
+	| "batch"
+	| "review";
+export type LiveQualityBenchThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+
+export interface LiveQualityBenchOptions {
+	modelRoute?: string;
+	fixture: ResolvedQualityCaseManifest;
+	gitCommit: string;
+	worktreePath: string;
+	thinkingLevel?: LiveQualityBenchThinkingLevel;
+	repeats?: number;
+	modes?: readonly LiveQualityBenchMode[];
+	caseIds?: readonly string[];
+	minEvidencePrecision?: number;
+}
 
 export interface SubagentQualityObservedToolCall {
 	tool: string;
@@ -138,7 +162,7 @@ export type SubagentQualityBenchErrorCode =
 	| "invalid_record"
 	| "empty_corpus"
 	| "credentials_required"
-	| "live_not_implemented";
+	| "live_configuration_invalid";
 
 export class SubagentQualityBenchError extends Error {
 	readonly code: SubagentQualityBenchErrorCode;
@@ -849,18 +873,21 @@ export function serializeQualityBenchmarkJson(run: QualityBenchmarkRun): string 
 }
 
 /**
- * Fail-closed gate for live baseline attempts. CI cannot reach it: the live
- * describe block only runs when ICE_QUALITY_BENCH_LIVE=1 is set explicitly.
+ * Fail-closed admission gate for live baseline attempts. This function performs
+ * validation only and never makes a provider call.
  */
-export function beginQualityBenchLiveBaseline(options: { modelRoute?: string }): void {
-	if (!isNonEmptyBoundedString(options.modelRoute, 256)) {
+export function beginQualityBenchLiveBaseline(options: { modelRoute?: string }): { modelRoute: string } {
+	if (!isNonEmptyBoundedString(options.modelRoute, 256) || !options.modelRoute.includes("/")) {
 		throw new SubagentQualityBenchError(
 			"credentials_required",
-			"Live quality baseline requires an explicit model route (set ICE_QUALITY_BENCH_LIVE_MODEL) and configured provider credentials; no provider calls were made.",
+			"Live quality baseline requires an explicit provider/model route and configured provider credentials; no provider calls were made.",
 		);
 	}
-	throw new SubagentQualityBenchError(
-		"live_not_implemented",
-		`The live model-backed baseline for ${options.modelRoute} is not implemented yet; no provider calls were made.`,
-	);
+	return Object.freeze({ modelRoute: options.modelRoute });
 }
+
+/**
+ * Opt-in model-backed benchmark. The implementation is dynamically loaded so
+ * importing the deterministic scoring library cannot initialize provider/runtime
+ * state or create a second execution loop.
+ */

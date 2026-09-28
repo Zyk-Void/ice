@@ -1125,6 +1125,10 @@ export interface NormalizedSubagentRequest
 	taskContractHash: string;
 	/** Phase 2: hash-verified instruction/orientation manifest for the approved scope. */
 	contextManifest?: SubagentContextManifest;
+	/** Phase 7.1 semantic worker tier derived from the task kind. */
+	semanticWorkerTier?: "mechanical" | "judgment";
+	/** Phase 7.1 route provenance for quality diagnosis. */
+	routeSource: "explicit" | "tier" | "parent";
 }
 
 export interface SubagentBatchTask {
@@ -1306,6 +1310,17 @@ export interface SubagentResult {
 	reviewerOutcome?: "verified" | "disagreed";
 	/** Phase 5.5: task policy recommends a review_batch gate before integration. */
 	reviewerGateRecommended?: boolean;
+	/** Phase 7.1 semantic worker tier and route provenance. */
+	semanticWorkerTier?: "mechanical" | "judgment";
+	routeSource?: "explicit" | "tier" | "parent";
+	/** Runtime-owned evidence-type counts; no raw evidence payloads. */
+	evidenceTypes?: {
+		path: number;
+		command: number;
+		artifact: number;
+		diff: number;
+		blocked: number;
+	};
 }
 
 export interface SubagentVerification {
@@ -5291,6 +5306,13 @@ export function normalizeSubagentRequest(
 		...(request.execution?.model !== undefined
 			? { requestedModel: request.execution.model }
 			: resolveQualityTierRoute(request.kind, iceContract)),
+		...(request.kind !== undefined ? { semanticWorkerTier: SUBAGENT_TASK_KIND_ROUTE_TIER[request.kind] } : {}),
+		routeSource:
+			request.execution?.model !== undefined
+				? "explicit"
+				: resolveQualityTierRoute(request.kind, iceContract) !== undefined
+					? "tier"
+					: "parent",
 		...(profile.fallbackModel ? { fallbackModel: profile.fallbackModel } : {}),
 		...(selectedMcpTools ? { selectedMcpTools: Object.freeze([...selectedMcpTools]) } : {}),
 		...(selectedAdapterIds ? { selectedAdapterIds: Object.freeze([...selectedAdapterIds]) } : {}),
@@ -5395,6 +5417,14 @@ function resolveQualityTierRoute(
 
 /** Host-owned bounded repair policy (Phase 4.3): distinct follow-ups per live run. */
 export const SUBAGENT_FOLLOW_UP_LIMIT = 3;
+export const SUBAGENT_FOLLOW_UP_STATE_ENTRY_TYPE = "ice-subagent-follow-up-v1";
+
+export interface SubagentFollowUpStateSnapshot {
+	schemaVersion: 1;
+	ownerSessionId: string;
+	runId: string;
+	requestIds: readonly string[];
+}
 
 function boundFollowUpBudget(requestIds: Set<string>): void {
 	if (requestIds.size >= SUBAGENT_FOLLOW_UP_LIMIT) {
@@ -5455,6 +5485,15 @@ function annotateSubagentAssurance(
 		reviewerOutcome:
 			normalized.readOnlyReview === true ? (verification.verified ? "verified" : "disagreed") : undefined,
 		reviewerGateRecommended: recommendSubagentReviewerGate(normalized.taskContract) !== undefined,
+		semanticWorkerTier: normalized.semanticWorkerTier,
+		routeSource: normalized.routeSource,
+		evidenceTypes: {
+			path: evidenceClaims.verifiedIds.length,
+			command: observedBashCommands.length,
+			artifact: result.output?.artifact ? 1 : 0,
+			diff: result.workArtifact?.touchedPaths.length ?? 0,
+			blocked: result.partial || verification.unresolvedClaims.length > 0 ? 1 : 0,
+		},
 	};
 }
 
@@ -8042,6 +8081,8 @@ export interface NativeSubagentRunnerOptions {
 	liveSessionRegistry?: SubagentLiveSessionRegistry;
 	agentViewBridge?: IceAgentViewBridge;
 	supervisorRegistry?: SubagentRunSupervisorRegistry<SubagentResult>;
+	/** Optional durable parent-session journal for accepted follow-up request ids. */
+	persistFollowUpState?: (snapshot: SubagentFollowUpStateSnapshot) => void;
 }
 
 export interface NativeSubagentRunOptions {
@@ -8147,6 +8188,7 @@ export class NativeSubagentRunner {
 	private readonly supervisorRegistry: SubagentRunSupervisorRegistry<SubagentResult>;
 	private readonly mcpAdapter?: IceSubagentMcpAdapter;
 	private readonly runtimeManagementEnabled: boolean;
+	private readonly persistFollowUpState?: (snapshot: SubagentFollowUpStateSnapshot) => void;
 	private readonly supervisorOwners = new Map<string, string>();
 	private readonly followUpRequests = new Map<string, Set<string>>();
 	/** Terminal child sessions retained for explicit resume/delete or history inspection. */
@@ -8170,7 +8212,57 @@ export class NativeSubagentRunner {
 		this.agentViewBridge = options.agentViewBridge;
 		this.mcpAdapter = options.mcpAdapter;
 		this.runtimeManagementEnabled = options.supervisorRegistry !== undefined;
+		this.persistFollowUpState = options.persistFollowUpState;
 		this.supervisorRegistry = options.supervisorRegistry ?? new SubagentRunSupervisorRegistry<SubagentResult>();
+	}
+
+	/** Restore the latest bounded follow-up request-id ledger for this owner. */
+	restoreFollowUpState(entries: readonly unknown[], ownerSessionId: string): number {
+		this.followUpRequests.clear();
+		for (const entry of entries) {
+			if (
+				!entry ||
+				typeof entry !== "object" ||
+				!("type" in entry) ||
+				entry.type !== "custom" ||
+				!("customType" in entry) ||
+				typeof entry.customType !== "string" ||
+				!matchesEntryType(entry.customType, SUBAGENT_FOLLOW_UP_STATE_ENTRY_TYPE) ||
+				!("data" in entry) ||
+				!entry.data ||
+				typeof entry.data !== "object"
+			) {
+				continue;
+			}
+			const data = entry.data as Record<string, unknown>;
+			if (
+				data.schemaVersion !== 1 ||
+				data.ownerSessionId !== ownerSessionId ||
+				typeof data.runId !== "string" ||
+				data.runId.length === 0 ||
+				data.runId.length > 256 ||
+				!Array.isArray(data.requestIds) ||
+				data.requestIds.length > SUBAGENT_FOLLOW_UP_LIMIT ||
+				data.requestIds.some(
+					(value) => typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value),
+				)
+			) {
+				continue;
+			}
+			this.followUpRequests.set(data.runId, new Set(data.requestIds as string[]));
+		}
+		return this.followUpRequests.size;
+	}
+
+	private persistFollowUpLedger(runId: string, parentSessionId: string, requestIds: Set<string>): void {
+		this.persistFollowUpState?.(
+			Object.freeze({
+				schemaVersion: 1,
+				ownerSessionId: parentSessionId,
+				runId,
+				requestIds: Object.freeze([...requestIds]),
+			}),
+		);
 	}
 
 	private releaseOutputArtifact(result: SubagentResult, parentSessionId: string, referenceId = "capture"): void {
@@ -8448,6 +8540,16 @@ export class NativeSubagentRunner {
 		boundFollowUpBudget(requestIds);
 		requestIds.add(requestId);
 		this.followUpRequests.set(runId, requestIds);
+		try {
+			this.persistFollowUpLedger(runId, parentSessionId, requestIds);
+		} catch (error) {
+			requestIds.delete(requestId);
+			if (requestIds.size === 0) this.followUpRequests.delete(runId);
+			throw new SubagentError(
+				"child_protocol_failure",
+				`Could not durably record the follow-up budget before delivery: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
 		try {
 			await control.followUp(message.trim());
 			return { runId, status: "queued" };
@@ -11913,11 +12015,14 @@ function formatToolResult(result: SubagentResult, verification: SubagentVerifica
 			qualityMode: result.qualityMode,
 			assurance: result.assurance,
 			reportMode: result.reportMode,
+			workerTier: result.semanticWorkerTier,
+			routeSource: result.routeSource,
 			reasoningLevel: result.reasoningLevel,
 			criteriaTotal: result.requirementStates?.length,
 			criteriaVerified: result.requirementStates?.filter((state) => state.verified).length,
 			unresolvedClaims: verification.unresolvedClaims.length,
 			evidenceCount: result.evidence?.paths?.length,
+			evidenceTypes: result.evidenceTypes,
 			followUpCount: result.followUpCount,
 			repeatedFailureCount: result.repeatedFailureCount,
 			reviewerUsed: result.reviewerUsed,
@@ -13880,6 +13985,8 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 		agentViewBridge: options.agentViewBridge,
 		supervisorRegistry,
 		mcpAdapter,
+		persistFollowUpState: (snapshot) =>
+			ice.appendEntry(SUBAGENT_FOLLOW_UP_STATE_ENTRY_TYPE, snapshot, { durable: true }),
 	});
 	const writerRunner = new NativeWriterRunner({ outputArtifacts });
 	const observatory = new SubagentObservatoryStore();
@@ -16671,6 +16778,7 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 		if (parentRunState) detachParentRun(parentRunState);
 		pendingCompletionIds.clear();
 		const entries = ctx.sessionManager.getEntries();
+		runner.restoreFollowUpState(entries, ctx.sessionManager.getSessionId());
 		const unresolvedHookEvents = new Set<string>();
 		for (const entry of entries) {
 			if (

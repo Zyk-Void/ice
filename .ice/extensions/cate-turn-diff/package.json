@@ -1,0 +1,8 @@
+{
+  "name": "cate-turn-diff",
+  "description": "Captures per-turn Git diff summaries for Curax Agent.",
+  "private": true,
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}

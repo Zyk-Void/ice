@@ -84,6 +84,7 @@ import iceSubagents, {
 	runResolvedSubagentBatch,
 	runSubagentWithRecovery,
 	SUBAGENT_BATCH_LIMITS,
+	SUBAGENT_FOLLOW_UP_STATE_ENTRY_TYPE,
 	SUBAGENT_PRESENTATION_LIMIT_BYTES,
 	SUBAGENT_PROFILE_ALIASES,
 	SUBAGENT_PROFILE_LIMITS,
@@ -6901,10 +6902,17 @@ describe("ICE subagent contracts", () => {
 				cost: 0,
 			})),
 		} as unknown as CreateAgentSessionResult["session"];
+		const persistedFollowUps: unknown[] = [];
 		const runner = new NativeSubagentRunner({
 			liveSessionRegistry: liveSessions,
 			supervisorRegistry: supervisors,
 			createSession: async () => ({ session: fakeSession }) as CreateAgentSessionResult,
+			persistFollowUpState: (snapshot) =>
+				persistedFollowUps.push({
+					type: "custom",
+					customType: SUBAGENT_FOLLOW_UP_STATE_ENTRY_TYPE,
+					data: snapshot,
+				}),
 		});
 		const run = runner.runResolved(normalized, ["delegate", "read"]);
 		await vi.waitFor(() => expect(liveSessions.get(normalized.runId)).toBeDefined());
@@ -6923,6 +6931,15 @@ describe("ICE subagent contracts", () => {
 		expect(first.status).toBe("queued");
 		expect(duplicate.status).toBe("duplicate");
 		expect(steer).toHaveBeenCalledWith("clarify the report");
+		expect(persistedFollowUps).toHaveLength(1);
+		expect(runner.restoreFollowUpState(persistedFollowUps, normalized.parentSessionId)).toBe(1);
+		const restoredDuplicate = await runner.followUpRuntime(
+			normalized.runId,
+			normalized.parentSessionId,
+			"follow-1",
+			"duplicate after durable restore",
+		);
+		expect(restoredDuplicate.status).toBe("duplicate");
 		liveSessions.get(normalized.runId)?.control?.setControlled(true);
 		await expect(
 			runner.followUpRuntime(normalized.runId, normalized.parentSessionId, "follow-2", "blocked by takeover"),
