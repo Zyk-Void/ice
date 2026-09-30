@@ -515,7 +515,6 @@ describe("ICE guarded extension", () => {
 			"inspect_writer_patch",
 			"reject_writer_patch",
 			"integrate_writer_patch",
-			"read_plan",
 			"edit",
 			"write",
 			"bash",
@@ -539,6 +538,12 @@ describe("ICE guarded extension", () => {
 		expect(build.notifications).toContain(
 			"Bash is enabled for this process. Direct path guards do not contain shell commands.",
 		);
+	});
+
+	it.each([false, true])("hides saved plan reading in build mode without a plan (Bash: %s)", async (allowBash) => {
+		const runtime = extensionFixture({ flags: { "ice-mode": "build", "ice-allow-bash": allowBash } });
+		await runtime.emit("session_start");
+		expect(runtime.activeTools.at(-1)).not.toContain("read_plan");
 	});
 
 	it("exposes saved plan reading only after a draft exists", async () => {
@@ -1014,7 +1019,6 @@ describe("ICE guarded extension", () => {
 			"inspect_writer_patch",
 			"reject_writer_patch",
 			"integrate_writer_patch",
-			"read_plan",
 			"edit",
 			"write",
 		]);
@@ -1246,7 +1250,6 @@ describe("ICE guarded extension", () => {
 			"inspect_writer_patch",
 			"reject_writer_patch",
 			"integrate_writer_patch",
-			"read_plan",
 			"edit",
 			"write",
 		]);

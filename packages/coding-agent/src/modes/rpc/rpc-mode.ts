@@ -493,6 +493,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				return success(id, "follow_up");
 			}
 
+			case "remove_queued_message": {
+				return success(id, "remove_queued_message", { removed: session.removeQueuedMessage(command.messageId) });
+			}
+
 			case "abort": {
 				await session.abort();
 				return success(id, "abort");

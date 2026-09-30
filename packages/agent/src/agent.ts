@@ -153,6 +153,15 @@ class PendingMessageQueue {
 		return [first];
 	}
 
+	remove(message: AgentMessage): boolean {
+		const index = this.messages.indexOf(message);
+		if (index === -1) {
+			return false;
+		}
+		this.messages.splice(index, 1);
+		return true;
+	}
+
 	clear(): void {
 		this.messages = [];
 	}
@@ -287,6 +296,16 @@ export class Agent {
 	/** Queue a message to run only after the agent would otherwise stop. */
 	followUp(message: AgentMessage): void {
 		this.followUpQueue.enqueue(message);
+	}
+
+	/** Remove one pending steering message by object identity. */
+	removeSteeringMessage(message: AgentMessage): boolean {
+		return this.steeringQueue.remove(message);
+	}
+
+	/** Remove one pending follow-up message by object identity. */
+	removeFollowUpMessage(message: AgentMessage): boolean {
+		return this.followUpQueue.remove(message);
 	}
 
 	/** Remove all queued steering messages. */

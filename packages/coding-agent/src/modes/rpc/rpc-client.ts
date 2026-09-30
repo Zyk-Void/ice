@@ -231,6 +231,12 @@ export class RpcClient {
 		await this.send({ type: "follow_up", message, images });
 	}
 
+	/** Remove one pending steering or follow-up message using its queue-update ID. */
+	async removeQueuedMessage(messageId: string): Promise<boolean> {
+		const response = await this.send({ type: "remove_queued_message", messageId });
+		return this.getData<{ removed: boolean }>(response).removed;
+	}
+
 	/**
 	 * Abort current operation.
 	 */

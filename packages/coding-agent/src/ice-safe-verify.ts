@@ -821,14 +821,11 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 		ctx.isProjectTrusted() &&
 		(ctx.mode === "tui" || ctx.mode === "rpc") &&
 		ctx.hasUI;
-	const effectiveTools = (ctx: ExtensionContext) =>
-		state?.mode === "plan"
-			? state.plan.status === "none"
-				? PLAN_TOOLS
-				: [...PLAN_TOOLS, "read_plan"]
-			: bashEffective(ctx)
-				? [...BUILD_TOOLS, "bash"]
-				: BUILD_TOOLS;
+	const effectiveTools = (ctx: ExtensionContext) => {
+		const tools = state?.mode === "plan" ? PLAN_TOOLS : bashEffective(ctx) ? [...BUILD_TOOLS, "bash"] : BUILD_TOOLS;
+		if (!state || state.plan.status === "none") return tools.filter((tool) => tool !== "read_plan");
+		return state.mode === "plan" ? [...tools, "read_plan"] : tools;
+	};
 	const applyTools = (ctx: ExtensionContext) => ice.setActiveTools(effectiveTools(ctx));
 	const publishCapabilityState = async (ctx: ExtensionContext): Promise<void> => {
 		if (!state) return;

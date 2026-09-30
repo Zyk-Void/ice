@@ -13,6 +13,7 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import type {
@@ -152,6 +153,8 @@ export type AgentSessionEvent =
 			type: "queue_update";
 			steering: readonly string[];
 			followUp: readonly string[];
+			steeringEntries: readonly QueuedMessageEntry[];
+			followUpEntries: readonly QueuedMessageEntry[];
 	  }
 	| { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" }
 	| { type: "entry_appended"; entry: SessionEntry }
@@ -185,6 +188,15 @@ export type AgentSessionEvent =
 	| { type: "bash_execution_update"; id?: string; delta: string };
 
 /** Listener function for agent session events */
+export interface QueuedMessageEntry {
+	id: string;
+	message: string;
+}
+
+interface QueuedSessionMessage extends QueuedMessageEntry {
+	agentMessage: AgentMessage;
+}
+
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
 
 // ============================================================================
@@ -320,10 +332,10 @@ export class AgentSession {
 	private _extensionStopAfterTurnRequested = false;
 	private _resumeAfterMidRunCompaction = false;
 
-	/** Tracks pending steering messages for UI display. Removed when delivered. */
-	private _steeringMessages: string[] = [];
-	/** Tracks pending follow-up messages for UI display. Removed when delivered. */
-	private _followUpMessages: string[] = [];
+	/** Tracks pending steering messages for UI display and targeted cancellation. */
+	private _steeringMessages: QueuedSessionMessage[] = [];
+	/** Tracks pending follow-up messages for UI display and targeted cancellation. */
+	private _followUpMessages: QueuedSessionMessage[] = [];
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 
@@ -587,8 +599,10 @@ export class AgentSession {
 	private _emitQueueUpdate(): void {
 		this._emit({
 			type: "queue_update",
-			steering: [...this._steeringMessages],
-			followUp: [...this._followUpMessages],
+			steering: this._steeringMessages.map(({ message }) => message),
+			followUp: this._followUpMessages.map(({ message }) => message),
+			steeringEntries: this._steeringMessages.map(({ id, message }) => ({ id, message })),
+			followUpEntries: this._followUpMessages.map(({ id, message }) => ({ id, message })),
 		});
 	}
 
@@ -643,24 +657,20 @@ export class AgentSession {
 			this._assistantToolEffectMayHaveCommitted = true;
 		}
 
-		// When a user message starts, check if it's from either queue and remove it BEFORE emitting
-		// This ensures the UI sees the updated queue state
+		// Remove delivered queue entries by object identity so duplicate text remains addressable.
 		if (event.type === "message_start" && event.message.role === "user") {
 			this._overflowRecoveryAttempted = false;
-			const messageText = contentText(event.message.content, "");
-			if (messageText) {
-				// Check steering queue first
-				const steeringIndex = this._steeringMessages.indexOf(messageText);
-				if (steeringIndex !== -1) {
-					this._steeringMessages.splice(steeringIndex, 1);
+			const steeringIndex = this._steeringMessages.findIndex(({ agentMessage }) => agentMessage === event.message);
+			if (steeringIndex !== -1) {
+				this._steeringMessages.splice(steeringIndex, 1);
+				this._emitQueueUpdate();
+			} else {
+				const followUpIndex = this._followUpMessages.findIndex(
+					({ agentMessage }) => agentMessage === event.message,
+				);
+				if (followUpIndex !== -1) {
+					this._followUpMessages.splice(followUpIndex, 1);
 					this._emitQueueUpdate();
-				} else {
-					// Check follow-up queue
-					const followUpIndex = this._followUpMessages.indexOf(messageText);
-					if (followUpIndex !== -1) {
-						this._followUpMessages.splice(followUpIndex, 1);
-						this._emitQueueUpdate();
-					}
 				}
 			}
 		}
@@ -1429,34 +1439,28 @@ export class AgentSession {
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
 	private async _queueSteer(text: string, images?: ImageContent[]): Promise<void> {
-		this._steeringMessages.push(text);
-		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
 			content.push(...images);
 		}
-		this.agent.steer({
-			role: "user",
-			content,
-			timestamp: Date.now(),
-		});
+		const agentMessage = { role: "user" as const, content, timestamp: Date.now() } satisfies AgentMessage;
+		this.agent.steer(agentMessage);
+		this._steeringMessages.push({ id: randomUUID(), message: text, agentMessage });
+		this._emitQueueUpdate();
 	}
 
 	/**
 	 * Internal: Queue a follow-up message (already expanded, no extension command check).
 	 */
 	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
-		this._followUpMessages.push(text);
-		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
 			content.push(...images);
 		}
-		this.agent.followUp({
-			role: "user",
-			content,
-			timestamp: Date.now(),
-		});
+		const agentMessage = { role: "user" as const, content, timestamp: Date.now() } satisfies AgentMessage;
+		this.agent.followUp(agentMessage);
+		this._followUpMessages.push({ id: randomUUID(), message: text, agentMessage });
+		this._emitQueueUpdate();
 	}
 
 	/**
@@ -1568,13 +1572,34 @@ export class AgentSession {
 	 * @returns Object with steering and followUp arrays
 	 */
 	clearQueue(): { steering: string[]; followUp: string[] } {
-		const steering = [...this._steeringMessages];
-		const followUp = [...this._followUpMessages];
+		const steering = this._steeringMessages.map(({ message }) => message);
+		const followUp = this._followUpMessages.map(({ message }) => message);
 		this._steeringMessages = [];
 		this._followUpMessages = [];
 		this.agent.clearAllQueues();
 		this._emitQueueUpdate();
 		return { steering, followUp };
+	}
+
+	/** Remove a pending steering or follow-up message by its queue-update ID. */
+	removeQueuedMessage(messageId: string): boolean {
+		const steering = this._steeringMessages.find(({ id }) => id === messageId);
+		if (steering) {
+			if (!this.agent.removeSteeringMessage(steering.agentMessage)) return false;
+			this._steeringMessages.splice(this._steeringMessages.indexOf(steering), 1);
+			this._emitQueueUpdate();
+			return true;
+		}
+
+		const followUp = this._followUpMessages.find(({ id }) => id === messageId);
+		if (followUp) {
+			if (!this.agent.removeFollowUpMessage(followUp.agentMessage)) return false;
+			this._followUpMessages.splice(this._followUpMessages.indexOf(followUp), 1);
+			this._emitQueueUpdate();
+			return true;
+		}
+
+		return false;
 	}
 
 	/** Number of pending messages (includes both steering and follow-up) */
@@ -1584,12 +1609,12 @@ export class AgentSession {
 
 	/** Get pending steering messages (read-only) */
 	getSteeringMessages(): readonly string[] {
-		return this._steeringMessages;
+		return this._steeringMessages.map(({ message }) => message);
 	}
 
 	/** Get pending follow-up messages (read-only) */
 	getFollowUpMessages(): readonly string[] {
-		return this._followUpMessages;
+		return this._followUpMessages.map(({ message }) => message);
 	}
 
 	get resourceLoader(): ResourceLoader {

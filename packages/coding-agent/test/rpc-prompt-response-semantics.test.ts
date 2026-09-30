@@ -172,6 +172,7 @@ async function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: 
 
 async function startRpcMode(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): Promise<{
 	lineHandler: (line: string) => void;
+	session: AgentSession;
 	cleanup: () => Promise<void>;
 }> {
 	rpcIo.outputLines = [];
@@ -181,7 +182,7 @@ async function startRpcMode(options: { withAuth: boolean; responseDelayMs: numbe
 	void runRpcMode(runtimeHost);
 	await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
 
-	return { lineHandler: rpcIo.lineHandler!, cleanup };
+	return { lineHandler: rpcIo.lineHandler!, session: runtimeHost.session, cleanup };
 }
 
 describe("RPC prompt response semantics", () => {
@@ -307,6 +308,110 @@ describe("RPC prompt response semantics", () => {
 					errorDetails: { key: "transport", scope: "global" },
 				});
 			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("cancels one queued message by the ID from queue_update", async () => {
+		const { lineHandler, session, cleanup } = await startRpcMode({ withAuth: false, responseDelayMs: 0 });
+
+		const send = async (request: Record<string, string>): Promise<ParsedOutputLine> => {
+			lineHandler(JSON.stringify(request));
+			let response: ParsedOutputLine | undefined;
+			await vi.waitFor(() => {
+				response = parseOutputLines(rpcIo.outputLines).find(
+					(record) => record.id === request.id && record.type === "response",
+				);
+				expect(response).toBeDefined();
+			});
+			if (!response) throw new Error(`Missing RPC response for ${request.id}`);
+			return response;
+		};
+
+		try {
+			await send({ id: "steer-one", type: "steer", message: "same text" });
+			await send({ id: "steer-two", type: "steer", message: "same text" });
+			await send({ id: "follow-one", type: "follow_up", message: "follow-up" });
+
+			const queueUpdate = parseOutputLines(rpcIo.outputLines)
+				.filter((record) => record.type === "queue_update")
+				.at(-1);
+			const steeringEntries = queueUpdate?.steeringEntries as Array<{ id: string; message: string }> | undefined;
+			const followUpEntries = queueUpdate?.followUpEntries as Array<{ id: string; message: string }> | undefined;
+			expect(steeringEntries).toHaveLength(2);
+			expect(steeringEntries?.[0]?.id).not.toBe(steeringEntries?.[1]?.id);
+			expect(steeringEntries?.map(({ message }) => message)).toEqual(["same text", "same text"]);
+			expect(followUpEntries).toHaveLength(1);
+
+			const secondSteering = steeringEntries?.[1];
+			if (!secondSteering || !steeringEntries?.[0] || !followUpEntries?.[0]) {
+				throw new Error("RPC queue update omitted queued message entries");
+			}
+
+			expect(
+				await send({ id: "cancel-second-steer", type: "remove_queued_message", messageId: secondSteering.id }),
+			).toMatchObject({ command: "remove_queued_message", success: true, data: { removed: true } });
+			const updatedQueue = parseOutputLines(rpcIo.outputLines)
+				.filter((record) => record.type === "queue_update")
+				.at(-1);
+			expect(updatedQueue?.steeringEntries).toEqual([steeringEntries[0]]);
+			expect(session.pendingMessageCount).toBe(2);
+			expect(session.agent.hasQueuedMessages()).toBe(true);
+
+			expect(
+				await send({ id: "cancel-missing", type: "remove_queued_message", messageId: "missing" }),
+			).toMatchObject({ command: "remove_queued_message", success: true, data: { removed: false } });
+			expect(session.pendingMessageCount).toBe(2);
+
+			expect(
+				await send({
+					id: "cancel-first-steer",
+					type: "remove_queued_message",
+					messageId: steeringEntries[0].id,
+				}),
+			).toMatchObject({ command: "remove_queued_message", success: true, data: { removed: true } });
+			expect(
+				await send({
+					id: "cancel-follow-up",
+					type: "remove_queued_message",
+					messageId: followUpEntries[0].id,
+				}),
+			).toMatchObject({ command: "remove_queued_message", success: true, data: { removed: true } });
+			expect(session.pendingMessageCount).toBe(0);
+			expect(session.agent.hasQueuedMessages()).toBe(false);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("removes the queue entry when its message starts delivery", async () => {
+		const { lineHandler, session, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 0 });
+
+		try {
+			lineHandler(JSON.stringify({ id: "queued-before-prompt", type: "steer", message: "deliver this" }));
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines).some((record) => record.id === "queued-before-prompt")).toBe(
+					true,
+				);
+			});
+
+			const queueUpdate = parseOutputLines(rpcIo.outputLines)
+				.filter((record) => record.type === "queue_update")
+				.at(-1);
+			const steeringEntries = queueUpdate?.steeringEntries as Array<{ id: string; message: string }> | undefined;
+			expect(steeringEntries).toHaveLength(1);
+
+			lineHandler(JSON.stringify({ id: "start-prompt", type: "prompt", message: "Start" }));
+			await vi.waitFor(() => {
+				expect(getPromptResponses(rpcIo.outputLines, "start-prompt")).toHaveLength(1);
+				expect(session.pendingMessageCount).toBe(0);
+			});
+
+			const latestQueueUpdate = parseOutputLines(rpcIo.outputLines)
+				.filter((record) => record.type === "queue_update")
+				.at(-1);
+			expect(latestQueueUpdate?.steeringEntries).toEqual([]);
 		} finally {
 			await cleanup();
 		}

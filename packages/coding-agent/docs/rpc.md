@@ -152,6 +152,19 @@ Response:
 
 See [set_follow_up_mode](#set_follow_up_mode) for controlling how follow-up messages are processed.
 
+#### remove_queued_message
+
+Remove one pending steering or follow-up message by the ID reported in `queue_update`. The message must still be waiting in its queue; the response reports `removed: false` if it has already been delivered or is no longer pending.
+
+```json
+{"type": "remove_queued_message", "messageId": "queued-message-id"}
+```
+
+Response:
+```json
+{"type": "response", "command": "remove_queued_message", "success": true, "data": {"removed": true}}
+```
+
 #### abort
 
 Abort the current agent operation.
@@ -1053,7 +1066,9 @@ Emitted whenever the pending steering or follow-up queue changes.
 {
   "type": "queue_update",
   "steering": ["Focus on error handling"],
-  "followUp": ["After that, summarize the result"]
+  "followUp": ["After that, summarize the result"],
+  "steeringEntries": [{"id": "steer-id", "message": "Focus on error handling"}],
+  "followUpEntries": [{"id": "follow-up-id", "message": "After that, summarize the result"}]
 }
 ```
 
