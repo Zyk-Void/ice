@@ -47,6 +47,16 @@ export interface IceSubagentSettingsInput {
 	concurrency?: SubagentConcurrencySettings;
 	/** Host-owned quality-tier route aliases resolved through the exact route policy. */
 	routeTiers?: SubagentRouteTierSettings;
+	/** Subagent V2 keys (Plan/subagent-rewrite.md section 8); validated by subagents/v2/settings.ts. */
+	v2?: unknown;
+	defaultAgent?: unknown;
+	maxDepth?: unknown;
+	maxConcurrent?: unknown;
+	askTimeoutMs?: unknown;
+	permissions?: unknown;
+	agents?: unknown;
+	disabledAgents?: unknown;
+	compat?: unknown;
 }
 
 /** Semantic worker tiers: mechanical (high-volume, low reasoning) vs judgment (reasoning-heavy). */
@@ -118,6 +128,16 @@ const KNOWN_SUBAGENT_SETTINGS_KEYS = new Set([
 	"modelSelection",
 	"concurrency",
 	"routeTiers",
+	// Subagent V2 keys: validated by subagents/v2/settings.ts, ignored by this legacy parser.
+	"v2",
+	"defaultAgent",
+	"maxDepth",
+	"maxConcurrent",
+	"askTimeoutMs",
+	"permissions",
+	"agents",
+	"disabledAgents",
+	"compat",
 ]);
 const KNOWN_CONCURRENCY_KEYS = new Set(["default", "max"]);
 const KNOWN_ROUTE_TIER_KEYS = new Set(["mechanical", "judgment"]);

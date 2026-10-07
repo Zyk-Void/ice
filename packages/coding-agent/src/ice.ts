@@ -2,6 +2,7 @@
 import "./core/legacy-compat/bootstrap.ts";
 import { getAgentDir } from "./config.ts";
 import { configureHttpDispatcher } from "./core/http-dispatcher.ts";
+import { SettingsManager } from "./core/settings-manager.ts";
 import { formatAgentPackImportResult, importRufloAgentPack } from "./ice-agent-packs.ts";
 import { IceAgentViewBridge } from "./ice-agent-view-bridge.ts";
 import iceCogneeExtension from "./ice-cognee.ts";
@@ -21,6 +22,7 @@ import iceSubagents, {
 } from "./ice-subagents.ts";
 import { main } from "./main.ts";
 import { getIceSubagentHookHandlers } from "./subagents/settings.ts";
+import iceSubagentsV2, { isSubagentsV2Selected } from "./subagents/v2/extension.ts";
 
 process.title = "ice";
 process.env.ICE_CODING_AGENT = "true";
@@ -111,12 +113,18 @@ await main(args, {
 					}),
 				);
 				ice.on("session_shutdown", () => unregisterMcp());
-				return iceSubagents(ice, {
+				const subagentOptions = {
 					hookHandlers: getIceSubagentHookHandlers(ice.events),
 					agentViewBridge,
 					getIceMode: () => currentIceMode,
 					getIceCapabilityState: () => currentIceCapabilityState,
-				});
+				};
+				// Rollout gate (Plan/subagent-rewrite.md section 23): exactly one subagent tool set is registered.
+				const v2 = isSubagentsV2Selected(
+					SettingsManager.create(process.cwd(), getAgentDir()).getGlobalSettings() as { ice?: unknown },
+					process.env.ICE_SUBAGENTS_V2,
+				);
+				return v2 ? iceSubagentsV2(ice, subagentOptions) : iceSubagents(ice, subagentOptions);
 			},
 			hidden: true,
 			priority: "before-user",
