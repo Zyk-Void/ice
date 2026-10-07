@@ -829,6 +829,30 @@ describe("subagent V2 runtime", () => {
 		await restored.shutdown();
 	});
 
+	it("delivers a foreground turn's completion as a follow-up after it is detached (Ctrl+B)", async () => {
+		const { harness, parent, host } = await setup();
+		let finish!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+		harness.setResponses([
+			async () => {
+				await gate;
+				return fauxAssistantMessage("finished after detach");
+			},
+		]);
+		const runtime = new SubagentV2Runtime(host());
+		const [record] = await runtime.launch([task("explore", "Long task")]);
+		const run = runtime.runTurn(record!.id, "Long task", { foreground: true });
+		await vi.waitFor(() => expect(runtime.registry.get(runtime.ownerSessionId(), record!.id).state).toBe("running"));
+		expect(runtime.detachToBackground([record!.id, "ag_unknown"])).toBe(1);
+		expect(parent.sent).toHaveLength(0);
+		finish();
+		expect(await run).toMatchObject({ outcome: "completed", text: "finished after detach" });
+		await vi.waitFor(() => expect(parent.sent).toHaveLength(1));
+		expect(parent.sent[0]).toMatchObject({ customType: "subagent_completed" });
+	});
+
 	it("queues a background child's approval in the Hub inbox until it is answered", async () => {
 		const { harness, host } = await setup();
 		harness.setResponses([

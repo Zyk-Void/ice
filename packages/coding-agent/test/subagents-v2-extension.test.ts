@@ -39,7 +39,7 @@ describe("subagent V2 rollout gate", () => {
 		expect(tools).toEqual(["agent", "agent_control", "agent_patch"]);
 		for (const name of tools) expect(V2_SUBAGENT_TOOL_NAMES).toContain(name);
 		for (const name of tools) expect(LEGACY_SUBAGENT_TOOL_NAMES).not.toContain(name);
-		expect(flags).toEqual(["sub-yolo"]);
+		expect(flags).toEqual(["agents", "sub-yolo"]);
 		expect(events).toEqual(expect.arrayContaining(["before_agent_start", "session_shutdown", "agent_settled"]));
 	});
 });

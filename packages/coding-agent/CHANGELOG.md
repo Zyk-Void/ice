@@ -6,6 +6,7 @@
 
 ### Added
 
+- Added opt-in subagents V2 (`ICE_SUBAGENTS_V2=1` or global `ice.subagents.v2: true`), which replaces the legacy delegation tools with `agent`, `agent_control`, and `agent_patch`: Claude Code-style agent files discovered from `.ice/agents` up to the git root plus `~/.ice/agents` and settings, built-in `general`/`explore`/`plan`/`review`/`worker` agents, an allow/ask/deny permission model in which a child never exceeds its parent and repository rules can only narrow, durable child sessions that survive restarts, worktree isolation that starts from uncommitted work with conflict-safe patch apply, an Agent Hub (`/agents`) with an approval inbox, `ice agents list|validate`, the `--agents` JSON flag, and lifecycle events on `ice:subagent`. See `docs/subagents-v2.md`.
 - Added distinct compact tool markers: a pending arrow, a completion checkmark, and a failure cross, with ASCII equivalents for compatible terminals.
 - Added persistent model favorites: Shift+F in `/model` toggles the highlighted model, shows a `[fav]` marker, and pins favorites first in all/scoped and searched lists without changing Ctrl+P cycling. The shortcut is configurable through `app.model.toggleFavorite`.
 - Added a built-in subagent MCP bridge: `ice` registers the parent's pi-mcp-adapter servers through `registerIceSubagentMcpAdapter`, classifying tools from the user's `approveTools` lists (gated tools are mutations, the rest read-only) and dispatching through the parent's `mcp` proxy tool, so children reuse its connections and approval gate.

@@ -61,6 +61,8 @@ export interface V2RuntimeHost {
 	getPatchVerifier?: () => V2RuntimeHost["verifyPatch"];
 	/** Foreground approval prompt; absent when the parent has no interactive UI. */
 	promptApproval?: (request: ApprovalRequest, signal: AbortSignal) => Promise<ApprovalAnswer>;
+	/** `--agents` JSON definitions (raw string or parsed map); highest ordinary precedence below managed. */
+	getFlagAgents?: () => unknown;
 	/** True while an approval inbox (Agent Hub) is attached; background asks then wait instead of denying. */
 	hasApprovalInbox?: () => boolean;
 	/** Called whenever the set of pending approvals changes. */
@@ -80,6 +82,8 @@ export interface ResidentChild {
 	observations?: V2ResultObservations;
 	/** True while a parent tool call is waiting on this child's turn. */
 	foreground: boolean;
+	/** The parent stopped waiting (Ctrl+B); deliver this turn's completion as a follow-up. */
+	detached?: boolean;
 	running?: Promise<ChildTurnResult>;
 	dispose(): Promise<void>;
 }

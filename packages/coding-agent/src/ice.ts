@@ -22,6 +22,7 @@ import iceSubagents, {
 } from "./ice-subagents.ts";
 import { main } from "./main.ts";
 import { getIceSubagentHookHandlers } from "./subagents/settings.ts";
+import { runAgentsCli } from "./subagents/v2/cli.ts";
 import iceSubagentsV2, { isSubagentsV2Selected } from "./subagents/v2/extension.ts";
 
 process.title = "ice";
@@ -58,6 +59,11 @@ if (importPackArgs.length === 1) {
 		console.error(error instanceof Error ? error.message : String(error));
 		process.exit(1);
 	}
+}
+if (rawArgs[0] === "agents") {
+	const result = runAgentsCli(rawArgs.slice(1), { cwd: process.cwd(), agentDir: getAgentDir() });
+	process.stdout.write(result.stdout);
+	process.exit(result.exitCode);
 }
 let args: string[];
 try {

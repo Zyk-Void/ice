@@ -186,10 +186,12 @@ export class SubagentV2Runtime {
 		const settings = this.host.getSettings();
 		const parent = this.parent();
 		const trusted = this.host.isProjectTrusted();
+		const flagAgents = this.host.getFlagAgents?.();
 		const key = JSON.stringify([
 			parent.sessionManager.getCwd(),
 			trusted,
 			settings.agents,
+			flagAgents,
 			settings.disabledAgents,
 			settings.compat,
 		]);
@@ -199,6 +201,7 @@ export class SubagentV2Runtime {
 				userAgentsDir: this.host.userAgentsDir,
 				projectTrusted: trusted,
 				settingsAgents: settings.agents,
+				...(flagAgents !== undefined ? { flagAgents } : {}),
 				disabledAgents: settings.disabledAgents,
 				compat: settings.compat,
 			}),
@@ -1010,7 +1013,9 @@ export class SubagentV2Runtime {
 				);
 			}
 		}
-		if (background) this.deliverCompletion(state, result);
+		const detached = resident.detached === true;
+		resident.detached = false;
+		if (background || detached) this.deliverCompletion(state, result);
 		return result;
 	}
 
@@ -1525,6 +1530,28 @@ export class SubagentV2Runtime {
 			lines.push(...preview);
 		}
 		return lines;
+	}
+
+	/**
+	 * The parent stopped waiting for these running children (Ctrl+B): their
+	 * current turns continue, and each completion arrives as a follow-up.
+	 */
+	detachToBackground(ids: readonly string[]): number {
+		const state = this.state();
+		let detached = 0;
+		for (const id of ids) {
+			let resident: ResidentChild | undefined;
+			try {
+				resident = state.registry.resident(state.sessionId, id);
+			} catch {
+				continue; // Deleted or unknown since the wait began.
+			}
+			if (!resident?.running) continue;
+			resident.detached = true;
+			resident.foreground = false;
+			detached++;
+		}
+		return detached;
 	}
 
 	pendingApprovals(): readonly PendingApproval[] {

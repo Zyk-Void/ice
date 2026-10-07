@@ -37,6 +37,7 @@ import {
 } from "../definitions/listing.ts";
 import { authorizeUnsafeSubagentHostExecution, flagEnabled, type IceSubagentsOptions } from "../extension-support.ts";
 import type { ApprovalAnswer } from "../permissions/approval.ts";
+import type { ChildRecord } from "../registry/registry.ts";
 import { renderSubagentAssuranceSection } from "../results/assurance.ts";
 import { renderBatchSynthesisSection, summarizeV2BatchSynthesis } from "../results/batch-synthesis.ts";
 import { isSubagentOutputArtifactRef } from "../results/output-artifacts.ts";
@@ -45,6 +46,7 @@ import { getIceDelegableTools } from "../tools/adapters.ts";
 import { SUBAGENT_PRESENTATION_LIMIT_BYTES } from "../types.ts";
 import { AgentHubView, type HubSource } from "../ui/hub.ts";
 import { createAgentDefinitionFile, formatAgentDefinitions } from "./agent-manager.ts";
+import { completionEvent, lifecycleEvents, SUBAGENT_EVENT_CHANNEL } from "./events.ts";
 import { SubagentV2Runtime } from "./runtime.ts";
 import type { ChildTurnResult } from "./runtime-support.ts";
 import { resolveSubagentsV2Settings } from "./settings.ts";
@@ -113,6 +115,11 @@ export function isSubagentsV2Selected(globalSettings: { ice?: unknown } | undefi
 
 export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsOptions = {}): void {
 	if (typeof ice.registerFlag === "function") {
+		ice.registerFlag("agents", {
+			description:
+				'Extra subagent definitions as JSON, for example {"reviewer":{"description":"...","prompt":"..."}}; same schema as ice.subagents.agents',
+			type: "string",
+		});
 		ice.registerFlag("sub-yolo", {
 			description:
 				"Let subagents run edits and shell commands the trusted build parent may run, without per-call approval; this is not a sandbox",
@@ -136,6 +143,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		for (const listener of hubListeners) listener();
 	};
 	let lastApprovalCount = 0;
+	const announcedApprovals = new Set<string>();
 	const runtime = new SubagentV2Runtime({
 		getParentSession: () => options.agentViewBridge?.getParentSession(),
 		agentDir,
@@ -156,9 +164,33 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			const argv = parseVerifierArgv(ice.getFlag("ice-verify"));
 			return argv ? (root, signal) => runVerifier(argv, root, { signal }) : undefined;
 		},
+		getFlagAgents: () => {
+			const raw = ice.getFlag("agents");
+			if (typeof raw !== "string" || !raw.trim()) return undefined;
+			try {
+				return JSON.parse(raw) as unknown;
+			} catch {
+				return raw; // Reported as an invalid --agents source by the definition loader.
+			}
+		},
 		// Background asks wait for the Agent Hub inbox only in an interactive TUI.
 		hasApprovalInbox: () => latestCtx?.mode === "tui" && latestCtx.hasUI === true,
 		onApprovalsChanged: (pending) => {
+			for (const approval of pending) {
+				if (announcedApprovals.has(approval.request.id)) continue;
+				announcedApprovals.add(approval.request.id);
+				ice.events.emit(SUBAGENT_EVENT_CHANNEL, {
+					type: "subagent_permission_request",
+					childId: approval.request.childId,
+					agent: approval.request.agent,
+					ownerSessionId: approval.request.ownerSessionId,
+					depth: 0,
+					state: "blocked",
+					tool: approval.request.tool,
+				});
+			}
+			for (const id of announcedApprovals)
+				if (!pending.some((approval) => approval.request.id === id)) announcedApprovals.delete(id);
 			const background = pending.filter((approval) => !approval.request.foreground);
 			if (background.length > lastApprovalCount && latestCtx?.hasUI) {
 				const newest = background.at(-1)!.request;
@@ -236,6 +268,36 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		},
 	};
 	let unsubscribeRegistry: (() => void) | undefined;
+	// Ctrl+B: foreground agent waits the user may move to the background.
+	const blockingWaits = new Set<{ ownerSessionId: string; release: () => void }>();
+	const backgroundIds: string[] = [];
+	options.agentViewBridge?.setBlockingWaitSource({
+		count: () => {
+			const owner = options.agentViewBridge?.getParentSession()?.sessionId;
+			return [...blockingWaits].filter((wait) => wait.ownerSessionId === owner).length;
+		},
+		release: () => {
+			const owner = options.agentViewBridge?.getParentSession()?.sessionId;
+			let released = 0;
+			for (const wait of blockingWaits) {
+				if (wait.ownerSessionId !== owner) continue;
+				blockingWaits.delete(wait);
+				wait.release();
+				released++;
+			}
+			return released;
+		},
+		backgroundCount: () => {
+			try {
+				const owner = runtime.ownerSessionId();
+				const running = backgroundIds.filter((id) => runtime.registry.resident(owner, id)?.running);
+				backgroundIds.splice(0, backgroundIds.length, ...running);
+				return running.length;
+			} catch {
+				return 0;
+			}
+		},
+	});
 
 	ice.on("session_start", async (_event, ctx) => {
 		latestCtx = ctx;
@@ -243,7 +305,18 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		unsubscribeRegistry?.();
 		unsubscribeRegistry = undefined;
 		try {
-			unsubscribeRegistry = runtime.registry.subscribe(notifyHub);
+			const previous = new Map<string, ChildRecord>();
+			unsubscribeRegistry = runtime.registry.subscribe((event) => {
+				notifyHub();
+				if (event.type === "record") {
+					for (const lifecycle of lifecycleEvents(previous.get(event.record.id), event.record))
+						ice.events.emit(SUBAGENT_EVENT_CHANNEL, lifecycle);
+					previous.set(event.record.id, event.record);
+				} else {
+					const depth = previous.get(event.completion.childId)?.depth ?? 0;
+					ice.events.emit(SUBAGENT_EVENT_CHANNEL, completionEvent(event.completion, depth));
+				}
+			});
 		} catch {
 			// No parent session yet; connected on the next session start.
 		}
@@ -365,8 +438,24 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			};
 			signal?.addEventListener("abort", abort, { once: true });
 			if (signal?.aborted) abort();
+			let release!: () => void;
+			const released = new Promise<"released">((resolve) => {
+				release = () => resolve("released");
+			});
+			// Keyed like count()/release(): the bridge's current parent session.
+			const wait = { ownerSessionId: options.agentViewBridge?.getParentSession()?.sessionId ?? "", release };
+			blockingWaits.add(wait);
 			try {
-				const results = await Promise.all(runs);
+				const settled = await Promise.race([Promise.all(runs), released]);
+				if (settled === "released") {
+					const moved = runtime.detachToBackground(order);
+					backgroundIds.push(...order);
+					return text(
+						`Moved ${moved} running subagent${moved === 1 ? "" : "s"} to the background (${order.join(", ")}). Each completion arrives as a follow-up message; children that already finished can be read with agent_control action=output.`,
+						{ ids: order, detached: true },
+					);
+				}
+				const results = settled;
 				const synthesis = results.length > 1 ? summarizeV2BatchSynthesis(results) : undefined;
 				return text(
 					[
@@ -384,6 +473,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 					},
 				);
 			} finally {
+				blockingWaits.delete(wait);
 				signal?.removeEventListener("abort", abort);
 			}
 		},
