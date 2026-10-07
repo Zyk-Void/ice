@@ -1,6 +1,5 @@
 import { Buffer } from "node:buffer";
 import { describe, expect, it } from "vitest";
-import type { ReviewFinding, SubagentBatchTask } from "../src/ice-subagents.ts";
 import {
 	findExactDuplicateBatchTasks,
 	renderBatchSynthesisSection,
@@ -8,6 +7,7 @@ import {
 	type SubagentBatchSynthesisItem,
 	summarizeBatchSynthesis,
 } from "../src/subagents/results/batch-synthesis.ts";
+import type { ReviewFinding, SubagentBatchTask } from "../src/subagents/types.ts";
 
 function batchTask(overrides: Partial<SubagentBatchTask> & { id: string }): SubagentBatchTask {
 	return {

@@ -1,14 +1,6 @@
 import { relative, resolve, sep } from "node:path";
 import { stripTerminalSequences } from "@zykairotis/ice-tui";
 import { isSubagentProfileColor, type SubagentProfileColor } from "../../ice-agent-view-bridge.ts";
-import type {
-	SubagentBatchTaskLifecycleEvent,
-	SubagentCompactionReason,
-	SubagentCompactionStatus,
-	SubagentEvent,
-	SubagentStatus,
-	SubagentUsage,
-} from "../../ice-subagents.ts";
 import { redactCredentialText } from "../../utils/redact.ts";
 import type {
 	SubagentJobInspection,
@@ -20,6 +12,14 @@ import { JOB_COMPLETION_MESSAGE_TYPE } from "../registry/jobs.ts";
 import type { SubagentOutputCaptureStatus } from "../results/output-artifacts.ts";
 import type { SubagentCheckInState } from "../runtime/checkin.ts";
 import type { SubagentRetryState, SubagentRuntimeAttention } from "../runtime/supervisor.ts";
+import type {
+	SubagentBatchTaskLifecycleEvent,
+	SubagentCompactionReason,
+	SubagentCompactionStatus,
+	SubagentEvent,
+	SubagentStatus,
+	SubagentUsage,
+} from "../types.ts";
 
 export const OBSERVATORY_RECENT_LIMIT = 32;
 export const OBSERVATORY_ACTIVITY_LIMIT = 12;

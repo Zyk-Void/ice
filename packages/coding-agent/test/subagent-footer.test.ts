@@ -8,11 +8,14 @@ import {
 	type IceAgentViewLiveSession,
 	type IceAgentViewLiveSessionSource,
 } from "../src/ice-agent-view-bridge.ts";
-import { createSubagentLiveSessionControl, SubagentLiveSessionRegistry } from "../src/ice-subagents.ts";
 import {
 	createSubagentFooterSnapshot,
 	SubagentFooterSwitcher,
 } from "../src/modes/interactive/components/subagent-view-switcher.ts";
+import {
+	createSubagentLiveSessionControl,
+	SubagentLiveSessionRegistry,
+} from "../src/subagents/runtime/live-session.ts";
 import type { SubagentRuntimeAttention } from "../src/subagents/runtime/supervisor.ts";
 
 function session(sessionId: string, isStreaming = false): AgentSession {

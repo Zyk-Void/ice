@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import type { ReviewFinding, SubagentBatchTask } from "../../ice-subagents.ts";
 import { redactCredentialText } from "../../utils/redact.ts";
+import type { ReviewFinding, SubagentBatchTask } from "../types.ts";
 
 /**
  * Pure batch synthesis helpers (Phase 6.1/6.4): exact duplicate sibling

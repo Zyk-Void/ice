@@ -1,15 +1,8 @@
-import { readFileSync } from "node:fs";
 import { Value } from "typebox/value";
 import { describe, expect, it } from "vitest";
 import { AgentToolParametersSchema } from "../src/subagents/api/agent.ts";
 import { AgentControlParametersSchema } from "../src/subagents/api/agent-control.ts";
 import { AgentPatchParametersSchema } from "../src/subagents/api/agent-patch.ts";
-import {
-	isSubagentsV2Enabled,
-	LEGACY_SUBAGENT_TOOL_NAMES,
-	selectSubagentToolNames,
-	V2_SUBAGENT_TOOL_NAMES,
-} from "../src/subagents/api/tool-set.ts";
 import { isChildGroupId, isChildId } from "../src/subagents/contract/child-runtime-contract.ts";
 import { JsonAgentDefinitionSchema, NativeAgentFrontmatterSchema } from "../src/subagents/definitions/schema.ts";
 import {
@@ -177,31 +170,5 @@ describe("subagent V2 model-facing API", () => {
 		expect(Value.Check(AgentControlParametersSchema, { action: "wait", id: "run-123" })).toBe(false);
 		expect(Value.Check(AgentPatchParametersSchema, { id: CHILD_ID, action: "apply" })).toBe(true);
 		expect(Value.Check(AgentPatchParametersSchema, { id: CHILD_ID, action: "integrate" })).toBe(false);
-	});
-});
-
-describe("subagent V2 rollout gate", () => {
-	it("selects exactly one disjoint tool set", () => {
-		const legacy = new Set<string>(LEGACY_SUBAGENT_TOOL_NAMES);
-		expect(legacy.size).toBe(15);
-		expect(V2_SUBAGENT_TOOL_NAMES.some((name) => legacy.has(name))).toBe(false);
-		expect(selectSubagentToolNames(true)).toEqual(V2_SUBAGENT_TOOL_NAMES);
-		expect(selectSubagentToolNames(false)).toEqual(LEGACY_SUBAGENT_TOOL_NAMES);
-	});
-
-	it("defaults to V2 and opts out only through an explicit false setting or env value", () => {
-		expect(isSubagentsV2Enabled(undefined, undefined)).toBe(true);
-		expect(isSubagentsV2Enabled("false", undefined)).toBe(true);
-		expect(isSubagentsV2Enabled(false, undefined)).toBe(false);
-		expect(isSubagentsV2Enabled(false, "1")).toBe(true);
-		expect(isSubagentsV2Enabled(true, "0")).toBe(false);
-		expect(isSubagentsV2Enabled(undefined, "yes")).toBe(true);
-	});
-
-	it("lists exactly the legacy tool names registered by the legacy extension", () => {
-		const source = readFileSync(new URL("../src/subagents/legacy-extension.ts", import.meta.url), "utf8");
-		// Tool definitions carry a `label` line directly after `name`; profiles do not.
-		const registered = [...source.matchAll(/^\t\tname: "([a-z_]+)",\n\t\tlabel: /gm)].map((match) => match[1]);
-		expect(new Set(registered)).toEqual(new Set(LEGACY_SUBAGENT_TOOL_NAMES));
 	});
 });

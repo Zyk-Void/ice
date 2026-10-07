@@ -17,10 +17,10 @@ describe("executable contracts", () => {
 		expect(stock).toContain('process.title = "ice"');
 		expect(stock).toContain('process.env.AI_AGENT = "ice"');
 		expect(stock).not.toContain("createIceSafeVerify");
-		expect(stock).not.toContain("iceSubagents(");
+		expect(stock).not.toContain("iceSubagentsV2(");
 
 		expect(guarded).toContain('process.title = "ice"');
 		expect(guarded).toContain("createIceSafeVerify");
-		expect(guarded).toContain("iceSubagents(");
+		expect(guarded).toContain("iceSubagentsV2(");
 	});
 });

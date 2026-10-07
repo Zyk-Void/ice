@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { SubagentBatchTaskLifecycleEvent, SubagentEvent, SubagentUsage } from "../src/ice-subagents.ts";
 import type { SubagentJobInspection, SubagentJobStatus } from "../src/subagents/registry/jobs.ts";
+import type { SubagentBatchTaskLifecycleEvent, SubagentEvent, SubagentUsage } from "../src/subagents/types.ts";
 import {
 	createObservatoryState,
 	durableJobEntryKeys,

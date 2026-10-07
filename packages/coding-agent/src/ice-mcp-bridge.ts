@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TSchema } from "typebox";
 import type { AgentSession } from "./core/agent-session.ts";
-import type { IceSubagentMcpAdapter, IceSubagentMcpToolAuthorization } from "./ice-subagents.ts";
+import type { IceSubagentMcpAdapter, IceSubagentMcpToolAuthorization } from "./subagents/types.ts";
 
 /** Parent adapter snapshots are capped by ICE subagent admission. */
 const MAX_AUTHORIZED_TOOLS = 64;

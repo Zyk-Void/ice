@@ -1,6 +1,6 @@
 # Settings
 
-For ICE delegation, see the [subagent user guide](subagent-user-guide.md), including opt-in exact child routes, native durable hook intents, host-owned command-hook policy, and project workflow skills. Its approved expansion contracts supersede historical deferral notes below.
+For ICE subagents (agents, permissions, hooks, MCP tools), see [subagents-v2.md](subagents-v2.md).
 
 Stock `ice` uses JSON settings files with project settings overriding global settings. The `ice` launcher opts into global-first ordinary preferences, including startup, reload, scoped writes, and session switches. Permission denies, trust, and restrictive caps remain separate from preference precedence.
 
@@ -313,78 +313,7 @@ See [packages.md](packages.md) for package management details.
 
 ## ICE subagents and hooks
 
-ICE keeps its operational settings under the existing `ice` namespace. Global values live in `~/.ice/agent/settings.json`; trusted project values live in `.ice/settings.json`. The namespace is parsed strictly: unknown keys in `ice.subagents.restrictions` or `ice.hooks` fail closed for delegation instead of being ignored.
-
-```json
-{
-  "ice": {
-    "subagents": {
-      "enabled": true,
-      "defaults": {
-        "thinking": "medium",
-        "startupTimeoutMs": 120000
-      },
-      "allowedRoles": ["self", "api-review"],
-      "roleDefaults": {
-        "api-review": { "thinking": "high" }
-      },
-      "restrictions": {
-        "maxStartupTimeoutMs": 300000,
-        "denyTools": ["bash", "write", "edit"]
-      },
-      "modelSelection": { "mode": "inherit-parent" }
-    },
-    "hooks": {
-      "enabled": true,
-      "definitions": [
-        {
-          "id": "review-launch-policy",
-          "event": "subagent.beforeLaunch",
-          "roles": ["self", "api-review"],
-          "kind": "in-process",
-          "timeoutMs": 1500,
-          "required": true
-        }
-      ]
-    }
-  }
-}
-```
-
-Resolution is deterministic and global-first for ice: an explicit global value beats a trusted-project value, then the built-in/file default (bundled/global defaults, project defaults, per-role defaults, and per-call requests are resolved once before launch). Startup caps and deny lists narrow authority; they never widen the parent. Final-answer storage and presentation use fixed host-owned limits, not caller or profile settings. An omitted or empty `allowedRoles` list adds no restriction; use `restrictions.denyRoles` for explicit denial. Project settings are ignored until project trust is established, and a more-specific allow cannot override a broader deny. Malformed settings files and security-sensitive namespaces fail closed. Every launch result reports effective startup limits, tool restrictions, source labels, and bounded diagnostics. Stock `ice` keeps its existing project-first merge; the `ice` launcher uses global-first shared preferences, not only its subagent namespace. File-agent discovery uses `~/.ice/agents` (or `<agentDir>/agents` for an explicit custom directory) ahead of trusted `.ice/agents`, with shadowed sources surfaced. Explicit global arrays replace the corresponding project configuration arrays; explicit empty, false, and zero values are not treated as missing. For subagent preferences the order is file/default, project default, project role, global default, global role, then explicit invocation request; hard caps and denies apply afterward.
-
-Read/review delegation also accepts an optional restricted local `outputSchema` object. The root must be an object with `additionalProperties: false`; only bounded object/array/string/number/integer/boolean/null nodes are supported. `$ref`, remote schemas, unions, executable validators, and unknown keywords are rejected before child creation. A valid schema validates a nested `payload` while the mandatory `summary`/`evidence` envelope remains authoritative. Payloads are capped at 16 KiB and are retained in bounded durable result projections.
-
-### Final output artifacts
-
-Final-answer byte length does not affect launch admission or stop a running child. ICE retains a 48 KiB UTF-8-safe inline projection, and larger terminal answers may include an opaque owner-bound artifact reference. `read_subagent_output` reads bounded chunks (16 KiB default, 64 KiB maximum) and validates ownership, UTF-8 boundaries, file size, and content hash. Storage has fixed host-owned limits of 4 MiB per artifact, 16 MiB per owner, and 128 MiB globally; these are capture/retention safeguards, not execution budgets. Batch/review result text has a separate fixed 64 KiB presentation cap. Artifacts contain only final assistant answers, not transcripts or tool output. See [the subagent guide](subagent-user-guide.md#final-output-and-artifact-retrieval) for ownership and lifecycle details.
-
-`manage_subagent` supports `inspect`, `peek`, bounded `wait`, `stop`, `detach`, owner-bound `follow_up`, `resume`, and `delete`. Running managed children have no lifetime deadline; wait expiry is observational, and detach retains the same live child without changing its execution. Follow-up requires a stable `requestId`, is deduplicated, queues through the retained native Ice child, preserves its original scope/tools/model/execution contract, and is rejected while a user has Take Control. `resume` continues an eligible completed child in its original session under a new run id, re-derives profile/resources/project trust/tool authority fail-closed at the resume boundary, re-points the session's own tool/stream/turn-stop wrappers at the resumed run's hooks and authority callback, and cannot widen model/profile/scope/tools; `delete` is owner-scoped and idempotent, rejects active children, and releases both the retained session and its historical view snapshot. Durable async acceptance stores the resolved thinking, startup deadline, check-in interval, tools, and profile source hash; settings changes do not silently re-resolve accepted jobs. Terminal output metadata is persisted as a pathless v2 reference and read through the owner-bound `read_subagent_output` tool.
-
-The shipped hook dispatcher supports trusted parent-owned in-process handlers supplied by the ICE integration. Decision events are `subagent.beforeLaunch`, `subagent.beforeTool`, and `subagent.beforeAccept`; observational lifecycle events, including bounded `subagent.checkpoint`, cannot authorize work. Optional `roleHookIds` and `callHookIds` selections filter optional hooks as a union; required hooks remain active, and an explicitly empty selector selects no optional hooks. A `beforeLaunch` handler may return bounded `contextAdditions`; the parent redacts and merges them into the context packet, then reruns context, source/resource, scope, and preflight validation before admission. Missing approval, malformed required-hook output, timeout, or a required handler that is unavailable blocks the gated action. Executable hooks require global `ice.hooks.commandPolicy`, trusted build mode, startup-authorized parent Bash, pinned executable/script identities, and execution approval. Plan/review children cannot execute command hooks. Global definitions win ID collisions without downgrading required status. Trusted handlers can register through `registerIceSubagentHook(ice.events, id, handler)`; replacement/unregistration of a captured handler fails closed. Hooks never load child extensions, create another agent loop, or grant additional model/tool authority. Each dispatched handler gets a stable event ID; the parent persists redacted intent/outcome records in the session, and reload warns about unresolved intent without replaying the hook.
-
-`modelSelection.mode` accepts `"inherit-parent"` (default) or `"configured"` (global opt-in for exact per-call/file routes resolved through Ice's catalog). File agents may declare exact `model`/`fallbackModel` references; candidates run call/primary/fallback/parent with bounded skip reasons and policy denials fail the launch. `allowedRoles` is an intersection restriction, not an authority-granting union. `ice.subagents.enabled: false` blocks new launches while retained jobs remain inspectable and cancellable through their existing owner-scoped APIs.
-
-Quality-tier route aliases are global host policy only: `ice.subagents.routeTiers.mechanical` and `ice.subagents.routeTiers.judgment` each accept an exact `provider/model` reference. Task kinds map deterministically onto tiers (`explore` -> mechanical; `research`, `review`, `implement`, `verify` -> judgment); an explicit per-call `execution.model` always wins, an unset tier leaves parent-model inheritance, project settings cannot set tier routes, and every resolved route still passes the exact-route catalog/credential/capability checks.
-
-### Profile authoring templates
-
-Custom roles stay data-only Markdown profiles under the file-agent locations (`~/.ice/agents` globally, or `<agentDir>/agents` for an explicit custom directory, and `.ice/agents` for trusted projects). Expertise belongs in the prompt; `tools` is the declared capability request and is still intersected with parent mode, active tools, scope, and ICE restrictions. Supported authority-neutral fields include `model`, `fallbackModel`, `skills`, `prompts`, `context`, `hooks`, and explicit `mcp` server/tool selectors.
-
-```markdown
----
-name: api-review
-description: Review API changes for compatibility and security regressions
-tools: read, grep, find, ls
-thinking: high
-startupTimeoutMs: 180000
----
-
-Review only the approved scope. Report concrete file evidence and unresolved claims;
-do not modify files, delegate, or infer approval from this prompt.
-```
-
-Useful specializations include `api-review`, `migration-review`, `frontend-review`, and `verification`; do not add executable commands or ambient resource discovery to a profile as a way to expand authority. `model`, `fallbackModel`, `hooks`, skills, and explicit `mcp` selectors are data, never permission grants: the child still cannot exceed parent authority, mode restrictions, or deny policy. `list_subagent_profiles` reports requested versus effective tools, primary/fallback models, effective MCP selections, bounded budgets, source labels, and diagnostics without executing the profile. Interactive `/settings` also exposes an `Effective policy` submenu with bounded source-aware role budgets, trust/enablement state, hook declarations, routing policy, and settings-load errors; it does not author executable roles.
+Subagent settings live under `ice.subagents` (agents, `disabledAgents`, `defaultAgent`, `maxDepth`, `maxConcurrent`, `askTimeoutMs`, `permissions`, `compat`) and hooks under `ice.hooks`. See [subagents-v2.md](subagents-v2.md) for the schema, permission rules, hooks, and MCP tools.
 
 ## Example
 

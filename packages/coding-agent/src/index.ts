@@ -328,11 +328,6 @@ export {
 	type ProjectTrustStoreEntry,
 	type ProjectTrustUpdate,
 } from "./core/trust-manager.ts";
-export {
-	type IceSubagentMcpAdapter,
-	type IceSubagentMcpToolAuthorization,
-	registerIceSubagentMcpAdapter,
-} from "./ice-subagents.ts";
 // Main entry point
 export { type MainOptions, main } from "./main.ts";
 // Run modes for programmatic SDK usage
@@ -432,6 +427,11 @@ export {
 	isIceDelegableAdapterId,
 	registerIceDelegableTool,
 } from "./subagents/tools/adapters.ts";
+export {
+	type IceSubagentMcpAdapter,
+	type IceSubagentMcpToolAuthorization,
+	registerIceSubagentMcpAdapter,
+} from "./subagents/types.ts";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.ts";
 export { parseFrontmatter, stripFrontmatter } from "./utils/frontmatter.ts";

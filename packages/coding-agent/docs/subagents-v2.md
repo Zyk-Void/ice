@@ -1,22 +1,8 @@
 # Subagents V2
 
-Subagents V2 replaces the legacy delegation tools with three tools, file-defined agents, and one permission model. It is the **default**. The legacy tools described in [subagent-user-guide.md](./subagent-user-guide.md) remain available for one transition period and will be removed.
+Subagents V2 is the ICE subagent system: three tools, file-defined agents, and one permission model. The legacy delegation tools were removed.
 
-## Switch back to the legacy tools
-
-Either set the environment variable:
-
-```bash
-ICE_SUBAGENTS_V2=0 ice
-```
-
-or add this to your global settings (`~/.ice/agent/settings.json`):
-
-```json
-{ "ice": { "subagents": { "v2": false } } }
-```
-
-The environment variable wins over the setting (`ICE_SUBAGENTS_V2=1` forces V2). V2 and the legacy tools are never loaded together. V2 needs a saved session (it does not work with `--no-session`), because child transcripts and their frozen settings are written to disk.
+V2 needs a saved session (it does not work with `--no-session`), because child transcripts and their frozen settings are written to disk.
 
 ## Agents
 

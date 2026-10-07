@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../src/core/extensions/index.ts";
-import { LEGACY_SUBAGENT_TOOL_NAMES, V2_SUBAGENT_TOOL_NAMES } from "../src/subagents/api/tool-set.ts";
+import { V2_SUBAGENT_TOOL_NAMES } from "../src/subagents/api/tool-set.ts";
 import { ChildRegistry } from "../src/subagents/registry/registry.ts";
-import iceSubagentsV2, { isSubagentsV2Selected } from "../src/subagents/v2/extension.ts";
+import iceSubagentsV2 from "../src/subagents/v2/extension.ts";
 import { SubagentV2Runtime } from "../src/subagents/v2/runtime.ts";
 import type { ChildTurnResult } from "../src/subagents/v2/runtime-support.ts";
 import { resolveSubagentsV2Settings } from "../src/subagents/v2/settings.ts";
@@ -25,20 +25,12 @@ function fakeApi() {
 	return { api, tools, definitions, flags, events };
 }
 
-describe("subagent V2 rollout gate", () => {
-	it("selects V2 by default and legacy only from ice.subagents.v2: false or the env var", () => {
-		expect(isSubagentsV2Selected(undefined, undefined)).toBe(true);
-		expect(isSubagentsV2Selected({ ice: { subagents: { v2: false } } }, undefined)).toBe(false);
-		expect(isSubagentsV2Selected({ ice: { subagents: { v2: false } } }, "1")).toBe(true);
-		expect(isSubagentsV2Selected(undefined, "0")).toBe(false);
-	});
-
+describe("subagent V2 tool registration", () => {
 	it("registers only V2 tools, never a legacy one", () => {
 		const { api, tools, flags, events } = fakeApi();
 		iceSubagentsV2(api);
 		expect(tools).toEqual(["agent", "agent_control", "agent_patch"]);
 		for (const name of tools) expect(V2_SUBAGENT_TOOL_NAMES).toContain(name);
-		for (const name of tools) expect(LEGACY_SUBAGENT_TOOL_NAMES).not.toContain(name);
 		expect(flags).toEqual(["agents", "sub-yolo"]);
 		expect(events).toEqual(expect.arrayContaining(["before_agent_start", "session_shutdown", "agent_settled"]));
 	});

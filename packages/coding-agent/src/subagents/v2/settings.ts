@@ -17,6 +17,7 @@ const ruleList = Type.Array(
 );
 
 const V2KeysSchema = Type.Object({
+	/** Former rollout switch; accepted and ignored so existing settings stay valid. */
 	v2: Type.Optional(Type.Boolean()),
 	defaultAgent: Type.Optional(Type.String({ pattern: "^[a-z0-9][a-z0-9-]{0,63}$" })),
 	maxDepth: Type.Optional(Type.Integer({ minimum: 0, maximum: 4 })),

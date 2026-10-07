@@ -3,26 +3,26 @@ import { rmdirSync, unlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { getAgentDir } from "../../config.ts";
 import { matchesEntryType } from "../../core/legacy-compat/identity.ts";
-import type {
-	ReviewFinding,
-	SubagentAssuranceLevel,
-	SubagentFailureCode,
-	SubagentQualityMode,
-	SubagentReportArtifact,
-	SubagentReportMode,
-	SubagentResult,
-	SubagentUsage,
-	SubagentVerification,
-} from "../../ice-subagents.ts";
 import { redactCredentialText } from "../../utils/redact.ts";
+import type { SubagentAssuranceLevel } from "../results/assurance.ts";
 import {
 	isSubagentOutput,
 	type SubagentOutput,
 	type SubagentOutputArtifactStore,
 } from "../results/output-artifacts.ts";
+import type { SubagentQualityMode } from "../results/task-contract.ts";
 import type { IceModelCandidateSkip, IceSubagentRouteSnapshot } from "../runtime/routing.ts";
 import type { IceHookDispatchRecord } from "../settings.ts";
 import { isIceDelegableAdapterId } from "../tools/adapters.ts";
+import type {
+	ReviewFinding,
+	SubagentFailureCode,
+	SubagentReportArtifact,
+	SubagentReportMode,
+	SubagentResult,
+	SubagentUsage,
+	SubagentVerification,
+} from "../types.ts";
 import { SUBAGENT_CONCURRENCY_LIMITS, type SubagentConcurrencyAdmission } from "./admission.ts";
 
 export const JOB_ENTRY_TYPE = "ice-subagent-job-v1";

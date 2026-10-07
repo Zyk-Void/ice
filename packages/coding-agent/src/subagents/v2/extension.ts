@@ -1,8 +1,7 @@
 /**
  * Subagent V2 extension (Plan/subagent-rewrite.md section 12, P6.0-P6.6).
  *
- * Loaded instead of the legacy extension when `ice.subagents.v2` or
- * ICE_SUBAGENTS_V2=1 is set, so the model never sees both tool sets. Registers
+ * The ICE subagent extension. Registers
  * `agent`, `agent_control`, and `agent_patch` (worktree children). The callable agent list reaches the model as a cache-stable delta
  * message before each agent run.
  */
@@ -29,7 +28,6 @@ import { type AgentToolParameters, AgentToolParametersSchema } from "../api/agen
 import type { AgentControlParameters } from "../api/agent-control.ts";
 import { AgentControlParametersSchema } from "../api/agent-control.ts";
 import { type AgentPatchParameters, AgentPatchParametersSchema } from "../api/agent-patch.ts";
-import { isSubagentsV2Enabled } from "../api/tool-set.ts";
 import { getSubagentGlobalAgentsDir } from "../definitions/legacy-profiles.ts";
 import {
 	AGENT_LISTING_CUSTOM_TYPE,
@@ -113,11 +111,6 @@ function listingStateFromBranch(ctx: ExtensionContext): AgentListingState | unde
 		}
 	}
 	return state;
-}
-
-export function isSubagentsV2Selected(globalSettings: { ice?: unknown } | undefined, env: string | undefined): boolean {
-	const ice = globalSettings?.ice as { subagents?: { v2?: unknown } } | undefined;
-	return isSubagentsV2Enabled(ice?.subagents?.v2, env);
 }
 
 export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsOptions = {}): void {
