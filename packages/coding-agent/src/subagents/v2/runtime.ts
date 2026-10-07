@@ -8,6 +8,7 @@
  * same runtime; background completions are journaled and delivered at most once
  * as `subagent_completed` follow-ups.
  */
+
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -67,6 +68,7 @@ import {
 	validateV2Result,
 } from "../results/v2-result.ts";
 import type { ChildBudgetLimits } from "../runtime/budgets.ts";
+import { resolveSubagentResources, revalidateSubagentResources } from "../runtime/resources.ts";
 import { ICE_BUILTIN_CHILD_TOOLS } from "../tools/adapters.ts";
 import { resolveChildTools } from "../tools/resolve.ts";
 import type { HubRow } from "../ui/hub.ts";
@@ -96,6 +98,9 @@ import {
 import { type ChildToolGuard, createV2ChildSession } from "./session-factory.ts";
 import type { SubagentsV2Settings } from "./settings.ts";
 import { ChildTurnBudget, resolveTurnBudget } from "./turn-budget.ts";
+
+/** Idle children kept in memory per owner; older ones are parked to disk. */
+export const MAX_RESIDENT_CHILDREN = 8;
 
 export class SubagentV2Runtime {
 	private readonly host: V2RuntimeHost;
@@ -412,6 +417,7 @@ export class SubagentV2Runtime {
 		});
 		const targets = task.scope?.targets?.map((target) => {
 			const absolute = resolve(cwd, target);
+			if (!existsSync(absolute)) throw new SubagentV2Error("preflight", `scope target ${target} does not exist`);
 			if (lstatSync(absolute).isSymbolicLink() || !statSync(absolute).isFile())
 				throw new SubagentV2Error("preflight", `scope target ${target} must be a regular non-symlink file`);
 			const canonical = realpathSync(absolute);
@@ -419,6 +425,19 @@ export class SubagentV2Runtime {
 				throw new SubagentV2Error("preflight", `scope target ${target} is outside the approved roots`);
 			return canonical;
 		});
+		// Definition-selected skills/prompts/context are trust-gated, bounded, and hash-pinned now;
+		// the session factory revalidates the hashes before every launch and revival.
+		const resources =
+			fields.skills?.length || fields.prompts?.length || fields.context?.length
+				? resolveSubagentResources(
+						{
+							...(fields.skills ? { skills: [...fields.skills] } : {}),
+							...(fields.prompts ? { prompts: [...fields.prompts] } : {}),
+							...(fields.context ? { context: [...fields.context] } : {}),
+						},
+						{ cwd, agentDir: this.host.agentDir, projectTrusted: this.host.isProjectTrusted() },
+					)
+				: undefined;
 		const outputSchema = normalizeSubagentOutputSchema(task.outputSchema);
 		const acceptance = normalizeV2Acceptance(task.acceptance ?? []);
 		const systemPrompt = `${definition.prompt}${CHILD_PROMPT_SUFFIX}${
@@ -440,7 +459,13 @@ export class SubagentV2Runtime {
 				system: systemPrompt,
 				...(fields.initialPrompt ? { initialPrompt: fields.initialPrompt } : {}),
 				contextFiles: fields.contextFiles ?? true,
-				resourceHashes: [],
+				resourceHashes: resources
+					? [...resources.skills, ...resources.prompts, ...resources.context].map((resource) => ({
+							id: `${resource.kind}:${resource.name}`,
+							sha256: resource.sourceHash,
+						}))
+					: [],
+				...(resources ? { resources } : {}),
 			},
 			model: {
 				provider: model.provider,
@@ -857,6 +882,7 @@ export class SubagentV2Runtime {
 		})().finally(() => {
 			options.signal?.removeEventListener("abort", cancel);
 			resident.running = undefined;
+			void this.parkExcessResidents(state).catch(() => {});
 		});
 		resident.running = run;
 		resident.controller = controller;
@@ -1019,6 +1045,29 @@ export class SubagentV2Runtime {
 		return result;
 	}
 
+	/**
+	 * Keep at most MAX_RESIDENT_CHILDREN idle children in memory per owner by
+	 * parking the least recently used ones (plan 11.4). Parked children keep their
+	 * transcript and contract on disk and revive on the next continuation.
+	 */
+	private async parkExcessResidents(state: OwnerState): Promise<void> {
+		const idle = state.registry
+			.list(state.sessionId)
+			.filter((record) => {
+				if (record.state !== "idle" || this.patchOperations.has(record.id)) return false;
+				const resident = state.registry.resident(state.sessionId, record.id);
+				return resident !== undefined && !resident.running && !resident.foreground;
+			})
+			.sort((left, right) => left.updatedAt - right.updatedAt);
+		for (const record of idle.slice(0, Math.max(0, idle.length - MAX_RESIDENT_CHILDREN))) {
+			try {
+				await state.registry.park(state.sessionId, record.id);
+			} catch {
+				// It changed state since the scan; leave it.
+			}
+		}
+	}
+
 	private deliverCompletion(state: OwnerState, result: ChildTurnResult): void {
 		const deliveryId = `${result.id}:${state.registry.get(state.sessionId, result.id).usage.turns}`;
 		const summary = boundedText(
@@ -1098,6 +1147,17 @@ export class SubagentV2Runtime {
 				createHash("sha256").update(JSON.stringify(this.host.getSettings().ruleSets)).digest("hex")
 		)
 			reasons.push("parent permission policy changed; the frozen child cannot be silently reauthorized");
+		const resources = contract.prompt.resources;
+		if (resources) {
+			const selected = [...resources.skills, ...resources.prompts, ...resources.context];
+			if (selected.some((resource) => resource.source === "project") && !this.host.isProjectTrusted())
+				reasons.push("project trust for selected resources was revoked");
+			try {
+				revalidateSubagentResources(resources);
+			} catch (error) {
+				reasons.push(error instanceof Error ? error.message : String(error));
+			}
+		}
 		if (reasons.length)
 			throw new SubagentV2Error("blocked", `Child ${contract.id} cannot run: ${reasons.join("; ")}`);
 	}

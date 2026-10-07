@@ -48,7 +48,7 @@ import { AgentHubView, type HubSource } from "../ui/hub.ts";
 import { createAgentDefinitionFile, formatAgentDefinitions } from "./agent-manager.ts";
 import { completionEvent, lifecycleEvents, SUBAGENT_EVENT_CHANNEL } from "./events.ts";
 import { SubagentV2Runtime } from "./runtime.ts";
-import type { ChildTurnResult } from "./runtime-support.ts";
+import { type ChildTurnResult, withContextPacket } from "./runtime-support.ts";
 import { resolveSubagentsV2Settings } from "./settings.ts";
 
 const AGENT_TOOL_DESCRIPTION =
@@ -371,14 +371,21 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 						"A resumed task keeps its frozen model, thinking, isolation, and scope; remove those fields.",
 					);
 			}
+			// Validate every context packet before any child is accepted; a bad item launches nothing.
+			const taskPrompts: string[] = [];
+			try {
+				for (const task of params.tasks) taskPrompts.push(withContextPacket(task.prompt, task.context));
+			} catch (error) {
+				return text(`Could not launch: ${error instanceof Error ? error.message : String(error)}`);
+			}
 			const fresh = params.tasks.filter((task) => !task.resume);
 			const prompts = new Map<string, string>();
 			const order: string[] = [];
 			try {
 				const records = await runtime.launch(fresh);
-				records.forEach((record, index) => {
-					const task = fresh[index]!;
-					prompts.set(record.id, task.prompt);
+				let launched = 0;
+				params.tasks.forEach((task, index) => {
+					if (!task.resume) prompts.set(records[launched++]!.id, taskPrompts[index]!);
 				});
 				let freshIndex = 0;
 				for (const task of params.tasks) order.push(task.resume ?? records[freshIndex++]!.id);
@@ -404,7 +411,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 							}
 						: undefined;
 				const run = task.resume
-					? runtime.continueChild(id, task.prompt, {
+					? runtime.continueChild(id, taskPrompts[index]!, {
 							foreground: !background,
 							budgets,
 							...(task.acceptance ? { acceptance: task.acceptance } : {}),

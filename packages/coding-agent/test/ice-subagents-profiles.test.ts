@@ -68,7 +68,10 @@ describe("ICE subagent contracts", () => {
 		tempDirs.push(agentDir);
 		await mkdir(join(agentDir, "agents"), { recursive: true });
 		const write = (name: string, model: string) =>
-			writeFile(join(agentDir, "agents", `${name}.md`), `---\nname: ${name}\ndescription: d\nmodel: ${model}\n---\nInspect.\n`);
+			writeFile(
+				join(agentDir, "agents", `${name}.md`),
+				`---\nname: ${name}\ndescription: d\nmodel: ${model}\n---\nInspect.\n`,
+			);
 		await write("listed", "[provider/a, provider/b, inherit]");
 		await write("single", "[provider/a]");
 		await write("inherited", "inherit");

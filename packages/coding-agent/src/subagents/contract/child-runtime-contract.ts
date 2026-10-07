@@ -10,6 +10,7 @@
 import type { AgentDefinitionSource, AgentIsolationMode, AgentThinkingLevel } from "../definitions/schema.ts";
 import type { AgentPermissionMode, PermissionDecision, PermissionRuleScope } from "../permissions/rules.ts";
 import type { SubagentTaskContract } from "../results/task-contract.ts";
+import type { ResolvedSubagentResources } from "../types.ts";
 
 export const CHILD_RUNTIME_CONTRACT_VERSION = 2;
 
@@ -67,6 +68,8 @@ export interface ChildRuntimeContract {
 		initialPrompt?: string;
 		contextFiles: boolean;
 		resourceHashes: ReadonlyArray<{ id: string; sha256: string }>;
+		/** Skills, prompt templates, and context files selected by the definition, hash-pinned at acceptance. */
+		resources?: ResolvedSubagentResources;
 	};
 
 	model: {

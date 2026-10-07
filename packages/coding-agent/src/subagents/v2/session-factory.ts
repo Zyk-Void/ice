@@ -9,6 +9,7 @@
  * is no sub-yolo or writer branch: those are permission decisions.
  */
 
+import { dirname } from "node:path";
 import type { ThinkingLevel } from "@zykairotis/ice-agent-core";
 import type { Api, Model } from "@zykairotis/ice-ai/compat";
 import type { ToolDefinition } from "../../core/extensions/index.ts";
@@ -18,7 +19,10 @@ import { type CreateAgentSessionOptions, type CreateAgentSessionResult, createAg
 import type { SessionManager } from "../../core/session-manager.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 import { createBashToolDefinition } from "../../core/tools/index.ts";
+import { redactCredentialText } from "../../utils/redact.ts";
 import type { ChildRuntimeContract } from "../contract/child-runtime-contract.ts";
+import { loadSelectedPromptContent } from "../runtime/prompt.ts";
+import { readValidatedResource, revalidateSubagentResources } from "../runtime/resources.ts";
 import { createIceDelegableToolDefinitions, type IceResolvedDelegableTool } from "../tools/adapters.ts";
 import { createScopedWriterToolDefinitions } from "../tools/scoped-tools.ts";
 import { createDelegatedShellEnvironment } from "../types.ts";
@@ -75,7 +79,9 @@ export function buildV2ChildToolDefinitions(
 	const { contract, cwd } = options;
 	const frozen = new Set(contract.capabilities.tools.map((tool) => tool.name));
 	const definitions: ToolDefinition[] = [];
-	const scoped = createScopedWriterToolDefinitions(cwd, contract.capabilities.scopeRoots, false, [], frozen);
+	// Selected skill files are readable even outside the task scope; scope still bounds everything else.
+	const skillRoots = (contract.prompt.resources?.skills ?? []).map((resource) => dirname(resource.canonicalPath));
+	const scoped = createScopedWriterToolDefinitions(cwd, contract.capabilities.scopeRoots, false, skillRoots, frozen);
 	for (const definition of scoped) if (frozen.has(definition.name)) definitions.push(definition);
 	if (frozen.has("bash")) {
 		definitions.push(
@@ -104,6 +110,14 @@ export async function createV2ChildSession(
 	createSession: (options: CreateAgentSessionOptions) => Promise<CreateAgentSessionResult> = createAgentSession,
 ): Promise<CreateAgentSessionResult["session"]> {
 	const { contract } = options;
+	const resources = contract.prompt.resources;
+	// Fail closed if a selected skill, prompt, or context file changed since acceptance.
+	if (resources) revalidateSubagentResources(resources);
+	const selectedContext = (resources?.context ?? []).map((resource) => ({
+		path: resource.sourcePath,
+		content: redactCredentialText(readValidatedResource(resource).toString("utf8")),
+	}));
+	const selectedPrompts = (resources?.prompts ?? []).map(loadSelectedPromptContent);
 	const settingsManager = SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: false });
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: options.cwd,
@@ -115,7 +129,20 @@ export async function createV2ChildSession(
 		noPromptTemplates: true,
 		noThemes: true,
 		noContextFiles: !contract.prompt.contextFiles,
+		...(resources?.skills.length
+			? { additionalSkillPaths: resources.skills.map((resource) => resource.sourcePath) }
+			: {}),
+		...(selectedContext.length > 0
+			? { agentsFilesOverride: (base) => ({ agentsFiles: [...base.agentsFiles, ...selectedContext] }) }
+			: {}),
 		systemPrompt: contract.prompt.system,
+		...(selectedPrompts.length > 0
+			? {
+					appendSystemPrompt: selectedPrompts.map(
+						(prompt) => `Selected prompt "${prompt.name}" (from the agent definition):\n${prompt.content}`,
+					),
+				}
+			: {}),
 	});
 	await resourceLoader.reload();
 	const customTools = buildV2ChildToolDefinitions(options);

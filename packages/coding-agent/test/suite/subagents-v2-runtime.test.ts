@@ -9,7 +9,7 @@ import { SessionManager } from "../../src/core/session-manager.ts";
 import { worktreeSnapshotRef } from "../../src/subagents/isolation/worktree.ts";
 import { CHILD_INIT_ENTRY_TYPE } from "../../src/subagents/registry/child-sessions.ts";
 import iceSubagentsV2 from "../../src/subagents/v2/extension.ts";
-import { SubagentV2Runtime } from "../../src/subagents/v2/runtime.ts";
+import { MAX_RESIDENT_CHILDREN, SubagentV2Runtime } from "../../src/subagents/v2/runtime.ts";
 import type { ChildTurnResult, V2RuntimeHost } from "../../src/subagents/v2/runtime-support.ts";
 import { createV2ChildSession } from "../../src/subagents/v2/session-factory.ts";
 import { resolveSubagentsV2Settings } from "../../src/subagents/v2/settings.ts";
@@ -1045,6 +1045,88 @@ describe("subagent V2 runtime", () => {
 		expect(failed.registry.list(sessionManager.getSessionId())).toEqual([]);
 		await runtime.shutdown();
 		await failed.shutdown();
+	});
+
+	it("runs child shell commands without host credential variables", async () => {
+		const { harness, host } = await setup();
+		process.env.ICE_V2_TEST_SECRET_TOKEN = "leaked-value";
+		try {
+			harness.setResponses([
+				fauxAssistantMessage(fauxToolCall("bash", { command: "env" }), { stopReason: "toolUse" }),
+				fauxAssistantMessage("done"),
+			]);
+			const runtime = new SubagentV2Runtime(host({ isSubYolo: () => true }));
+			const result = await runOne(runtime, "general", "Print the environment");
+			const transcript = transcriptOf(runtime, result.childId);
+			expect(transcript).toContain("PATH=");
+			expect(transcript).not.toContain("leaked-value");
+			expect(transcript).not.toContain("ICE_V2_TEST_SECRET_TOKEN");
+		} finally {
+			delete process.env.ICE_V2_TEST_SECRET_TOKEN;
+		}
+	});
+
+	it("parks the least recently used idle children beyond the resident limit", async () => {
+		const { harness, sessionManager, host } = await setup();
+		const runtime = new SubagentV2Runtime(host());
+		const ids: string[] = [];
+		for (let index = 0; index < MAX_RESIDENT_CHILDREN + 2; index++) {
+			harness.setResponses([fauxAssistantMessage(`report ${index}`)]);
+			ids.push((await runOne(runtime, "explore", `task ${index}`)).childId);
+		}
+		const owner = sessionManager.getSessionId();
+		await vi.waitFor(() =>
+			expect(ids.filter((id) => runtime.registry.get(owner, id).state === "parked")).toEqual(ids.slice(0, 2)),
+		);
+		expect(ids.slice(2).every((id) => runtime.registry.resident(owner, id) !== undefined)).toBe(true);
+		harness.setResponses([fauxAssistantMessage("revived report")]);
+		expect(await runtime.continueChild(ids[0]!, "again", { foreground: true })).toMatchObject({
+			text: "revived report",
+		});
+	});
+
+	it("rejects a missing scope target with a clear preflight error", async () => {
+		const { host } = await setup();
+		const runtime = new SubagentV2Runtime(host());
+		await expect(
+			runtime.launch([{ ...task("explore", "x"), scope: { roots: ["."], targets: ["missing.txt"] } }]),
+		).rejects.toThrow("scope target missing.txt does not exist");
+	});
+
+	it("loads a definition's selected prompts and context and fails closed when they change", async () => {
+		const { harness, host } = await setup();
+		const agentDir = join(harness.tempDir, "agent");
+		mkdirSync(join(agentDir, "prompts"), { recursive: true });
+		writeFileSync(join(agentDir, "prompts", "style.md"), "PROMPT-MARKER: answer tersely.\n");
+		writeFileSync(join(harness.tempDir, "notes.md"), "CONTEXT-MARKER: notes.\n");
+		mkdirSync(join(harness.tempDir, "agents"), { recursive: true });
+		writeFileSync(
+			join(harness.tempDir, "agents", "styled.md"),
+			"---\nname: styled\ndescription: d\ntools: [read]\nprompts: [style]\ncontext: [notes.md]\n---\nStyled agent.\n",
+		);
+		await expect(new SubagentV2Runtime(host()).launch([task("styled", "go")])).rejects.toThrow(
+			/requires project trust/,
+		);
+		const runtime = new SubagentV2Runtime(host({ isProjectTrusted: () => true }));
+		let seen = "";
+		harness.setResponses([
+			(context) => {
+				seen = `${context.systemPrompt ?? ""}\n${JSON.stringify(context.messages)}`;
+				return fauxAssistantMessage("done");
+			},
+		]);
+		const [record] = await runtime.launch([task("styled", "go")]);
+		const contract = runtime.registry.get(runtime.ownerSessionId(), record!.id);
+		expect(contract.agent).toBe("styled");
+		await runtime.runTurn(record!.id, "go", { foreground: true });
+		expect(seen).toContain("PROMPT-MARKER");
+		expect(seen).toContain("CONTEXT-MARKER");
+		writeFileSync(join(agentDir, "prompts", "style.md"), "PROMPT-MARKER: changed.\n");
+		const [second] = await runtime.launch([task("styled", "go")]);
+		writeFileSync(join(harness.tempDir, "notes.md"), "CONTEXT-MARKER: tampered.\n");
+		await expect(runtime.runTurn(second!.id, "go", { foreground: true })).rejects.toThrow(
+			/cannot run: Selected context hash changed: notes.md/,
+		);
 	});
 
 	it("refuses unknown agents with the available list and launches nothing for a bad batch", async () => {

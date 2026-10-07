@@ -446,7 +446,9 @@ function loadProfilesFromDirectory(
 			// fallback with an implicit final parent model, so a trailing `inherit` is dropped.
 			let listFallback: string | undefined;
 			if (Array.isArray(frontmatter.model)) {
-				const candidates = frontmatter.model.filter((entry, index, list) => !(entry === "inherit" && index === list.length - 1));
+				const candidates = frontmatter.model.filter(
+					(entry, index, list) => !(entry === "inherit" && index === list.length - 1),
+				);
 				if (
 					candidates.length < 1 ||
 					candidates.length > 2 ||
