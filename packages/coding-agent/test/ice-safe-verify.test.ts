@@ -319,6 +319,10 @@ function extensionFixture(
 	};
 }
 
+function legacyTools(names: string[] | undefined): string[] | undefined {
+	return names?.filter((name) => !["agent", "agent_control", "agent_patch"].includes(name));
+}
+
 async function draftPlan(
 	runtime: ReturnType<typeof extensionFixture>,
 	title = "Add guard",
@@ -521,7 +525,7 @@ describe("ICE guarded extension", () => {
 	it("applies the default plan tool set and independently denies unknown calls", async () => {
 		const plan = extensionFixture({ additionalToolNames: ["mcp", "mcp__cua_driver"] });
 		await plan.emit("session_start");
-		expect(plan.activeTools.at(-1)).toEqual([
+		expect(legacyTools(plan.activeTools.at(-1))).toEqual([
 			"read",
 			"grep",
 			"find",
@@ -565,7 +569,7 @@ describe("ICE guarded extension", () => {
 			additionalToolNames: ["mcp", "mcp__cua_driver"],
 		});
 		await build.emit("session_start");
-		expect(build.activeTools.at(-1)).toEqual([
+		expect(legacyTools(build.activeTools.at(-1))).toEqual([
 			"read",
 			"grep",
 			"find",
@@ -1069,7 +1073,7 @@ describe("ICE guarded extension", () => {
 	it("requires current-process Bash opt-in and project trust", async () => {
 		const untrusted = extensionFixture({ flags: { "ice-mode": "build", "ice-allow-bash": true }, trusted: false });
 		await untrusted.emit("session_start");
-		expect(untrusted.activeTools.at(-1)).toEqual([
+		expect(legacyTools(untrusted.activeTools.at(-1))).toEqual([
 			"read",
 			"grep",
 			"find",
@@ -1128,6 +1132,65 @@ describe("ICE guarded extension", () => {
 		});
 		await successfulMutation(runtime);
 		expect(runtime.appended.at(-1)?.data).toMatchObject({ mutationGeneration: 1 });
+	});
+
+	it("gates V2 patch mutation on build and plan reread, then records successful verification", async () => {
+		const plan = extensionFixture();
+		await plan.emit("session_start");
+		expect(plan.activeTools.at(-1)).toEqual(expect.arrayContaining(["agent", "agent_control"]));
+		expect(
+			await plan.emit("tool_call", {
+				toolCallId: "plan-patch",
+				toolName: "agent_patch",
+				input: { action: "apply" },
+			}),
+		).toMatchObject({ block: true });
+		const build = extensionFixture({ hasUI: true, planChoice: "Approve and execute" });
+		await build.emit("session_start");
+		await draftPlan(build);
+		await build.tools.get("propose_plan")!.execute("plan", { title: "Add guard" }, undefined, undefined, build.ctx);
+		await build.emit("agent_settled");
+		expect(
+			await build.emit("tool_call", {
+				toolCallId: "unread-patch",
+				toolName: "agent_patch",
+				input: { action: "apply" },
+			}),
+		).toMatchObject({ block: true, reason: expect.stringContaining("read_plan") });
+		await build.tools.get("read_plan")!.execute("read", {}, undefined, undefined, build.ctx);
+		expect(
+			await build.emit("tool_call", { toolCallId: "patch", toolName: "agent_patch", input: { action: "apply" } }),
+		).toBeUndefined();
+		await build.emit("tool_result", {
+			toolCallId: "patch",
+			toolName: "agent_patch",
+			input: { action: "apply" },
+			details: { status: "applied", verification: { status: "passed", commandHash: "patch-check" } },
+			isError: false,
+		});
+		expect(build.appended.at(-1)?.data).toMatchObject({
+			mutationGeneration: 1,
+			checkedGeneration: 1,
+			verifier: { status: "passed", commandHash: "patch-check" },
+		});
+	});
+
+	it("leaves V2 rollback conflicts verification-pending", async () => {
+		const runtime = extensionFixture({ flags: { "ice-mode": "build" } });
+		await runtime.emit("session_start");
+		await runtime.emit("tool_call", { toolCallId: "patch", toolName: "agent_patch", input: { action: "apply" } });
+		await runtime.emit("tool_result", {
+			toolCallId: "patch",
+			toolName: "agent_patch",
+			input: { action: "apply" },
+			details: { status: "rollback_conflict" },
+			isError: false,
+		});
+		expect(runtime.appended.at(-1)?.data).toMatchObject({
+			mutationGeneration: 1,
+			checkedGeneration: 0,
+			verifier: { status: "pending" },
+		});
 	});
 
 	it("records verified writer integration as an already-checked generation", async () => {
@@ -1300,7 +1363,7 @@ describe("ICE guarded extension", () => {
 		(saved.data as { guardRoot: string; baseline: { root: string } }).guardRoot = resumedRoot;
 		(saved.data as { baseline: { root: string } }).baseline.root = resumedRoot;
 		await resumed.emit("session_start");
-		expect(resumed.activeTools.at(-1)).toEqual([
+		expect(legacyTools(resumed.activeTools.at(-1))).toEqual([
 			"read",
 			"grep",
 			"find",

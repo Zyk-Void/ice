@@ -49,6 +49,9 @@ const PLAN_TOOLS = [
 	"review_batch",
 	"inspect_subagent_batch",
 	"cancel_subagent_batch",
+	// Subagent V2 (ice.subagents.v2): child mutation authority is capped by this parent mode.
+	"agent",
+	"agent_control",
 	...GOAL_TOOLS,
 ];
 const BUILD_TOOLS = [
@@ -57,6 +60,7 @@ const BUILD_TOOLS = [
 	"inspect_writer_patch",
 	"reject_writer_patch",
 	"integrate_writer_patch",
+	"agent_patch",
 	"read_plan",
 	"edit",
 	"write",
@@ -1426,11 +1430,18 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 			state = { ...state, plan: { ...state.plan, decisionReminderCount: 0 } };
 			persist();
 		}
-		if (event.toolName === "edit" || event.toolName === "write" || event.toolName === "integrate_writer_patch") {
+		const patchApply =
+			event.toolName === "agent_patch" && (event.input as { action?: unknown } | undefined)?.action === "apply";
+		if (
+			event.toolName === "edit" ||
+			event.toolName === "write" ||
+			event.toolName === "integrate_writer_patch" ||
+			patchApply
+		) {
 			if (state.mode === "build" && state.plan.status === "approved" && !state.plan.readInBuild) {
 				return { block: true, reason: "Read approved plan with read_plan before mutation" };
 			}
-			if (event.toolName !== "integrate_writer_patch") {
+			if (event.toolName !== "integrate_writer_patch" && !patchApply) {
 				const reason = validateMutationPath(
 					event.input.path,
 					ctx.cwd,
@@ -1445,12 +1456,14 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 	});
 	ice.on("tool_result", async (event: ToolResultEvent) => {
 		if (!authorizedMutations.delete(event.toolCallId) || !state || event.isError) return;
-		if (event.toolName === "integrate_writer_patch") {
+		if (event.toolName === "integrate_writer_patch" || event.toolName === "agent_patch") {
 			const details = event.details;
 			if (
 				details &&
 				typeof details === "object" &&
-				(details as { status?: unknown }).status === "integrated" &&
+				((event.toolName === "integrate_writer_patch" &&
+					(details as { status?: unknown }).status === "integrated") ||
+					(event.toolName === "agent_patch" && (details as { status?: unknown }).status === "applied")) &&
 				(details as { verification?: unknown }).verification &&
 				typeof (details as { verification: unknown }).verification === "object" &&
 				(details as { verification: { status?: unknown } }).verification.status === "passed"
@@ -1464,6 +1477,16 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 						...(details as { verification: IceVerifierState }).verification,
 						generation,
 					},
+				};
+				persist();
+			} else if (
+				event.toolName === "agent_patch" &&
+				(details as { status?: unknown } | undefined)?.status === "rollback_conflict"
+			) {
+				state = {
+					...state,
+					mutationGeneration: state.mutationGeneration + 1,
+					verifier: { status: "pending", generation: state.mutationGeneration + 1 },
 				};
 				persist();
 			}
