@@ -1,0 +1,24 @@
+{
+  "upstream_changed_paths_rehashed": 1491,
+  "existing_paths_changed_since_baseline": [],
+  "existing_git_status_matches_baseline": true,
+  "added_paths": [
+    "agent_docs/pi-upstream/2026-10-04/README.md",
+    "agent_docs/pi-upstream/2026-10-04/ai-inventory.json",
+    "agent_docs/pi-upstream/2026-10-04/ai.md",
+    "agent_docs/pi-upstream/2026-10-04/baseline.json",
+    "agent_docs/pi-upstream/2026-10-04/coding-core-inventory.json",
+    "agent_docs/pi-upstream/2026-10-04/coding-core.md",
+    "agent_docs/pi-upstream/2026-10-04/dependency-and-wiring-diff.json",
+    "agent_docs/pi-upstream/2026-10-04/ice-only-file-inventory.json",
+    "agent_docs/pi-upstream/2026-10-04/runtime-infrastructure.md",
+    "agent_docs/pi-upstream/2026-10-04/source-inventory.tsv",
+    "agent_docs/pi-upstream/2026-10-04/tui-inventory.json",
+    "agent_docs/pi-upstream/2026-10-04/tui-surfaces.md",
+    "agent_docs/pi-upstream/2026-10-04/upstream-commits.txt",
+    "agent_docs/pi-upstream/2026-10-04/upstream-file-inventory.json"
+  ],
+  "tests_run": false,
+  "builds_run": false,
+  "source_edits": false
+}

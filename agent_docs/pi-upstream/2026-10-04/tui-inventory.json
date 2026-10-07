@@ -1,0 +1,1656 @@
+[
+  {
+    "path": "packages/coding-agent/src/modes/interactive/bug-report.ts",
+    "classification": "new missing",
+    "commits": [
+      "1e0fe204 fix(coding-agent): allow offline bug report exports (#9841)",
+      "c7cdb460 fix(coding-agent): reject bug reports offline",
+      "d1230ea2 fix(coding-agent): preserve multiline bug descriptions",
+      "3c75b274 feat(coding-agent): add bug reporting"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/chat-viewport.ts",
+    "classification": "new missing",
+    "commits": [
+      "f53ac113 fix(coding-agent): collapse empty fullscreen footers",
+      "457ae8c7 feat(tui): alt mode scrollbar but prettier (#8801)",
+      "b6c87974 feat(coding-agent): share fullscreen TUI with experimental client"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/armin.ts",
+    "classification": "changed",
+    "commits": [
+      "7fbbd5f4 feat(coding-agent): play a 3D Armin on /arminsayshi in fullscreen mode"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/assistant-message.ts",
+    "classification": "changed",
+    "commits": [
+      "71026970 feat(tui): add reusable mouse interaction support"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/auth-url.ts",
+    "classification": "new missing",
+    "commits": [
+      "ced72c2f feat(coding-agent): copy OAuth sign-in URLs with app.message.copy"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/branch-summary-message.ts",
+    "classification": "changed",
+    "commits": [
+      "fde6d778 fix(coding-agent): toggle summary entries on click"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/compaction-summary-message.ts",
+    "classification": "changed",
+    "commits": [
+      "fde6d778 fix(coding-agent): toggle summary entries on click"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/config-selector.ts",
+    "classification": "changed",
+    "commits": [
+      "4259686d refactor(coding-agent): resolve built-in extensions as builtin:<name> paths (#10159)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/custom-editor.ts",
+    "classification": "changed",
+    "commits": [
+      "c1d4c801 fix(coding-agent): embed all session status spinners in the editor border",
+      "1d9787c1 feat(tui): prettier Working... spinner (#8799)",
+      "16ad96ae feat(tui): add configurable prompt history actions"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/daxnuts.ts",
+    "classification": "upstream deletion",
+    "commits": [
+      "1c1e9c0e feat(coding-agent): remove daxnuts easter egg"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/easter-egg-3d.lazy.ts",
+    "classification": "new missing",
+    "commits": [
+      "c450f2c0 feat(coding-agent): restore 3D pi logo easter egg alongside 3D Armin"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/easter-egg-3d.ts",
+    "classification": "new missing",
+    "commits": [
+      "c450f2c0 feat(coding-agent): restore 3D pi logo easter egg alongside 3D Armin"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/extension-editor.ts",
+    "classification": "changed",
+    "commits": [
+      "d1230ea2 fix(coding-agent): preserve multiline bug descriptions"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/extension-input.ts",
+    "classification": "changed",
+    "commits": [
+      "3c75b274 feat(coding-agent): add bug reporting"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/extension-selector.ts",
+    "classification": "changed",
+    "commits": [
+      "3c75b274 feat(coding-agent): add bug reporting"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/first-time-setup.ts",
+    "classification": "changed",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/footer.ts",
+    "classification": "changed",
+    "commits": [
+      "b485fa31 fix(tui,coding-agent): reduce render cost of theme changes and streaming",
+      "540e174c feat(coding-agent): Virtual models (#10035)",
+      "c596d09d feat(coding-agent): add prompt cache warming (#9668)",
+      "b0bd0ff9 fix(coding-agent): only label known subscriptions in footer"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/index.ts",
+    "classification": "changed",
+    "commits": [
+      "1c1e9c0e feat(coding-agent): remove daxnuts easter egg",
+      "1d9787c1 feat(tui): prettier Working... spinner (#8799)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/login-dialog.ts",
+    "classification": "changed",
+    "commits": [
+      "ced72c2f feat(coding-agent): copy OAuth sign-in URLs with app.message.copy"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/mermaid.ts",
+    "classification": "new missing",
+    "commits": [
+      "66534fbd feat(coding-agent): render Mermaid diagrams (#7624)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/model-selector.ts",
+    "classification": "changed",
+    "commits": [
+      "92d8e2d1 fix(coding-agent): selector save keybindings (#9149)",
+      "f2a62278 feat(coding-agent): adjust TUI selections in thinking-mode, models and scoped models (#8900)",
+      "cffe4d77 fix(settings-selector): nit ordering in default t.l. per model",
+      "76818492 fix(settings-selector): nit spacing",
+      "1d3503fb feat(settings-selector): show default, make default searchable for model and thinking (#8399)",
+      "9c8070fb feat(settings-selector): ctrl + s persists /model",
+      "2ff8ba62 fix(coding-agent): keep model and thinking level changes session scoped (#8356)",
+      "7d8c11d3 fix(coding-agent): share concurrent model catalog refreshes"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/oauth-selector.ts",
+    "classification": "changed",
+    "commits": [
+      "ed8b3bcc feat(coding-agent): offer Radius sign-in and MCP setup in /login",
+      "0f8740bb fix(coding-agent): rename unconfigured to not configured"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/pi-logo.ts",
+    "classification": "new missing",
+    "commits": [
+      "ca9c9251 fix(coding-agent): show text wordmark instead of logo in Apple Terminal",
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/radius-login-selector.ts",
+    "classification": "new missing",
+    "commits": [
+      "ed8b3bcc feat(coding-agent): offer Radius sign-in and MCP setup in /login"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts",
+    "classification": "changed",
+    "commits": [
+      "92d8e2d1 fix(coding-agent): selector save keybindings (#9149)",
+      "f2a62278 feat(coding-agent): adjust TUI selections in thinking-mode, models and scoped models (#8900)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/session-selector.ts",
+    "classification": "changed",
+    "commits": [
+      "dfbf793b feat(coding-agent): load session picker progressively"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/settings-selector.ts",
+    "classification": "changed",
+    "commits": [
+      "88ff80b9 feat(coding-agent): make fullscreen the default TUI mode",
+      "f29ea3de feat(coding-agent): add header-only quietStartup mode",
+      "f1927c2d feat(tui,coding-agent): configurable fullscreen wheel scrolling with auto acceleration",
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "c596d09d feat(coding-agent): add prompt cache warming (#9668)",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort",
+      "3fc3ef53 fix(coding-agent): keep theme markers visible (#8950)",
+      "f2a62278 feat(coding-agent): adjust TUI selections in thinking-mode, models and scoped models (#8900)",
+      "4e494929 feat(tui): allow disable copy on fullscreen, ctrl + x copies selection (#8731)",
+      "cffe4d77 fix(settings-selector): nit ordering in default t.l. per model",
+      "5b3caaf4 chore(settings-selector): get rid of default thinking in settings, ctrl + S is enough",
+      "5133c928 chore(settings-selector): get rid of --default and global model",
+      "9c8070fb feat(settings-selector): ctrl + s persists /model",
+      "f0a2880f fix(settings-selector): revert token estimate removal",
+      "a669db3c fix(settings-selector): show modelid [provider] like /model",
+      "ee29aa11 feat(settings-selector): make default model and thinking level searchable",
+      "98767a25 fix(settings-selector): remove token estimates",
+      "2ff8ba62 fix(coding-agent): keep model and thinking level changes session scoped (#8356)",
+      "836aee6d feat(coding-agent): show compaction usage notices",
+      "ac4ac9ea feat(coding-agent): configure fullscreen exit output",
+      "5446cd75 feat(coding-agent): rename UI mode to TUI mode",
+      "66534fbd feat(coding-agent): render Mermaid diagrams (#7624)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/settings-submenu.ts",
+    "classification": "new missing",
+    "commits": [
+      "a669db3c fix(settings-selector): show modelid [provider] like /model",
+      "ee29aa11 feat(settings-selector): make default model and thinking level searchable",
+      "2ff8ba62 fix(coding-agent): keep model and thinking level changes session scoped (#8356)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/skill-invocation-message.ts",
+    "classification": "changed",
+    "commits": [
+      "fde6d778 fix(coding-agent): toggle summary entries on click"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/status-indicator.ts",
+    "classification": "changed",
+    "commits": [
+      "c1d4c801 fix(coding-agent): embed all session status spinners in the editor border",
+      "1d9787c1 feat(tui): prettier Working... spinner (#8799)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/themed-text.ts",
+    "classification": "new missing",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/thinking-selector.ts",
+    "classification": "changed",
+    "commits": [
+      "92d8e2d1 fix(coding-agent): selector save keybindings (#9149)",
+      "f2a62278 feat(coding-agent): adjust TUI selections in thinking-mode, models and scoped models (#8900)",
+      "1d3503fb feat(settings-selector): show default, make default searchable for model and thinking (#8399)",
+      "496185f6 feat(coding-agent): /thinking command"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/tool-execution.ts",
+    "classification": "changed",
+    "commits": [
+      "11449730 fix(coding-agent): render MCP tool calls before their server connects",
+      "a276dabe fix(tui,coding-agent): convert non-PNG images for Kitty in Image",
+      "5257d0d5 feat(coding-agent): show tool call arguments for MCP and fallback-rendered tools",
+      "21b8cc1a fix(coding-agent): ignore stale tool image conversions (#8743)",
+      "eb3e9fee feat(coding-agent): split tool renderers and theme validation from their implementations",
+      "71026970 feat(tui): add reusable mouse interaction support",
+      "e14afc64 fix(coding-agent): collapse fallback tool output closes #7979"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/tree-selector.ts",
+    "classification": "changed",
+    "commits": [
+      "466db0fe feat: add canonical session context boundaries",
+      "c596d09d feat(coding-agent): add prompt cache warming (#9668)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/trust-selector.ts",
+    "classification": "changed",
+    "commits": [
+      "f2a62278 feat(coding-agent): adjust TUI selections in thinking-mode, models and scoped models (#8900)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/user-message.ts",
+    "classification": "changed",
+    "commits": [
+      "e792ba13 fix(coding-agent): keep one copy of each rendered user message line"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/components/visual-truncate.ts",
+    "classification": "changed",
+    "commits": [
+      "0582d9c1 fix(coding-agent): limit codemode and MCP result previews to wrapped lines"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/external-editor.ts",
+    "classification": "changed",
+    "commits": [
+      "1355cd36 fix(coding-agent): normalize UTF-8 BOMs in text inputs"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/interactive-mode.ts",
+    "classification": "changed",
+    "commits": [
+      "11449730 fix(coding-agent): render MCP tool calls before their server connects",
+      "a276dabe fix(tui,coding-agent): convert non-PNG images for Kitty in Image",
+      "c450f2c0 feat(coding-agent): restore 3D pi logo easter egg alongside 3D Armin",
+      "1c1e9c0e feat(coding-agent): remove daxnuts easter egg",
+      "7fbbd5f4 feat(coding-agent): play a 3D Armin on /arminsayshi in fullscreen mode",
+      "ca9c9251 fix(coding-agent): show text wordmark instead of logo in Apple Terminal",
+      "ed8b3bcc feat(coding-agent): offer Radius sign-in and MCP setup in /login",
+      "f29ea3de feat(coding-agent): add header-only quietStartup mode",
+      "b35af04f feat(coding-agent,tui): add a hidden easter egg to the header logo",
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider",
+      "4259686d refactor(coding-agent): resolve built-in extensions as builtin:<name> paths (#10159)",
+      "f1927c2d feat(tui,coding-agent): configurable fullscreen wheel scrolling with auto acceleration",
+      "8562bcf6 feat(coding-agent): codemode and MCP",
+      "540e174c feat(coding-agent): Virtual models (#10035)",
+      "fd889a27 fix(coding-agent,tui): paste Finder file paths instead of icons (#10136)",
+      "2b0a123d feat(coding-agent): remove themes section from startup banner",
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "8d897eda fix(coding-agent): prevent duplicate extension runtimes (closes #9863)",
+      "466db0fe feat: add canonical session context boundaries",
+      "63787ee6 feat(coding-agent): identify extensions in crash stacks",
+      "d875512c fix(coding-agent): suppress bug hints for expected failures",
+      "d1230ea2 fix(coding-agent): preserve multiline bug descriptions",
+      "dfbf793b feat(coding-agent): load session picker progressively",
+      "c596d09d feat(coding-agent): add prompt cache warming (#9668)",
+      "de2de549 fix(coding-agent): close compaction cancellation races",
+      "3c75b274 feat(coding-agent): add bug reporting",
+      "59eb4c39 fix(coding-agent): clarify copy shortcut description (#9745)",
+      "13784598 fix(coding-agent): suppress repeated Anthropic thinking drop notices",
+      "46585349 fix(coding-agent): shorten Anthropic thinking drop notices",
+      "42cd371b feat(coding-agent): add TUI context footer eval (#9705)",
+      "509ee2bd fix(coding-agent): fail closed on user bash hook errors (#9662)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "c1d4c801 fix(coding-agent): embed all session status spinners in the editor border",
+      "47acd8e6 fix(coding-agent): preserve active operation UI during tree navigation",
+      "9767ba27 fix(coding-agent): select Radius models after catalog discovery",
+      "457ae8c7 feat(tui): alt mode scrollbar but prettier (#8801)",
+      "1d9787c1 feat(tui): prettier Working... spinner (#8799)",
+      "8c08d064 Merge remote-tracking branch 'origin/main' into dev",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort",
+      "58ea6c0b Merge remote-tracking branch 'origin/main' into dev",
+      "56700d42 fix(coding-agent): compact before post-tool model requests (#8782)",
+      "758a0ee9 Merge branch 'main' into dev",
+      "b6c87974 feat(coding-agent): share fullscreen TUI with experimental client",
+      "4e494929 feat(tui): allow disable copy on fullscreen, ctrl + x copies selection (#8731)",
+      "eb3e9fee feat(coding-agent): split tool renderers and theme validation from their implementations",
+      "e8682309 feat(tui): add terminal capability overrides closes #8665",
+      "b07e17fa fix(coding-agent): preserve partial Bash output when toggling thinking",
+      "8fa7eebd fix: persist default to scoped if non-empty",
+      "460191cf feat(coding-agent): include context in Radius session shares",
+      "cec3a91c feat(coding-agent): defer uncommon syntax grammars",
+      "f4585b8b fix(coding-agent): simplify session sharing links",
+      "77f2d123 chore(interactive-mode): get rid of theme, only share via radius if logged in",
+      "686f3487 feat(interactive-mode): share via radius artifacts under experimental (#8443)",
+      "cffe4d77 fix(settings-selector): nit ordering in default t.l. per model",
+      "1d3503fb feat(settings-selector): show default, make default searchable for model and thinking (#8399)",
+      "5b3caaf4 chore(settings-selector): get rid of default thinking in settings, ctrl + S is enough",
+      "5133c928 chore(settings-selector): get rid of --default and global model",
+      "496185f6 feat(coding-agent): /thinking command",
+      "9c8070fb feat(settings-selector): ctrl + s persists /model",
+      "2ff8ba62 fix(coding-agent): keep model and thinking level changes session scoped (#8356)",
+      "678f0af3 fix(coding-agent): show startup diagnostics in TUI",
+      "836aee6d feat(coding-agent): show compaction usage notices",
+      "a1bc0ec7 fix: llama.cpp guidance as no default (#8236)",
+      "4caa3c44 fix(tui): route selection copy through the host clipboard (#8110)",
+      "ab0dc51f fix(coding-agent): use APP_NAME in user-facing messages (#8067)",
+      "6f707eb3 fix(coding-agent): show managed-tool startup status in TUI",
+      "7d8c11d3 fix(coding-agent): share concurrent model catalog refreshes",
+      "9795d602 feat(coding-agent): add per-run theme selection (#7722)",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)",
+      "ac4ac9ea feat(coding-agent): configure fullscreen exit output",
+      "666d8972 fix(coding-agent): preserve TUI wrapper routing (closes #7731)",
+      "c96bfacc fix(coding-agent): support Windows fullscreen right-click paste",
+      "5446cd75 feat(coding-agent): rename UI mode to TUI mode",
+      "66534fbd feat(coding-agent): render Mermaid diagrams (#7624)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/model-catalog-refresh.ts",
+    "classification": "new missing",
+    "commits": [
+      "7d8c11d3 fix(coding-agent): share concurrent model catalog refreshes"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/session-share.ts",
+    "classification": "new missing",
+    "commits": [
+      "3c75b274 feat(coding-agent): add bug reporting",
+      "6f35de5b fix(coding-agent): isolate concurrent session shares (#8613)",
+      "460191cf feat(coding-agent): include context in Radius session shares"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/theme/dark.json",
+    "classification": "changed",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "457ae8c7 feat(tui): alt mode scrollbar but prettier (#8801)",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/theme/light.json",
+    "classification": "changed",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "457ae8c7 feat(tui): alt mode scrollbar but prettier (#8801)",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/theme/system-theme.ts",
+    "classification": "new missing",
+    "commits": [
+      "409e808f fix(coding-agent): keep pastel palettes pastel in the system theme (#10293)",
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/theme/theme-controller.ts",
+    "classification": "changed",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "56746909 feat(tui,coding-agent): add color values and theme styling (#8398)",
+      "b6c87974 feat(coding-agent): share fullscreen TUI with experimental client",
+      "9795d602 feat(coding-agent): add per-run theme selection (#7722)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/theme/theme-json.ts",
+    "classification": "new missing",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "56746909 feat(tui,coding-agent): add color values and theme styling (#8398)",
+      "457ae8c7 feat(tui): alt mode scrollbar but prettier (#8801)",
+      "eb3e9fee feat(coding-agent): split tool renderers and theme validation from their implementations"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
+    "classification": "changed",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "56746909 feat(tui,coding-agent): add color values and theme styling (#8398)",
+      "457ae8c7 feat(tui): alt mode scrollbar but prettier (#8801)",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/theme/theme.ts",
+    "classification": "changed",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "ca7460d1 feat: build with TypeScript 7 and run sources with plain node",
+      "56746909 feat(tui,coding-agent): add color values and theme styling (#8398)",
+      "457ae8c7 feat(tui): alt mode scrollbar but prettier (#8801)",
+      "eb3e9fee feat(coding-agent): split tool renderers and theme validation from their implementations",
+      "1355cd36 fix(coding-agent): normalize UTF-8 BOMs in text inputs",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)",
+      "7cb2a51c fix(coding-agent): reduce automatic theme detection delay"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/interactive/tui-renderer.ts",
+    "classification": "new missing",
+    "commits": [
+      "f1927c2d feat(tui,coding-agent): configurable fullscreen wheel scrolling with auto acceleration",
+      "60e7e76b fix(coding-agent): surface clipboard backend failures",
+      "79680533 feat(tui): add clickable jump-to-end indicator to fullscreen transcript",
+      "7d399e7b feat(tui): search improvements (#8800)",
+      "758a0ee9 Merge branch 'main' into dev",
+      "b6c87974 feat(coding-agent): share fullscreen TUI with experimental client"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/json-event.ts",
+    "classification": "changed",
+    "commits": [
+      "830a0a59 fix(coding-agent): expose tool metadata at stream start (#7953)",
+      "c93ea6cc fix(coding-agent): preserve usage in streaming events (#7982)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/rpc/rpc-client.ts",
+    "classification": "changed",
+    "commits": [
+      "e473b5cd feat(coding-agent): report prompt disposition in RPC responses",
+      "92e8d4f0 fix(coding-agent): stop RpcClient skipping listeners on unsubscribe",
+      "a79b3733 feat(coding-agent): expose RPC queue clearing"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/rpc/rpc-mode.ts",
+    "classification": "changed",
+    "commits": [
+      "e473b5cd feat(coding-agent): report prompt disposition in RPC responses",
+      "faa9863c fix(coding-agent): run input handlers for queued messages",
+      "a79b3733 feat(coding-agent): expose RPC queue clearing"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/modes/rpc/rpc-types.ts",
+    "classification": "changed",
+    "commits": [
+      "e473b5cd feat(coding-agent): report prompt disposition in RPC responses",
+      "a79b3733 feat(coding-agent): expose RPC queue clearing"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/clipboard-command.ts",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/clipboard-image.ts",
+    "classification": "changed",
+    "commits": [
+      "8676a0dc fix(coding-agent): require advertised X11 clipboard images",
+      "6dff740f fix(coding-agent): restore OSC 52 clipboard fallback for headless sessions",
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/clipboard-native.ts",
+    "classification": "upstream deletion",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/clipboard.ts",
+    "classification": "changed",
+    "commits": [
+      "fd889a27 fix(coding-agent,tui): paste Finder file paths instead of icons (#10136)",
+      "6dff740f fix(coding-agent): restore OSC 52 clipboard fallback for headless sessions",
+      "60e7e76b fix(coding-agent): surface clipboard backend failures",
+      "3349e1db fix(coding-agent): reject unverified local clipboard writes",
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/exif-orientation.ts",
+    "classification": "changed",
+    "commits": [
+      "c6b00676 fix(coding-agent): scan past non-EXIF APP1 segments (#8616)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/frontmatter.ts",
+    "classification": "changed",
+    "commits": [
+      "1355cd36 fix(coding-agent): normalize UTF-8 BOMs in text inputs"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/highlight-js-lib-index.d.ts",
+    "classification": "upstream deletion",
+    "commits": [
+      "cec3a91c feat(coding-agent): defer uncommon syntax grammars"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/highlight-js.d.ts",
+    "classification": "new missing",
+    "commits": [
+      "cec3a91c feat(coding-agent): defer uncommon syntax grammars"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/image-convert.ts",
+    "classification": "changed",
+    "commits": [
+      "a276dabe fix(tui,coding-agent): convert non-PNG images for Kitty in Image"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/management-http.ts",
+    "classification": "new missing",
+    "commits": [
+      "df018b60 fix(coding-agent): retry hung model catalog requests",
+      "845bb970 fix: build error on request info (#7645)",
+      "46b53b99 fix: retry transient management HTTP requests (#7632)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/mime.ts",
+    "classification": "changed",
+    "commits": [
+      "47a18e37 fix: require complete GIF image signatures"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/paths.ts",
+    "classification": "changed",
+    "commits": [
+      "4259686d refactor(coding-agent): resolve built-in extensions as builtin:<name> paths (#10159)",
+      "9524d3a5 fix(coding-agent): normalize Windows shell drive paths",
+      "7cf90c1d fix(coding-agent): avoid model store read lock contention"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/shell.ts",
+    "classification": "changed",
+    "commits": [
+      "b485fa31 fix(tui,coding-agent): reduce render cost of theme changes and streaming",
+      "7af2d27d fix(coding-agent): prevent Windows taskkill spawn crashes",
+      "80e62761 feat(coding-agent): add optional PowerShell tool (#8512)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/syntax-highlight.ts",
+    "classification": "changed",
+    "commits": [
+      "8562bcf6 feat(coding-agent): codemode and MCP",
+      "faecac2c feat(coding-agent): reduce bundled startup work",
+      "cec3a91c feat(coding-agent): defer uncommon syntax grammars"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/text.ts",
+    "classification": "new missing",
+    "commits": [
+      "1355cd36 fix(coding-agent): normalize UTF-8 BOMs in text inputs"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/tool-result-images.ts",
+    "classification": "changed",
+    "commits": [
+      "f5c94648 feat(ai,coding-agent): add image input limits (closes #9631)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/tools-manager.ts",
+    "classification": "changed",
+    "commits": [
+      "6aedd106 fix(coding-agent): download statically linked musl builds of fd and ripgrep on Linux (#9070)",
+      "57e53b0d fix(coding-agent): resolve fd/rg release versions without the GitHub API (#8708)",
+      "6f707eb3 fix(coding-agent): show managed-tool startup status in TUI",
+      "46b53b99 fix: retry transient management HTTP requests (#7632)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/version-check.ts",
+    "classification": "changed",
+    "commits": [
+      "845bb970 fix: build error on request info (#7645)",
+      "46b53b99 fix: retry transient management HTTP requests (#7632)"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/wsl.ts",
+    "classification": "new missing",
+    "commits": [
+      "6dff740f fix(coding-agent): restore OSC 52 clipboard fallback for headless sessions"
+    ]
+  },
+  {
+    "path": "packages/coding-agent/src/utils/zip.ts",
+    "classification": "new missing",
+    "commits": [
+      "3c75b274 feat(coding-agent): add bug reporting"
+    ]
+  },
+  {
+    "path": "packages/tui/CHANGELOG.md",
+    "classification": "changed",
+    "commits": [
+      "20038712 Add [Unreleased] section for next cycle",
+      "cd32f772 Release v1.0.2",
+      "4c6fb7cf Add [Unreleased] section for next cycle",
+      "a7229ddc Release v1.0.1",
+      "a276dabe fix(tui,coding-agent): convert non-PNG images for Kitty in Image",
+      "672000c8 fix(tui): preserve WezTerm images while scrolling",
+      "86dfceec Add [Unreleased] section for next cycle",
+      "a13d35a7 Release v1.0.0",
+      "92fc452c docs: audit changelogs and add new features for next release",
+      "54c19a25 fix(tui): reduce memory retained per rendered message",
+      "17f3dccb fix(tui): preserve ANSI order at slice boundaries",
+      "b35af04f feat(coding-agent,tui): add a hidden easter egg to the header logo",
+      "955cc666 Add [Unreleased] section for next cycle",
+      "005af57d Release v0.99.2",
+      "6a4af07d Add [Unreleased] section for next cycle",
+      "d86654ab Release v0.99.1",
+      "312184ed Add [Unreleased] section for next cycle",
+      "4b060d3a Release v0.99.0",
+      "f81cf552 docs: audit changelogs for 0.99.0",
+      "f1927c2d feat(tui,coding-agent): configurable fullscreen wheel scrolling with auto acceleration",
+      "b485fa31 fix(tui,coding-agent): reduce render cost of theme changes and streaming",
+      "b3487650 fix(tui): keep cursor visible when overlays close after stop",
+      "7cf037c2 fix(tui): choose Kitty image dimensions by aspect distortion (#9957)",
+      "d5629e20 fix(tui): autocomplete paths after opening wrappers like ( and backticks",
+      "36af9dc4 fix(tui): restore skill prefix autocomplete, closes #9944",
+      "a8ed4977 Add [Unreleased] section for next cycle",
+      "f07218c4 Release v0.87.1",
+      "4c8eb393 Add [Unreleased] section for next cycle",
+      "16787ad5 Release v0.87.0",
+      "19451acc Add [Unreleased] section for next cycle",
+      "13cbf77d Release v0.86.1",
+      "50d766cb Add [Unreleased] section for next cycle",
+      "ecac0a9c Release v0.86.0",
+      "12032deb docs: complete unreleased changelog audit",
+      "803f0e90 fix(tui): preserve fullscreen images in WezTerm",
+      "fa0e1f48 fix(tui): improve LaTeX compatibility and layouts",
+      "eba61987 docs: audit unreleased changelogs",
+      "59014460 fix(tui): reduce fuzzy search latency",
+      "60e7e76b fix(coding-agent): surface clipboard backend failures",
+      "da840b62 Add [Unreleased] section for next cycle",
+      "d981de12 Release v0.85.1",
+      "cce65539 docs(tui): document Alt-wheel scrolling in unreleased changelogs",
+      "9841914c fix(tui): keep list selection unchanged on mouse hover",
+      "dd7e816b Add [Unreleased] section for next cycle",
+      "107d79f1 Release v0.85.0",
+      "1148f795 docs: audit unreleased changelogs",
+      "2d411633 fix(tui): make fullscreen transcript search scale linearly",
+      "457ae8c7 feat(tui): alt mode scrollbar but prettier (#8801)",
+      "79680533 feat(tui): add clickable jump-to-end indicator to fullscreen transcript",
+      "7d399e7b feat(tui): search improvements (#8800)",
+      "007c0be6 docs(tui): clarify standalone renderer configuration",
+      "853a80d2 Add [Unreleased] section for next cycle",
+      "b79e4cc8 Release v0.84.4",
+      "4e494929 feat(tui): allow disable copy on fullscreen, ctrl + x copies selection (#8731)",
+      "e8682309 feat(tui): add terminal capability overrides closes #8665",
+      "938109e7 chore: changelog entries",
+      "6c4f3602 fix(tui): chunk large main-screen renders closes #8028",
+      "31d4ed58 Add [Unreleased] section for next cycle",
+      "4e58f324 Release v0.84.3",
+      "8f2ae3fa fix(tui): prevent wrapped table link color leaks (#8363)",
+      "f0c5d86d fix(tui): fit text padding to narrow widths, closes #8252",
+      "374e56e5 fix(tui): avoid duplicate VS Code right-click paste",
+      "0e0021fb Add [Unreleased] section for next cycle",
+      "914cf147 Release v0.84.2",
+      "9b4adc82 docs: audit changelogs since v0.84.1",
+      "d10c974b docs: audit changelogs since v0.84.1",
+      "83aed2ba fix(tui): handle generic SGR mouse releases",
+      "2e4d2395 fix(tui): give focused fullscreen overlays wheel and viewport keys",
+      "534bcbff fix(tui): handle LaTeX control spaces across line endings",
+      "452923b5 fix(tui): parse multiline LaTeX arguments",
+      "1279952d feat(tui): add unbound single-line transcript scrolling actions (#7903)",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)",
+      "18dee5f0 fix(tui): stop recompositing full-width rows in the alt-screen painter",
+      "310411ba Add [Unreleased] section for next cycle",
+      "53fa77cc Release v0.84.1",
+      "6ba4d23e docs: audit changelogs since v0.84.0",
+      "c96bfacc fix(coding-agent): support Windows fullscreen right-click paste",
+      "a3e93ec8 feat(tui): add half-page transcript scrolling",
+      "58fc0431 feat(tui): select words and lines with multi-click (closes #7725)",
+      "fc3554e1 fix(tui): reduce mouse tracking in terminal multiplexers",
+      "aa601d7b fix(tui): correct LaTeX whitespace and matrix layouts",
+      "38e8f281 Add [Unreleased] section for next cycle",
+      "a5f43bf8 Release v0.84.0",
+      "db48124e docs: audit unreleased changelogs",
+      "05e89b41 feat(tui): render LaTeX math in Markdown",
+      "16ad96ae feat(tui): add configurable prompt history actions",
+      "4254e0d9 fix(tui): include Windows native rebuild sources",
+      "29d9f087 fix(tui): avoid throttling keyboard input",
+      "464804e1 fix(tui): merge upstream main",
+      "73dd066e fix(tui): detect Windows Shift+Enter"
+    ]
+  },
+  {
+    "path": "packages/tui/README.md",
+    "classification": "changed",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "ca7460d1 feat: build with TypeScript 7 and run sources with plain node",
+      "56746909 feat(tui,coding-agent): add color values and theme styling (#8398)",
+      "25cc5c7b docs(coding-agent): refresh documentation (#9898)",
+      "457ae8c7 feat(tui): alt mode scrollbar but prettier (#8801)",
+      "79680533 feat(tui): add clickable jump-to-end indicator to fullscreen transcript",
+      "7d399e7b feat(tui): search improvements (#8800)",
+      "c505f4c1 fix(tui): remove coding-agent config reads from pi-tui",
+      "758a0ee9 Merge branch 'main' into dev",
+      "4e494929 feat(tui): allow disable copy on fullscreen, ctrl + x copies selection (#8731)",
+      "71026970 feat(tui): add reusable mouse interaction support",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/clipboard.h",
+    "classification": "new missing",
+    "commits": [
+      "fd889a27 fix(coding-agent,tui): paste Finder file paths instead of icons (#10136)",
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/darwin/README.md",
+    "classification": "changed",
+    "commits": [
+      "fd889a27 fix(coding-agent,tui): paste Finder file paths instead of icons (#10136)",
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/darwin/build.sh",
+    "classification": "changed",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/darwin/prebuilds/darwin-arm64/darwin-platform.node",
+    "classification": "new missing",
+    "commits": [
+      "fd889a27 fix(coding-agent,tui): paste Finder file paths instead of icons (#10136)",
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/darwin/prebuilds/darwin-x64/darwin-modifiers.node",
+    "classification": "upstream deletion",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/darwin/prebuilds/darwin-x64/darwin-platform.node",
+    "classification": "new missing",
+    "commits": [
+      "fd889a27 fix(coding-agent,tui): paste Finder file paths instead of icons (#10136)",
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/darwin/src/darwin-modifiers.c",
+    "classification": "upstream deletion",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/darwin/src/darwin-platform.m",
+    "classification": "new missing",
+    "commits": [
+      "fd889a27 fix(coding-agent,tui): paste Finder file paths instead of icons (#10136)",
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/linux/README.md",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/linux/build.sh",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/linux/prebuilds/linux-arm64/linux-platform-x11.node",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/linux/prebuilds/linux-x64/linux-platform-x11.node",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/linux/src/clipboard-worker.h",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/linux/src/linux-platform-x11.c",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/napi.h",
+    "classification": "new missing",
+    "commits": [
+      "fd889a27 fix(coding-agent,tui): paste Finder file paths instead of icons (#10136)",
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/win32/README.md",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)",
+      "73dd066e fix(tui): detect Windows Shift+Enter"
+    ]
+  },
+  {
+    "path": "packages/tui/native/win32/build.mjs",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)",
+      "73dd066e fix(tui): detect Windows Shift+Enter"
+    ]
+  },
+  {
+    "path": "packages/tui/native/win32/prebuilds/win32-arm64/win32-console-mode.node",
+    "classification": "upstream deletion",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)",
+      "73dd066e fix(tui): detect Windows Shift+Enter"
+    ]
+  },
+  {
+    "path": "packages/tui/native/win32/prebuilds/win32-arm64/win32-platform.node",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/win32/prebuilds/win32-x64/win32-console-mode.node",
+    "classification": "upstream deletion",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)",
+      "73dd066e fix(tui): detect Windows Shift+Enter"
+    ]
+  },
+  {
+    "path": "packages/tui/native/win32/prebuilds/win32-x64/win32-platform.node",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/native/win32/src/win32-console-mode.c",
+    "classification": "upstream deletion",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)",
+      "73dd066e fix(tui): detect Windows Shift+Enter"
+    ]
+  },
+  {
+    "path": "packages/tui/native/win32/src/win32-platform.c",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/package.json",
+    "classification": "changed",
+    "commits": [
+      "cd32f772 Release v1.0.2",
+      "a7229ddc Release v1.0.1",
+      "a13d35a7 Release v1.0.0",
+      "005af57d Release v0.99.2",
+      "d86654ab Release v0.99.1",
+      "4b060d3a Release v0.99.0",
+      "ca7460d1 feat: build with TypeScript 7 and run sources with plain node",
+      "f07218c4 Release v0.87.1",
+      "16787ad5 Release v0.87.0",
+      "13cbf77d Release v0.86.1",
+      "ecac0a9c Release v0.86.0",
+      "4a6ed019 fix(coding-agent): update runtime dependencies (#9341)",
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)",
+      "d981de12 Release v0.85.1",
+      "107d79f1 Release v0.85.0",
+      "b79e4cc8 Release v0.84.4",
+      "4e58f324 Release v0.84.3",
+      "914cf147 Release v0.84.2",
+      "53fa77cc Release v0.84.1",
+      "a5f43bf8 Release v0.84.0",
+      "4254e0d9 fix(tui): include Windows native rebuild sources",
+      "464804e1 fix(tui): merge upstream main",
+      "73dd066e fix(tui): detect Windows Shift+Enter"
+    ]
+  },
+  {
+    "path": "packages/tui/src/alt-screen-search.ts",
+    "classification": "new missing",
+    "commits": [
+      "2d411633 fix(tui): make fullscreen transcript search scale linearly",
+      "7d399e7b feat(tui): search improvements (#8800)",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)"
+    ]
+  },
+  {
+    "path": "packages/tui/src/autocomplete.ts",
+    "classification": "changed",
+    "commits": [
+      "65117e31 fix(tui): complete slash commands after leading whitespace (#10218)",
+      "d5629e20 fix(tui): autocomplete paths after opening wrappers like ( and backticks",
+      "36af9dc4 fix(tui): restore skill prefix autocomplete, closes #9944",
+      "d7951ec3 fix(tui): rank skill autocomplete by bare name (#9120)",
+      "bfa68624 fix(tui): handle CJK punctuation in file autocomplete (#9746)",
+      "b37ebb7f fix(tui): autocomplete orders nested results (#8669)"
+    ]
+  },
+  {
+    "path": "packages/tui/src/colors.ts",
+    "classification": "new missing",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "56746909 feat(tui,coding-agent): add color values and theme styling (#8398)"
+    ]
+  },
+  {
+    "path": "packages/tui/src/components/box.ts",
+    "classification": "changed",
+    "commits": [
+      "54c19a25 fix(tui): reduce memory retained per rendered message",
+      "b485fa31 fix(tui,coding-agent): reduce render cost of theme changes and streaming",
+      "71026970 feat(tui): add reusable mouse interaction support"
+    ]
+  },
+  {
+    "path": "packages/tui/src/components/editor.ts",
+    "classification": "changed",
+    "commits": [
+      "d5629e20 fix(tui): autocomplete paths after opening wrappers like ( and backticks",
+      "bfa68624 fix(tui): handle CJK punctuation in file autocomplete (#9746)",
+      "1d9787c1 feat(tui): prettier Working... spinner (#8799)",
+      "2470ea44 fix(tui): let drag select text over the editor",
+      "71026970 feat(tui): add reusable mouse interaction support",
+      "16ad96ae feat(tui): add configurable prompt history actions"
+    ]
+  },
+  {
+    "path": "packages/tui/src/components/image.ts",
+    "classification": "changed",
+    "commits": [
+      "a276dabe fix(tui,coding-agent): convert non-PNG images for Kitty in Image"
+    ]
+  },
+  {
+    "path": "packages/tui/src/components/input.ts",
+    "classification": "changed",
+    "commits": [
+      "7d399e7b feat(tui): search improvements (#8800)",
+      "71026970 feat(tui): add reusable mouse interaction support"
+    ]
+  },
+  {
+    "path": "packages/tui/src/components/loader.ts",
+    "classification": "changed",
+    "commits": [
+      "1d9787c1 feat(tui): prettier Working... spinner (#8799)"
+    ]
+  },
+  {
+    "path": "packages/tui/src/components/markdown.ts",
+    "classification": "changed",
+    "commits": [
+      "54c19a25 fix(tui): reduce memory retained per rendered message",
+      "b485fa31 fix(tui,coding-agent): reduce render cost of theme changes and streaming",
+      "8f2ae3fa fix(tui): prevent wrapped table link color leaks (#8363)",
+      "05e89b41 feat(tui): render LaTeX math in Markdown"
+    ]
+  },
+  {
+    "path": "packages/tui/src/components/mouse-region.ts",
+    "classification": "new missing",
+    "commits": [
+      "71026970 feat(tui): add reusable mouse interaction support"
+    ]
+  },
+  {
+    "path": "packages/tui/src/components/scroll-view.ts",
+    "classification": "changed",
+    "commits": [
+      "457ae8c7 feat(tui): alt mode scrollbar but prettier (#8801)",
+      "79680533 feat(tui): add clickable jump-to-end indicator to fullscreen transcript",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)"
+    ]
+  },
+  {
+    "path": "packages/tui/src/components/select-list.ts",
+    "classification": "changed",
+    "commits": [
+      "9841914c fix(tui): keep list selection unchanged on mouse hover",
+      "71026970 feat(tui): add reusable mouse interaction support"
+    ]
+  },
+  {
+    "path": "packages/tui/src/components/settings-list.ts",
+    "classification": "changed",
+    "commits": [
+      "9841914c fix(tui): keep list selection unchanged on mouse hover",
+      "8798b799 Merge remote-tracking branch 'origin/main' into dev",
+      "76818492 fix(settings-selector): nit spacing",
+      "d94e521b Merge remote-tracking branch 'origin/main' into dev",
+      "2ff8ba62 fix(coding-agent): keep model and thinking level changes session scoped (#8356)",
+      "71026970 feat(tui): add reusable mouse interaction support"
+    ]
+  },
+  {
+    "path": "packages/tui/src/components/text.ts",
+    "classification": "changed",
+    "commits": [
+      "54c19a25 fix(tui): reduce memory retained per rendered message",
+      "f0c5d86d fix(tui): fit text padding to narrow widths, closes #8252"
+    ]
+  },
+  {
+    "path": "packages/tui/src/fuzzy.ts",
+    "classification": "changed",
+    "commits": [
+      "59014460 fix(tui): reduce fuzzy search latency"
+    ]
+  },
+  {
+    "path": "packages/tui/src/index.ts",
+    "classification": "changed",
+    "commits": [
+      "a276dabe fix(tui,coding-agent): convert non-PNG images for Kitty in Image",
+      "ca9c9251 fix(coding-agent): show text wordmark instead of logo in Apple Terminal",
+      "f1927c2d feat(tui,coding-agent): configurable fullscreen wheel scrolling with auto acceleration",
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "56746909 feat(tui,coding-agent): add color values and theme styling (#8398)",
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)",
+      "7d399e7b feat(tui): search improvements (#8800)",
+      "758a0ee9 Merge branch 'main' into dev",
+      "e8682309 feat(tui): add terminal capability overrides closes #8665",
+      "71026970 feat(tui): add reusable mouse interaction support",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)",
+      "05e89b41 feat(tui): render LaTeX math in Markdown"
+    ]
+  },
+  {
+    "path": "packages/tui/src/keybindings.ts",
+    "classification": "changed",
+    "commits": [
+      "27b7a626 fix(coding-agent): use Windows-friendly keybinding defaults",
+      "1279952d feat(tui): add unbound single-line transcript scrolling actions (#7903)",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)",
+      "a3e93ec8 feat(tui): add half-page transcript scrolling",
+      "16ad96ae feat(tui): add configurable prompt history actions"
+    ]
+  },
+  {
+    "path": "packages/tui/src/latex.ts",
+    "classification": "new missing",
+    "commits": [
+      "fa0e1f48 fix(tui): improve LaTeX compatibility and layouts",
+      "f0592205 feat(tui): render relational algebra join symbols & fix(coding-agent): type error in test (#9050)",
+      "534bcbff fix(tui): handle LaTeX control spaces across line endings",
+      "452923b5 fix(tui): parse multiline LaTeX arguments",
+      "aa601d7b fix(tui): correct LaTeX whitespace and matrix layouts",
+      "05e89b41 feat(tui): render LaTeX math in Markdown"
+    ]
+  },
+  {
+    "path": "packages/tui/src/layout.ts",
+    "classification": "changed",
+    "commits": [
+      "457ae8c7 feat(tui): alt mode scrollbar but prettier (#8801)",
+      "71026970 feat(tui): add reusable mouse interaction support",
+      "18dee5f0 fix(tui): stop recompositing full-width rows in the alt-screen painter"
+    ]
+  },
+  {
+    "path": "packages/tui/src/native-modifiers.ts",
+    "classification": "changed",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)",
+      "7d4c0e05 feat(coding-agent): bundle Node runtime (#8474)",
+      "73dd066e fix(tui): detect Windows Shift+Enter"
+    ]
+  },
+  {
+    "path": "packages/tui/src/native-module-path.ts",
+    "classification": "new missing",
+    "commits": [
+      "7d4c0e05 feat(coding-agent): bundle Node runtime (#8474)"
+    ]
+  },
+  {
+    "path": "packages/tui/src/native-platform.ts",
+    "classification": "new missing",
+    "commits": [
+      "fd889a27 fix(coding-agent,tui): paste Finder file paths instead of icons (#10136)",
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/src/oklab.ts",
+    "classification": "new missing",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)"
+    ]
+  },
+  {
+    "path": "packages/tui/src/stdin-buffer.ts",
+    "classification": "changed",
+    "commits": [
+      "2a95ef70 fix(tui): apply PI_TUI_ESC_TIMEOUT only to lone ESC",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)"
+    ]
+  },
+  {
+    "path": "packages/tui/src/terminal-colors.ts",
+    "classification": "changed",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "56746909 feat(tui,coding-agent): add color values and theme styling (#8398)"
+    ]
+  },
+  {
+    "path": "packages/tui/src/terminal-image.ts",
+    "classification": "changed",
+    "commits": [
+      "672000c8 fix(tui): preserve WezTerm images while scrolling",
+      "7cf037c2 fix(tui): choose Kitty image dimensions by aspect distortion (#9957)",
+      "56746909 feat(tui,coding-agent): add color values and theme styling (#8398)",
+      "64921447 fix(tui): detect Zed terminal capabilities (#8828)",
+      "e8682309 feat(tui): add terminal capability overrides closes #8665",
+      "2c233a5c fix(tui): add iterm payload size for xterm.js image addon (#7612)"
+    ]
+  },
+  {
+    "path": "packages/tui/src/terminal.ts",
+    "classification": "changed",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)",
+      "605a1b03 fix(tui): wrap SIGWINCH self-signal so restricted seccomp policies do not crash startup (#8898)",
+      "7d4c0e05 feat(coding-agent): bundle Node runtime (#8474)",
+      "2a95ef70 fix(tui): apply PI_TUI_ESC_TIMEOUT only to lone ESC",
+      "06ed8716 fix(tui): prevent split Alt+Enter from interrupting (#7899)",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)",
+      "73dd066e fix(tui): detect Windows Shift+Enter"
+    ]
+  },
+  {
+    "path": "packages/tui/src/tui-alt-screen.ts",
+    "classification": "changed",
+    "commits": [
+      "672000c8 fix(tui): preserve WezTerm images while scrolling",
+      "b35af04f feat(coding-agent,tui): add a hidden easter egg to the header logo",
+      "f1927c2d feat(tui,coding-agent): configurable fullscreen wheel scrolling with auto acceleration",
+      "8c727937 fix(tui): prevent jump-to-end label from shifting when scrollbar hides (#9842)",
+      "803f0e90 fix(tui): preserve fullscreen images in WezTerm",
+      "60e7e76b fix(coding-agent): surface clipboard backend failures",
+      "ab9e6f89 feat(tui): accelerate Alt-modified wheel scrolling (#9166)",
+      "2d411633 fix(tui): make fullscreen transcript search scale linearly",
+      "457ae8c7 feat(tui): alt mode scrollbar but prettier (#8801)",
+      "79680533 feat(tui): add clickable jump-to-end indicator to fullscreen transcript",
+      "7d399e7b feat(tui): search improvements (#8800)",
+      "758a0ee9 Merge branch 'main' into dev",
+      "4e494929 feat(tui): allow disable copy on fullscreen, ctrl + x copies selection (#8731)",
+      "1ac6128e fix(tui): make alt screen not segment on - and / (#8676)",
+      "ee6a5d29 Merge remote-tracking branch 'origin/main' into dev",
+      "374e56e5 fix(tui): avoid duplicate VS Code right-click paste",
+      "71026970 feat(tui): add reusable mouse interaction support",
+      "4caa3c44 fix(tui): route selection copy through the host clipboard (#8110)",
+      "83aed2ba fix(tui): handle generic SGR mouse releases",
+      "2e4d2395 fix(tui): give focused fullscreen overlays wheel and viewport keys",
+      "4a879dd7 fix(tui): avoid repainting idle fullscreen sessions on focus loss (#7892)",
+      "1279952d feat(tui): add unbound single-line transcript scrolling actions (#7903)",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)",
+      "c96bfacc fix(coding-agent): support Windows fullscreen right-click paste",
+      "a3e93ec8 feat(tui): add half-page transcript scrolling",
+      "171c6b52 fix(tui): correct multi-click text selection (#7733)",
+      "58fc0431 feat(tui): select words and lines with multi-click (closes #7725)",
+      "fc3554e1 fix(tui): reduce mouse tracking in terminal multiplexers"
+    ]
+  },
+  {
+    "path": "packages/tui/src/tui-main-screen.ts",
+    "classification": "changed",
+    "commits": [
+      "c505f4c1 fix(tui): remove coding-agent config reads from pi-tui",
+      "6c4f3602 fix(tui): chunk large main-screen renders closes #8028"
+    ]
+  },
+  {
+    "path": "packages/tui/src/tui.ts",
+    "classification": "changed",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "b3487650 fix(tui): keep cursor visible when overlays close after stop",
+      "56746909 feat(tui,coding-agent): add color values and theme styling (#8398)",
+      "7d399e7b feat(tui): search improvements (#8800)",
+      "c505f4c1 fix(tui): remove coding-agent config reads from pi-tui",
+      "71026970 feat(tui): add reusable mouse interaction support",
+      "2e4d2395 fix(tui): give focused fullscreen overlays wheel and viewport keys",
+      "29d9f087 fix(tui): avoid throttling keyboard input"
+    ]
+  },
+  {
+    "path": "packages/tui/src/utils.ts",
+    "classification": "changed",
+    "commits": [
+      "54c19a25 fix(tui): reduce memory retained per rendered message",
+      "17f3dccb fix(tui): preserve ANSI order at slice boundaries",
+      "b485fa31 fix(tui,coding-agent): reduce render cost of theme changes and streaming",
+      "bfa68624 fix(tui): handle CJK punctuation in file autocomplete (#9746)",
+      "457ae8c7 feat(tui): alt mode scrollbar but prettier (#8801)",
+      "229afb82 fix(tui): skip OSC 8 scan for plain prefixes (#7665)",
+      "b780d20a fix(tui): close truncated OSC 8 links (#7657)"
+    ]
+  },
+  {
+    "path": "packages/tui/src/wheel-scroll.ts",
+    "classification": "new missing",
+    "commits": [
+      "f1927c2d feat(tui,coding-agent): configurable fullscreen wheel scrolling with auto acceleration"
+    ]
+  },
+  {
+    "path": "packages/tui/test/alt-screen-large-transcript-bench.ts",
+    "classification": "new missing",
+    "commits": [
+      "d24c99f4 feat(tui): add large transcript render benchmark"
+    ]
+  },
+  {
+    "path": "packages/tui/test/autocomplete-skill-slash.test.ts",
+    "classification": "new missing",
+    "commits": [
+      "65117e31 fix(tui): complete slash commands after leading whitespace (#10218)",
+      "36af9dc4 fix(tui): restore skill prefix autocomplete, closes #9944",
+      "d7951ec3 fix(tui): rank skill autocomplete by bare name (#9120)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/autocomplete.test.ts",
+    "classification": "changed",
+    "commits": [
+      "d5629e20 fix(tui): autocomplete paths after opening wrappers like ( and backticks",
+      "bfa68624 fix(tui): handle CJK punctuation in file autocomplete (#9746)",
+      "b37ebb7f fix(tui): autocomplete orders nested results (#8669)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/colors.test.ts",
+    "classification": "new missing",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "56746909 feat(tui,coding-agent): add color values and theme styling (#8398)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/editor-history-keybindings.test.ts",
+    "classification": "new missing",
+    "commits": [
+      "16ad96ae feat(tui): add configurable prompt history actions"
+    ]
+  },
+  {
+    "path": "packages/tui/test/editor.test.ts",
+    "classification": "changed",
+    "commits": [
+      "d5629e20 fix(tui): autocomplete paths after opening wrappers like ( and backticks",
+      "bfa68624 fix(tui): handle CJK punctuation in file autocomplete (#9746)",
+      "1d9787c1 feat(tui): prettier Working... spinner (#8799)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/fixtures/clipboard-reader.cjs",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/fixtures/clipboard-worker-test.c",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/fixtures/clipboard-worker-test.cjs",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/fixtures/clipboard-x11-test.c",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/image-test.ts",
+    "classification": "changed",
+    "commits": [
+      "ca7460d1 feat: build with TypeScript 7 and run sources with plain node"
+    ]
+  },
+  {
+    "path": "packages/tui/test/input.test.ts",
+    "classification": "changed",
+    "commits": [
+      "7d399e7b feat(tui): search improvements (#8800)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/keybindings.test.ts",
+    "classification": "changed",
+    "commits": [
+      "27b7a626 fix(coding-agent): use Windows-friendly keybinding defaults",
+      "1279952d feat(tui): add unbound single-line transcript scrolling actions (#7903)",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)",
+      "a3e93ec8 feat(tui): add half-page transcript scrolling",
+      "16ad96ae feat(tui): add configurable prompt history actions"
+    ]
+  },
+  {
+    "path": "packages/tui/test/latex.test.ts",
+    "classification": "new missing",
+    "commits": [
+      "fa0e1f48 fix(tui): improve LaTeX compatibility and layouts",
+      "f0592205 feat(tui): render relational algebra join symbols & fix(coding-agent): type error in test (#9050)",
+      "534bcbff fix(tui): handle LaTeX control spaces across line endings",
+      "452923b5 fix(tui): parse multiline LaTeX arguments",
+      "aa601d7b fix(tui): correct LaTeX whitespace and matrix layouts",
+      "05e89b41 feat(tui): render LaTeX math in Markdown"
+    ]
+  },
+  {
+    "path": "packages/tui/test/layout.test.ts",
+    "classification": "changed",
+    "commits": [
+      "457ae8c7 feat(tui): alt mode scrollbar but prettier (#8801)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/markdown.test.ts",
+    "classification": "changed",
+    "commits": [
+      "fa0e1f48 fix(tui): improve LaTeX compatibility and layouts",
+      "8f2ae3fa fix(tui): prevent wrapped table link color leaks (#8363)",
+      "aa601d7b fix(tui): correct LaTeX whitespace and matrix layouts",
+      "05e89b41 feat(tui): render LaTeX math in Markdown"
+    ]
+  },
+  {
+    "path": "packages/tui/test/mouse-components.test.ts",
+    "classification": "new missing",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "9841914c fix(tui): keep list selection unchanged on mouse hover",
+      "2470ea44 fix(tui): let drag select text over the editor",
+      "71026970 feat(tui): add reusable mouse interaction support"
+    ]
+  },
+  {
+    "path": "packages/tui/test/native-clipboard-linux.test.ts",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/native-module-path.test.ts",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)",
+      "7d4c0e05 feat(coding-agent): bundle Node runtime (#8474)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/native-platform.test.ts",
+    "classification": "new missing",
+    "commits": [
+      "caf6dfe7 feat(tui): Simplify clipboard handling (#9163)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/overlay-options.test.ts",
+    "classification": "changed",
+    "commits": [
+      "b3487650 fix(tui): keep cursor visible when overlays close after stop"
+    ]
+  },
+  {
+    "path": "packages/tui/test/regression-sigwinch-kill-eacces.test.ts",
+    "classification": "new missing",
+    "commits": [
+      "605a1b03 fix(tui): wrap SIGWINCH self-signal so restricted seccomp policies do not crash startup (#8898)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/regression-slice-by-column-ansi-order.test.ts",
+    "classification": "new missing",
+    "commits": [
+      "17f3dccb fix(tui): preserve ANSI order at slice boundaries"
+    ]
+  },
+  {
+    "path": "packages/tui/test/render-churn-bench.ts",
+    "classification": "new missing",
+    "commits": [
+      "18dee5f0 fix(tui): stop recompositing full-width rows in the alt-screen painter"
+    ]
+  },
+  {
+    "path": "packages/tui/test/settings-list.test.ts",
+    "classification": "changed",
+    "commits": [
+      "5446cd75 feat(coding-agent): rename UI mode to TUI mode"
+    ]
+  },
+  {
+    "path": "packages/tui/test/stdin-buffer.test.ts",
+    "classification": "changed",
+    "commits": [
+      "2a95ef70 fix(tui): apply PI_TUI_ESC_TIMEOUT only to lone ESC",
+      "9c53c47f fix indent",
+      "06ed8716 fix(tui): prevent split Alt+Enter from interrupting (#7899)",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/terminal-colors.test.ts",
+    "classification": "changed",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "56746909 feat(tui,coding-agent): add color values and theme styling (#8398)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/terminal-image.test.ts",
+    "classification": "changed",
+    "commits": [
+      "a276dabe fix(tui,coding-agent): convert non-PNG images for Kitty in Image",
+      "672000c8 fix(tui): preserve WezTerm images while scrolling",
+      "7cf037c2 fix(tui): choose Kitty image dimensions by aspect distortion (#9957)",
+      "56746909 feat(tui,coding-agent): add color values and theme styling (#8398)",
+      "64921447 fix(tui): detect Zed terminal capabilities (#8828)",
+      "e8682309 feat(tui): add terminal capability overrides closes #8665",
+      "2c233a5c fix(tui): add iterm payload size for xterm.js image addon (#7612)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/terminal.test.ts",
+    "classification": "changed",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "2a95ef70 fix(tui): apply PI_TUI_ESC_TIMEOUT only to lone ESC",
+      "06ed8716 fix(tui): prevent split Alt+Enter from interrupting (#7899)",
+      "73dd066e fix(tui): detect Windows Shift+Enter"
+    ]
+  },
+  {
+    "path": "packages/tui/test/truncate-to-width.test.ts",
+    "classification": "changed",
+    "commits": [
+      "b780d20a fix(tui): close truncated OSC 8 links (#7657)"
+    ]
+  },
+  {
+    "path": "packages/tui/test/tui-alt-screen.test.ts",
+    "classification": "changed",
+    "commits": [
+      "672000c8 fix(tui): preserve WezTerm images while scrolling",
+      "f1927c2d feat(tui,coding-agent): configurable fullscreen wheel scrolling with auto acceleration",
+      "8c727937 fix(tui): prevent jump-to-end label from shifting when scrollbar hides (#9842)",
+      "60e7e76b fix(coding-agent): surface clipboard backend failures",
+      "ab9e6f89 feat(tui): accelerate Alt-modified wheel scrolling (#9166)",
+      "2d411633 fix(tui): make fullscreen transcript search scale linearly",
+      "457ae8c7 feat(tui): alt mode scrollbar but prettier (#8801)",
+      "79680533 feat(tui): add clickable jump-to-end indicator to fullscreen transcript",
+      "7d399e7b feat(tui): search improvements (#8800)",
+      "758a0ee9 Merge branch 'main' into dev",
+      "4e494929 feat(tui): allow disable copy on fullscreen, ctrl + x copies selection (#8731)",
+      "1ac6128e fix(tui): make alt screen not segment on - and / (#8676)",
+      "ee6a5d29 Merge remote-tracking branch 'origin/main' into dev",
+      "374e56e5 fix(tui): avoid duplicate VS Code right-click paste",
+      "71026970 feat(tui): add reusable mouse interaction support",
+      "4caa3c44 fix(tui): route selection copy through the host clipboard (#8110)",
+      "83aed2ba fix(tui): handle generic SGR mouse releases",
+      "2e4d2395 fix(tui): give focused fullscreen overlays wheel and viewport keys",
+      "4a879dd7 fix(tui): avoid repainting idle fullscreen sessions on focus loss (#7892)",
+      "1279952d feat(tui): add unbound single-line transcript scrolling actions (#7903)",
+      "00121ed9 feat(tui): add fullscreen transcript search (#7913)",
+      "18dee5f0 fix(tui): stop recompositing full-width rows in the alt-screen painter",
+      "c96bfacc fix(coding-agent): support Windows fullscreen right-click paste",
+      "a3e93ec8 feat(tui): add half-page transcript scrolling",
+      "171c6b52 fix(tui): correct multi-click text selection (#7733)",
+      "58fc0431 feat(tui): select words and lines with multi-click (closes #7725)",
+      "fc3554e1 fix(tui): reduce mouse tracking in terminal multiplexers"
+    ]
+  },
+  {
+    "path": "packages/tui/test/tui-render.test.ts",
+    "classification": "changed",
+    "commits": [
+      "c505f4c1 fix(tui): remove coding-agent config reads from pi-tui",
+      "6c4f3602 fix(tui): chunk large main-screen renders closes #8028",
+      "29d9f087 fix(tui): avoid throttling keyboard input"
+    ]
+  },
+  {
+    "path": "packages/tui/test/viewport-overwrite-repro.ts",
+    "classification": "changed",
+    "commits": [
+      "ca7460d1 feat: build with TypeScript 7 and run sources with plain node"
+    ]
+  },
+  {
+    "path": "packages/tui/test/visible-width.test.ts",
+    "classification": "new missing",
+    "commits": [
+      "b485fa31 fix(tui,coding-agent): reduce render cost of theme changes and streaming"
+    ]
+  },
+  {
+    "path": "packages/tui/test/wheel-scroll.test.ts",
+    "classification": "new missing",
+    "commits": [
+      "f1927c2d feat(tui,coding-agent): configurable fullscreen wheel scrolling with auto acceleration"
+    ]
+  },
+  {
+    "path": "packages/tui/vitest.config.ts",
+    "classification": "upstream deletion",
+    "commits": [
+      "79f72fcc docs(tui): Clarify TUI test runner and remove stale Vitest  config (#7732)"
+    ]
+  }
+]

@@ -1,0 +1,10 @@
+flowchart LR
+  P["Parent session"] --> D["delegate\nmanaged run"]
+  P --> J["delegate_async\ndurable job"]
+  P --> B["delegate_batch / review_batch\nmanaged aggregate"]
+  D --> R["runId\nmanage_subagent"]
+  J --> I["jobId\ninspect / cancel job"]
+  B --> A["batchId\ninspect / cancel batch"]
+  R --> V["/agents\nlive and historical views"]
+  I --> O["/agents split\nbackground jobs and inbox"]
+  A --> O
