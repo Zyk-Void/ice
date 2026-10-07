@@ -13,20 +13,15 @@ import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, statSync } from
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { Api, AssistantMessage, Model } from "@zykairotis/ice-ai/compat";
 import type { AgentSession } from "../../core/agent-session.ts";
-import {
-	type IceVerifierState,
-	pathIsWithin,
-	resolveProspectivePath,
-	validateMutationPath,
-} from "../../ice-safe-verify.ts";
+import { pathIsWithin, resolveProspectivePath, validateMutationPath } from "../../ice-safe-verify.ts";
 import { redactCredentialText } from "../../utils/redact.ts";
 import type { AgentTaskInput } from "../api/agent.ts";
-import type { ChildRuntimeContract, NormalizedPermissionRule } from "../contract/child-runtime-contract.ts";
+import type { ChildRuntimeContract } from "../contract/child-runtime-contract.ts";
 import { buildChildRuntimeContract, type ChildRuntimeContractInput, createChildId } from "../contract/serialize.ts";
 import { validateChildResume } from "../contract/validate-resume.ts";
 import { callableAgentDefinitions } from "../definitions/listing.ts";
 import { AgentDefinitionCache, type LoadedAgentDefinitions, loadAgentDefinitions } from "../definitions/load.ts";
-import type { AgentDefinitionSource, ResolvedAgentDefinition } from "../definitions/schema.ts";
+import type { ResolvedAgentDefinition } from "../definitions/schema.ts";
 import { type ApplyOutcome, applyChildDelta } from "../isolation/apply.ts";
 import { persistPatchRecovery, persistWorktreePatch, validateWorktreePatch } from "../isolation/patch-state.ts";
 import {
@@ -38,15 +33,10 @@ import {
 	removeIsolatedWorktree,
 	type WorktreeBaseline,
 } from "../isolation/worktree.ts";
-import { type ApprovalAnswer, ApprovalBroker, type ApprovalRequest } from "../permissions/approval.ts";
+import { type ApprovalAnswer, ApprovalBroker } from "../permissions/approval.ts";
 import { childDelegationTools, deriveChildDecision } from "../permissions/derive-child.ts";
 import { evaluatePermission, type PermissionRuleSet } from "../permissions/evaluate.ts";
-import {
-	type AgentPermissionMode,
-	mostRestrictiveDecision,
-	type PermissionDecision,
-	type PermissionRuleScope,
-} from "../permissions/rules.ts";
+import { type AgentPermissionMode, mostRestrictiveDecision, type PermissionDecision } from "../permissions/rules.ts";
 import { bashGrantPrefix, extractPermissionSubjects, type PermissionSubject } from "../permissions/subjects.ts";
 import { SubagentConcurrencyAdmission } from "../registry/admission.ts";
 import {
@@ -71,204 +61,40 @@ import { buildSubagentTaskContract } from "../results/task-contract.ts";
 import {
 	normalizeV2Acceptance,
 	renderV2ResultInstructions,
-	type V2ChildTurnResult,
 	type V2OutputCapture,
 	V2ResultObservations,
 	v2ReportMode,
 	validateV2Result,
 } from "../results/v2-result.ts";
 import type { ChildBudgetLimits } from "../runtime/budgets.ts";
-import type { IceResolvedDelegableTool } from "../tools/adapters.ts";
 import { ICE_BUILTIN_CHILD_TOOLS } from "../tools/adapters.ts";
-import { type ParentToolInfo, resolveChildTools } from "../tools/resolve.ts";
+import { resolveChildTools } from "../tools/resolve.ts";
+import {
+	boundedText,
+	CHILD_PROMPT_SUFFIX,
+	type ChildTurnResult,
+	COMPLETION_SUMMARY_LIMIT,
+	childCwd,
+	durableOutputReferenceId,
+	freezeRules,
+	type OwnerState,
+	outputArtifactUnavailable,
+	parentToolInfos,
+	READ_ONLY_BUILTINS,
+	RESULT_TEXT_LIMIT,
+	type ResidentChild,
+	reconcileTerminalWorktrees,
+	resolveChildModel,
+	ruleSetsFromFrozen,
+	SOURCE_SCOPE,
+	SUBAGENT_COMPLETED_CUSTOM_TYPE,
+	SubagentV2Error,
+	type TurnResultContext,
+	type V2RuntimeHost,
+} from "./runtime-support.ts";
 import { type ChildToolGuard, createV2ChildSession } from "./session-factory.ts";
 import type { SubagentsV2Settings } from "./settings.ts";
 import { ChildTurnBudget, resolveTurnBudget } from "./turn-budget.ts";
-
-export const SUBAGENT_COMPLETED_CUSTOM_TYPE = "subagent_completed";
-const RESULT_TEXT_LIMIT = 48 * 1024;
-const COMPLETION_SUMMARY_LIMIT = 4 * 1024;
-
-function durableOutputReferenceId(childId: string): string {
-	return `durable:v2:${childId}`;
-}
-
-function outputArtifactUnavailable(output: V2OutputCapture): V2OutputCapture {
-	const { artifact: _artifact, ...inline } = output;
-	return { ...inline, captureStatus: "artifact_unavailable" };
-}
-
-const SOURCE_SCOPE: Readonly<Record<AgentDefinitionSource, PermissionRuleScope>> = {
-	builtin: "builtin",
-	package: "user",
-	user: "user",
-	"user-settings": "user",
-	project: "project",
-	"project-settings": "project",
-	"project-compat": "project",
-	flag: "cli",
-	managed: "managed",
-};
-
-const READ_ONLY_BUILTINS = new Set(["read", "grep", "find", "ls"]);
-
-export interface V2RuntimeHost {
-	getParentSession(): AgentSession | undefined;
-	agentDir: string;
-	userAgentsDir: string;
-	getSettings(): SubagentsV2Settings;
-	isProjectTrusted(): boolean;
-	getParentMode(): "plan" | "build";
-	isSubYolo(): boolean;
-	getAdapters(): readonly IceResolvedDelegableTool[];
-	/** The host configures the verifier; child/model text cannot choose commands. */
-	verifyPatch?: (root: string, signal?: AbortSignal) => Promise<IceVerifierState>;
-	getPatchVerifier?: () => V2RuntimeHost["verifyPatch"];
-	/** Foreground approval prompt; absent when the parent has no interactive UI. */
-	promptApproval?: (request: ApprovalRequest, signal: AbortSignal) => Promise<ApprovalAnswer>;
-	createChildAgentSession?: typeof createV2ChildSession;
-	now?: () => number;
-}
-
-interface ResidentChild {
-	session: AgentSession;
-	contract: ChildRuntimeContract;
-	grants: string[];
-	pendingNote?: string;
-	recoveryNotice?: string;
-	controller?: AbortController;
-	budget?: ChildTurnBudget;
-	observations?: V2ResultObservations;
-	/** True while a parent tool call is waiting on this child's turn. */
-	foreground: boolean;
-	running?: Promise<ChildTurnResult>;
-	dispose(): Promise<void>;
-}
-
-export type ChildTurnResult = V2ChildTurnResult;
-
-export class SubagentV2Error extends Error {
-	readonly code: "unknown_agent" | "preflight" | "blocked" | "busy";
-	constructor(code: SubagentV2Error["code"], message: string) {
-		super(message);
-		this.code = code;
-	}
-}
-
-interface TurnResultContext {
-	acceptance: readonly string[];
-	observations: V2ResultObservations;
-	final?: AssistantMessage;
-	usage: ChildTurnResult["usage"];
-}
-
-interface OwnerState {
-	sessionId: string;
-	registry: ChildRegistry<ResidentChild>;
-	admission: SubagentConcurrencyAdmission;
-	broker: ApprovalBroker;
-	waiters: Array<() => void>;
-	closed: boolean;
-}
-
-function parentToolInfos(parent: AgentSession, adapters: readonly IceResolvedDelegableTool[]): ParentToolInfo[] {
-	const active = new Set(parent.getActiveToolNames());
-	const infos: ParentToolInfo[] = [];
-	for (const name of active) {
-		if ((ICE_BUILTIN_CHILD_TOOLS as readonly string[]).includes(name)) {
-			infos.push({ name, access: READ_ONLY_BUILTINS.has(name) ? "read-only" : "mutation", childSafe: true });
-			continue;
-		}
-		const adapter = adapters.find((candidate) => candidate.name === name && candidate.isCurrent());
-		if (adapter) {
-			infos.push({
-				name,
-				access: adapter.access,
-				childSafe: adapter.definition.childSafe,
-				adapterId: adapter.adapterId,
-				fingerprint: adapter.fingerprint,
-			});
-		} else {
-			// Not a child-safe built-in or registered adapter: visible to the resolver only as ineligible.
-			infos.push({ name, access: "unknown", childSafe: false });
-		}
-	}
-	return infos;
-}
-
-function splitModelReference(reference: string): { provider: string; model: string } | undefined {
-	const slash = reference.indexOf("/");
-	if (slash <= 0 || slash === reference.length - 1) return undefined;
-	return { provider: reference.slice(0, slash), model: reference.slice(slash + 1) };
-}
-
-/** First candidate with an available model and configured credentials; `inherit` is the parent model. */
-export function resolveChildModel(
-	parent: AgentSession,
-	candidates: readonly string[] | undefined,
-): { model: Model<Api>; skipped: Array<{ reference: string; reason: string }> } {
-	const parentModel = parent.model as Model<Api> | undefined;
-	if (!parentModel) throw new SubagentV2Error("preflight", "The parent session has no model.");
-	const list = candidates && candidates.length > 0 ? candidates : ["inherit"];
-	const skipped: Array<{ reference: string; reason: string }> = [];
-	for (const reference of list) {
-		if (reference === "inherit") return { model: parentModel, skipped };
-		const split = splitModelReference(reference);
-		if (!split) {
-			skipped.push({ reference, reason: "not a provider/model reference" });
-			continue;
-		}
-		const model = parent.modelRuntime.getModel(split.provider, split.model);
-		if (!model) skipped.push({ reference, reason: "not present in the model catalog" });
-		else if (!parent.modelRuntime.hasConfiguredAuth(split.provider))
-			skipped.push({ reference, reason: "no configured credentials" });
-		else return { model, skipped };
-	}
-	throw new SubagentV2Error(
-		"preflight",
-		`No candidate model is available: ${skipped.map((entry) => `${entry.reference} (${entry.reason})`).join("; ")}`,
-	);
-}
-
-function ruleSetsFromFrozen(rules: readonly NormalizedPermissionRule[]): PermissionRuleSet[] {
-	const byScope = new Map<PermissionRuleScope, PermissionRuleSet>();
-	for (const rule of rules) {
-		let set = byScope.get(rule.scope);
-		if (!set) {
-			set = { origin: { scope: rule.scope, carrier: "settings" }, rules: { allow: [], ask: [], deny: [] } };
-			byScope.set(rule.scope, set);
-		}
-		(set.rules[rule.decision] as string[]).push(rule.rule);
-	}
-	return [...byScope.values()];
-}
-
-function freezeRules(sets: readonly PermissionRuleSet[]): NormalizedPermissionRule[] {
-	const out: NormalizedPermissionRule[] = [];
-	for (const set of sets)
-		for (const decision of ["deny", "ask", "allow"] as const)
-			for (const rule of set.rules[decision] ?? []) out.push({ rule, decision, scope: set.origin.scope });
-	return out;
-}
-
-function boundedText(text: string, limit: number): { text: string; truncated: boolean } {
-	if (Buffer.byteLength(text) <= limit) return { text, truncated: false };
-	const marker = "\n[truncated]";
-	let end = Math.max(0, limit - Buffer.byteLength(marker));
-	const bytes = Buffer.from(text);
-	while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
-	return { text: `${bytes.subarray(0, end).toString("utf8")}${marker}`, truncated: true };
-}
-
-/** Working directory of a child: its worktree (plus the parent's offset) when isolated. */
-export function childCwd(contract: ChildRuntimeContract, parentCwd: string): string {
-	const { worktreePath, cwdOffset } = contract.isolation;
-	if (contract.isolation.mode !== "worktree" || !worktreePath) return parentCwd;
-	return cwdOffset ? join(worktreePath, cwdOffset) : worktreePath;
-}
-
-const CHILD_PROMPT_SUFFIX =
-	"\n\nYou are a subagent. You cannot see the parent conversation. Work only within your approved scope and tools. Your final message is returned to the parent agent as your result: make it a complete, self-contained report.";
 
 export class SubagentV2Runtime {
 	private readonly host: V2RuntimeHost;
@@ -300,6 +126,7 @@ export class SubagentV2Runtime {
 		const settings = this.host.getSettings();
 		const registry = new ChildRegistry<ResidentChild>(sessionJournal(parent.sessionManager), this.host.now);
 		registry.restore();
+		reconcileTerminalWorktrees(registry, parent.sessionId);
 		for (const record of registry.list(parent.sessionId)) {
 			const output = record.lastResult?.output;
 			if (!output?.artifact || !isSubagentOutputArtifactRef(output.artifact)) continue;
@@ -1499,8 +1326,6 @@ export class SubagentV2Runtime {
 		this.assertPatchOpen(record);
 		if (!record.patchArtifact) throw new SubagentV2Error("preflight", "Inspect this patch before applying it.");
 		const verifier = this.host.getPatchVerifier?.() ?? this.host.verifyPatch;
-		if (!verifier)
-			throw new SubagentV2Error("preflight", "Patch apply requires a configured parent verifier (--ice-verify).");
 		const delta = validateWorktreePatch(record.patchArtifact, this.patchDirectory(id), baseline, record.contractHash);
 		if (computeChildDelta(baseline, contract.isolation.worktreePath!).finalTree !== delta.finalTree)
 			throw new SubagentV2Error("blocked", "Child worktree changed after inspection; inspect the new patch first.");
@@ -1536,7 +1361,7 @@ export class SubagentV2Runtime {
 			const outcome = await applyChildDelta(baseline, delta.finalTree, {
 				scopeRoots,
 				authorize,
-				verify: (root) => verifier(root, signal),
+				...(verifier ? { verify: (root: string) => verifier(root, signal) } : {}),
 				beforeWrite: (recovery) => {
 					const recoveryRef = persistPatchRecovery(this.patchDirectory(id), recovery);
 					state.registry.setPatchState(state.sessionId, id, "applying", undefined, recoveryRef);

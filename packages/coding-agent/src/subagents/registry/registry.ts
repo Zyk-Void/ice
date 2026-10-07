@@ -133,9 +133,13 @@ export class ChildRegistry<H extends ResidentChild = ResidentChild> {
 		return record;
 	}
 
-	list(ownerSessionId: string): ChildRecord[] {
+	list(ownerSessionId: string, options: { includeDeleted?: boolean } = {}): ChildRecord[] {
 		return [...this.records.values()]
-			.filter((record) => record.ownerSessionId === ownerSessionId && record.state !== "deleted")
+			.filter(
+				(record) =>
+					record.ownerSessionId === ownerSessionId &&
+					(options.includeDeleted === true || record.state !== "deleted"),
+			)
 			.sort((left, right) => left.createdAt - right.createdAt);
 	}
 

@@ -3,7 +3,8 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../src/core
 import { LEGACY_SUBAGENT_TOOL_NAMES, V2_SUBAGENT_TOOL_NAMES } from "../src/subagents/api/tool-set.ts";
 import { ChildRegistry } from "../src/subagents/registry/registry.ts";
 import iceSubagentsV2, { isSubagentsV2Selected } from "../src/subagents/v2/extension.ts";
-import { type ChildTurnResult, SubagentV2Runtime } from "../src/subagents/v2/runtime.ts";
+import { SubagentV2Runtime } from "../src/subagents/v2/runtime.ts";
+import type { ChildTurnResult } from "../src/subagents/v2/runtime-support.ts";
 import { resolveSubagentsV2Settings } from "../src/subagents/v2/settings.ts";
 
 function fakeApi() {

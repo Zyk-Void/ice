@@ -18,6 +18,8 @@ import {
 
 export type ApplyOutcome =
 	| { status: "applied"; writtenPaths: string[]; verification: IceVerifierState }
+	/** No parent verifier is configured: written and postimage-checked, tracked like parent edits. */
+	| { status: "applied"; writtenPaths: string[]; unverified: true }
 	| { status: "empty" }
 	| { status: "conflict"; details: string }
 	| { status: "changed_during_apply"; path: string }
@@ -33,7 +35,8 @@ export interface ApplyRecovery {
 
 export interface ApplyOptions {
 	scopeRoots?: readonly string[];
-	verify: (root: string) => Promise<IceVerifierState>;
+	/** Parent verifier; absent means no verifier is configured and the result is reported unverified. */
+	verify?: (root: string) => Promise<IceVerifierState>;
 	/** Recheck live authority before mutation and after the asynchronous verifier. */
 	authorize?: () => void;
 	/** Durable integration intent before effects. No interrupted apply is replayed. */
@@ -122,8 +125,6 @@ export async function applyChildDelta(
 	finalTree: string,
 	options: ApplyOptions,
 ): Promise<ApplyOutcome> {
-	if (!options || typeof options.verify !== "function")
-		throw new Error("Patch apply requires a configured parent verifier.");
 	const { repoRoot } = baseline;
 	return withFileMutationQueue(join(repoRoot, ".git", "ice-v2-integration"), async () => {
 		options.authorize?.();
@@ -256,9 +257,11 @@ export async function applyChildDelta(
 					writeImage(step, step.after);
 					written.push(step);
 				}
-				verification = await options.verify(repoRoot);
-				if (verification.status !== "passed")
-					throw new Error(verification.failureMessage ?? `Verifier ${verification.status}`);
+				if (options.verify) {
+					verification = await options.verify(repoRoot);
+					if (verification.status !== "passed")
+						throw new Error(verification.failureMessage ?? `Verifier ${verification.status}`);
+				}
 				options.authorize?.();
 				for (const step of steps) {
 					resolveWorktreePath(repoRoot, step.path);
@@ -270,7 +273,10 @@ export async function applyChildDelta(
 				if (snapshotWorktree(repoRoot) !== resultTree)
 					throw new Error("Parent working tree changed during verification; unrelated changes were preserved.");
 				options.commit?.();
-				return { status: "applied", writtenPaths: steps.map((step) => step.path), verification };
+				const writtenPaths = steps.map((step) => step.path);
+				return verification
+					? { status: "applied", writtenPaths, verification }
+					: { status: "applied", writtenPaths, unverified: true };
 			} catch (error) {
 				const details = error instanceof Error ? error.message : String(error);
 				const paths = restoreImages(repoRoot, written);

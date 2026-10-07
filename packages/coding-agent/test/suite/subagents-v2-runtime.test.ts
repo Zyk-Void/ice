@@ -9,7 +9,8 @@ import { SessionManager } from "../../src/core/session-manager.ts";
 import { worktreeSnapshotRef } from "../../src/subagents/isolation/worktree.ts";
 import { CHILD_INIT_ENTRY_TYPE } from "../../src/subagents/registry/child-sessions.ts";
 import iceSubagentsV2 from "../../src/subagents/v2/extension.ts";
-import { type ChildTurnResult, SubagentV2Runtime, type V2RuntimeHost } from "../../src/subagents/v2/runtime.ts";
+import { SubagentV2Runtime } from "../../src/subagents/v2/runtime.ts";
+import type { ChildTurnResult, V2RuntimeHost } from "../../src/subagents/v2/runtime-support.ts";
 import { createV2ChildSession } from "../../src/subagents/v2/session-factory.ts";
 import { resolveSubagentsV2Settings } from "../../src/subagents/v2/settings.ts";
 import { CHILD_WRAP_UP_LIMITS } from "../../src/subagents/v2/turn-budget.ts";
@@ -828,25 +829,63 @@ describe("subagent V2 runtime", () => {
 		await restored.shutdown();
 	});
 
-	it("retains a pending patch after verification failure and refuses missing verifier/trust", async () => {
+	it("finishes worktree cleanup that a crash interrupted after a terminal patch decision", async () => {
+		const { harness, parent, sessionManager, host } = await setup({ repository: true });
+		harness.setResponses([fauxAssistantMessage("done")]);
+		const runtime = new SubagentV2Runtime(host());
+		const [record] = await runtime.launch([{ ...task("general", "work"), isolation: "worktree" }]);
+		const worktree = SessionManager.open(record!.transcriptPath).getCwd();
+		writeFileSync(join(worktree, "a.txt"), "child\n");
+		await runtime.runTurn(record!.id, "work", { foreground: true });
+		runtime.inspectPatch(record!.id);
+		// Crash after the durable decision, before the worktree and snapshot ref are removed.
+		runtime.registry.setPatchState(sessionManager.getSessionId(), record!.id, "rejected");
+		sessionManager.flushDurably();
+		expect(existsSync(worktree)).toBe(true);
+		parent.session = {
+			...parent.session,
+			sessionManager: SessionManager.open(sessionManager.getSessionFile()!),
+		} as AgentSession;
+		const restarted = new SubagentV2Runtime(host());
+		expect(restarted.registry.get(sessionManager.getSessionId(), record!.id).patchState).toBe("rejected");
+		expect(existsSync(worktree)).toBe(false);
+		expect(() =>
+			execFileSync("git", ["show-ref", "--verify", worktreeSnapshotRef(worktree)], {
+				cwd: sessionManager.getCwd(),
+				stdio: "pipe",
+			}),
+		).toThrow();
+		await runtime.shutdown();
+		await restarted.shutdown();
+	});
+
+	it("retains a pending patch after verification failure, refuses lost trust, and applies unverified without a verifier", async () => {
 		const { harness, sessionManager, host } = await setup({ repository: true });
 		harness.setResponses([fauxAssistantMessage("done")]);
 		let trusted = true;
-		let verify: V2RuntimeHost["verifyPatch"];
+		let verify: V2RuntimeHost["verifyPatch"] = async () => ({ status: "failed", exitCode: 7 });
 		const runtime = new SubagentV2Runtime(host({ isProjectTrusted: () => trusted, getPatchVerifier: () => verify }));
 		const [record] = await runtime.launch([{ ...task("general", "work"), isolation: "worktree" }]);
 		const worktree = SessionManager.open(record!.transcriptPath).getCwd();
 		writeFileSync(join(worktree, "a.txt"), "child\n");
 		await runtime.runTurn(record!.id, "work", { foreground: true });
 		runtime.inspectPatch(record!.id);
-		await expect(runtime.applyPatch(record!.id)).rejects.toThrow(/configured parent verifier/);
-		verify = async () => ({ status: "failed", exitCode: 7 });
 		expect(await runtime.applyPatch(record!.id)).toMatchObject({ status: "verification_failed" });
 		expect(readFileSync(join(sessionManager.getCwd(), "a.txt"), "utf8")).toBe("parent wip\n");
 		expect(runtime.registry.get(sessionManager.getSessionId(), record!.id).patchState).toBe("open");
 		expect(existsSync(worktree)).toBe(true);
 		trusted = false;
 		await expect(runtime.applyPatch(record!.id)).rejects.toThrow(/trusted build/);
+		// Without a configured verifier the patch is applied like parent edits and reported unverified.
+		trusted = true;
+		verify = undefined;
+		expect(await runtime.applyPatch(record!.id)).toMatchObject({
+			status: "applied",
+			unverified: true,
+			writtenPaths: ["a.txt"],
+		});
+		expect(readFileSync(join(sessionManager.getCwd(), "a.txt"), "utf8")).toBe("child\n");
+		expect(runtime.registry.get(sessionManager.getSessionId(), record!.id).patchState).toBe("applied");
 		await runtime.shutdown();
 	});
 

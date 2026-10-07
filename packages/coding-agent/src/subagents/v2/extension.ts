@@ -30,7 +30,8 @@ import { renderBatchSynthesisSection, summarizeV2BatchSynthesis } from "../resul
 import { isSubagentOutputArtifactRef } from "../results/output-artifacts.ts";
 import { getIceDelegableTools } from "../tools/adapters.ts";
 import { SUBAGENT_PRESENTATION_LIMIT_BYTES } from "../types.ts";
-import { type ChildTurnResult, SubagentV2Runtime } from "./runtime.ts";
+import { SubagentV2Runtime } from "./runtime.ts";
+import type { ChildTurnResult } from "./runtime-support.ts";
 import { resolveSubagentsV2Settings } from "./settings.ts";
 
 const AGENT_TOOL_DESCRIPTION =
@@ -453,7 +454,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 					switch (outcome.status) {
 						case "applied":
 							return text(
-								`Applied and verified the patch of ${params.id}: ${outcome.writtenPaths.join(", ")}. The parent index was not changed.${outcome.cleanupError ? ` Cleanup needs inspection: ${outcome.cleanupError}` : ""}`,
+								`${"unverified" in outcome ? "Applied (unverified: no --ice-verify verifier is configured; run your checks)" : "Applied and verified"} the patch of ${params.id}: ${outcome.writtenPaths.join(", ")}. The parent index was not changed.${outcome.cleanupError ? ` Cleanup needs inspection: ${outcome.cleanupError}` : ""}`,
 								outcome,
 							);
 						case "empty":

@@ -1489,6 +1489,24 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 					verifier: { status: "pending", generation: state.mutationGeneration + 1 },
 				};
 				persist();
+			} else if (
+				event.toolName === "agent_patch" &&
+				(details as { status?: unknown } | undefined)?.status === "applied" &&
+				(details as { unverified?: unknown }).unverified === true
+			) {
+				// No verifier was configured: track the patch exactly like parent edit/write.
+				state = {
+					...state,
+					mutationGeneration: state.mutationGeneration + 1,
+					verifier: verifierArgv
+						? {
+								status: "pending",
+								generation: state.mutationGeneration + 1,
+								commandHash: commandHash(verifierArgv),
+							}
+						: state.verifier,
+				};
+				persist();
 			}
 			return;
 		}

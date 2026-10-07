@@ -2,7 +2,7 @@ import { performance } from "node:perf_hooks";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApprovalBroker, type ApprovalRequest } from "../../src/subagents/permissions/approval.ts";
 import { ChildBudgetTracker } from "../../src/subagents/runtime/budgets.ts";
-import { ChildTurnBudget, resolveTurnBudget } from "../../src/subagents/v2/turn-budget.ts";
+import { budgetTokens, ChildTurnBudget, resolveTurnBudget } from "../../src/subagents/v2/turn-budget.ts";
 import { createHarness } from "./harness.ts";
 
 afterEach(() => vi.useRealTimers());
@@ -30,6 +30,12 @@ describe("V2 budget limits", () => {
 		expect(resolveTurnBudget({ [key]: 10 }, { [key]: 5 })).toEqual({ [key]: 5 });
 		expect(resolveTurnBudget({ [key]: 10 }, {})).toEqual({ [key]: 10 });
 		expect(() => resolveTurnBudget({ [key]: 10 }, { [key]: 11 })).toThrow(/frozen ceiling/);
+	});
+
+	it("counts uncached input, cache writes, and output but not cache reads toward maxTokens", () => {
+		expect(budgetTokens({ input: 120, output: 30, cacheWrite: 50 })).toEqual({ input: 170, output: 30 });
+		const cachedOnly = { input: 0, output: 0, cacheWrite: 0, cacheRead: 90_000 };
+		expect(budgetTokens(cachedOnly)).toEqual({ input: 0, output: 0 });
 	});
 
 	it("snapshots limits and counts requests separately from reported usage", () => {

@@ -1193,6 +1193,20 @@ describe("ICE guarded extension", () => {
 		});
 	});
 
+	it("tracks an unverified V2 patch apply like a parent edit, never as checked", async () => {
+		const runtime = extensionFixture({ flags: { "ice-mode": "build" } });
+		await runtime.emit("session_start");
+		await runtime.emit("tool_call", { toolCallId: "patch", toolName: "agent_patch", input: { action: "apply" } });
+		await runtime.emit("tool_result", {
+			toolCallId: "patch",
+			toolName: "agent_patch",
+			input: { action: "apply" },
+			details: { status: "applied", writtenPaths: ["a.txt"], unverified: true },
+			isError: false,
+		});
+		expect(runtime.appended.at(-1)?.data).toMatchObject({ mutationGeneration: 1, checkedGeneration: 0 });
+	});
+
 	it("records verified writer integration as an already-checked generation", async () => {
 		const command = JSON.stringify([process.execPath, "-e", "process.exit(0)"]);
 		const runtime = extensionFixture({

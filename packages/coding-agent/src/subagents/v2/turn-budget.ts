@@ -9,6 +9,19 @@ import {
 	ChildBudgetTracker,
 } from "../runtime/budgets.ts";
 
+/**
+ * Tokens a `maxTokens` budget counts: uncached input, cache writes, and output.
+ * Cache reads are excluded: they re-read already-processed context, are large and
+ * cheap, and would exhaust a budget long before the child did new work. They stay
+ * visible in usage reporting.
+ */
+export function budgetTokens(usage: Pick<AssistantMessage["usage"], "input" | "output" | "cacheWrite">): {
+	input: number;
+	output: number;
+} {
+	return { input: usage.input + usage.cacheWrite, output: usage.output };
+}
+
 export const CHILD_WRAP_UP_LIMITS = Object.freeze({ timeoutMs: 30_000, maxTokens: 1024 });
 type ExhaustedBudget = Extract<BudgetState, { status: "exhausted" }>;
 
@@ -56,7 +69,8 @@ export class ChildTurnBudget {
 			if (this.wrappingUp || seen.has(message)) return;
 			seen.add(message);
 			const usage = message.usage;
-			this.tracker.recordUsage(usage.input + usage.cacheRead + usage.cacheWrite, usage.output);
+			const counted = budgetTokens(usage);
+			this.tracker.recordUsage(counted.input, counted.output);
 		};
 		const unsubscribe = session.subscribe((event) => {
 			if (event.type === "message_end" && event.message.role === "assistant") recordUsage(event.message);
