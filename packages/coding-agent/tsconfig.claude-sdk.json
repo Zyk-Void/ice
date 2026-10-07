@@ -1,0 +1,6 @@
+{
+	"extends": "../../tsconfig.json",
+	"compilerOptions": { "noEmit": true, "skipLibCheck": true },
+	"include": ["src/claude-sdk/**/*.ts", "src/utils/highlight-js-lib-index.d.ts"],
+	"exclude": ["dist"]
+}
