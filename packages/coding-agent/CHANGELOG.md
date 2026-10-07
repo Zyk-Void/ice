@@ -42,6 +42,7 @@
 
 ### Breaking Changes
 
+- Made subagents V2 (`agent`, `agent_control`, `agent_patch`) the default subagent tool set. The legacy delegation tools remain available for one transition period through the global `ice.subagents.v2: false` setting or `ICE_SUBAGENTS_V2=0` and will be removed. Legacy agent files that use `fallbackModel`, `thinkingLevel`, `mcpTools`, or other removed keys are reported with the V2 replacement by `ice agents validate`.
 - Renamed the product to ICE. The only supported executable is `ice`.
 - Moved configuration to `.ice` and agent state to `~/.ice/agent`. `.pi` is not a discovery root. Existing state must be migrated explicitly.
 - Renamed every environment variable to the `ICE_*` prefix. `PI_*` / `PIV_*` values are not read.

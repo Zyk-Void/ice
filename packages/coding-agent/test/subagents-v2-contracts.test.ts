@@ -189,11 +189,13 @@ describe("subagent V2 rollout gate", () => {
 		expect(selectSubagentToolNames(false)).toEqual(LEGACY_SUBAGENT_TOOL_NAMES);
 	});
 
-	it("enables V2 only from an explicit setting or env value", () => {
-		expect(isSubagentsV2Enabled(undefined, undefined)).toBe(false);
-		expect(isSubagentsV2Enabled("true", undefined)).toBe(false);
-		expect(isSubagentsV2Enabled(true, undefined)).toBe(true);
-		expect(isSubagentsV2Enabled(undefined, "1")).toBe(true);
+	it("defaults to V2 and opts out only through an explicit false setting or env value", () => {
+		expect(isSubagentsV2Enabled(undefined, undefined)).toBe(true);
+		expect(isSubagentsV2Enabled("false", undefined)).toBe(true);
+		expect(isSubagentsV2Enabled(false, undefined)).toBe(false);
+		expect(isSubagentsV2Enabled(false, "1")).toBe(true);
+		expect(isSubagentsV2Enabled(true, "0")).toBe(false);
+		expect(isSubagentsV2Enabled(undefined, "yes")).toBe(true);
 	});
 
 	it("lists exactly the legacy tool names registered by the legacy extension", () => {

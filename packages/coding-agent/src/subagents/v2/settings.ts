@@ -43,7 +43,6 @@ const V2KeysSchema = Type.Object({
 type V2Keys = Static<typeof V2KeysSchema>;
 
 export interface SubagentsV2Settings {
-	enabled: boolean;
 	defaultAgent: string;
 	maxDepth: number;
 	maxConcurrent: number;
@@ -69,7 +68,6 @@ export function resolveSubagentsV2Settings(input: {
 	global?: unknown;
 	project?: unknown;
 	projectTrusted: boolean;
-	env?: string;
 }): SubagentsV2Settings {
 	const global = pick(input.global);
 	const project = input.projectTrusted ? pick(input.project) : { keys: {} as V2Keys, diagnostics: [] };
@@ -82,7 +80,6 @@ export function resolveSubagentsV2Settings(input: {
 	const narrowest = (key: "maxDepth" | "maxConcurrent", fallback: number) =>
 		Math.min(g[key] ?? fallback, p[key] ?? Number.POSITIVE_INFINITY);
 	return {
-		enabled: input.env === "1" || input.env === "true" || g.v2 === true,
 		defaultAgent: p.defaultAgent ?? g.defaultAgent ?? "general",
 		maxDepth: narrowest("maxDepth", 0),
 		maxConcurrent: narrowest("maxConcurrent", 4),

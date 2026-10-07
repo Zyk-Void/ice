@@ -1,10 +1,9 @@
 /**
- * Subagent V2 rollout gate (Phase 0: contract only).
+ * Subagent V2 rollout gate.
  *
- * Design: Plan/subagent-rewrite.md section 23 "Rollout gate". From P6.0 until
- * P10.2 the setting or env var selects exactly one subagent tool set; the model
- * never sees legacy and V2 tools together. P10.2 deletes this module with the
- * legacy tools.
+ * Design: Plan/subagent-rewrite.md section 23 "Rollout gate". V2 is the default;
+ * `ice.subagents.v2: false` or ICE_SUBAGENTS_V2=0 selects the legacy tool set
+ * until P10.2 deletes it. The model never sees legacy and V2 tools together.
  */
 
 export const SUBAGENTS_V2_SETTING_PATH = "ice.subagents.v2";
@@ -31,8 +30,11 @@ export const LEGACY_SUBAGENT_TOOL_NAMES = Object.freeze([
 	"integrate_writer_patch",
 ] as const);
 
+/** The env var wins when set to a recognized value; otherwise only an explicit `false` setting opts out. */
 export function isSubagentsV2Enabled(setting: unknown, env: string | undefined): boolean {
-	return setting === true || env === "1" || env === "true";
+	if (env === "0" || env === "false") return false;
+	if (env === "1" || env === "true") return true;
+	return setting !== false;
 }
 
 export function selectSubagentToolNames(v2Enabled: boolean): readonly string[] {

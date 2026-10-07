@@ -4,7 +4,7 @@ Ice remains the only reasoning/tool loop. These controls belong to `ice`; ordina
 
 ## Experimental V2 boundary
 
-This guide otherwise describes the default legacy tool set. The opt-in global `ice.subagents.v2: true` setting or `ICE_SUBAGENTS_V2=1` selects the experimental `agent`, `agent_control`, and `agent_patch` tools **instead of**, never alongside, the legacy tools. V2 is still incomplete; implementation progress and deferred behavior are recorded in `Plan/subagent-rewrite.md` at the repository root.
+Subagents V2 (`agent`, `agent_control`, `agent_patch`; see [subagents-v2.md](./subagents-v2.md)) is now the default. This guide otherwise describes the legacy tool set, which the global `ice.subagents.v2: false` setting or `ICE_SUBAGENTS_V2=0` selects **instead of**, never alongside, V2. The legacy tools will be removed; implementation progress is recorded in `Plan/subagent-rewrite.md` at the repository root.
 
 The gated worktree path gives a child bounded staged/unstaged/untracked parent WIP and reports only its own delta. Inspect before apply; applying requires a trusted build parent and current write authority. With a configured `--ice-verify` argv the verifier must pass or the apply rolls back; without one the patch is applied like your own edits and reported as unverified. Integration preserves the real index. Newer edits are never blindly overwritten during rollback. Inspect interrupted `applying` / `rollback_conflict` state and its retained recovery reference; do not replay it or delete recovery data. Unchanged worktrees are removed with an `unchanged` state, not a verification claim. Changed worktrees remain until an explicit apply/reject/delete decision.
 

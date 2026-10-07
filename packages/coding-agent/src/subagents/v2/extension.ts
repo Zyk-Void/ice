@@ -29,6 +29,7 @@ import { type AgentToolParameters, AgentToolParametersSchema } from "../api/agen
 import type { AgentControlParameters } from "../api/agent-control.ts";
 import { AgentControlParametersSchema } from "../api/agent-control.ts";
 import { type AgentPatchParameters, AgentPatchParametersSchema } from "../api/agent-patch.ts";
+import { isSubagentsV2Enabled } from "../api/tool-set.ts";
 import { getSubagentGlobalAgentsDir } from "../definitions/legacy-profiles.ts";
 import {
 	AGENT_LISTING_CUSTOM_TYPE,
@@ -115,9 +116,8 @@ function listingStateFromBranch(ctx: ExtensionContext): AgentListingState | unde
 }
 
 export function isSubagentsV2Selected(globalSettings: { ice?: unknown } | undefined, env: string | undefined): boolean {
-	if (env === "1" || env === "true") return true;
 	const ice = globalSettings?.ice as { subagents?: { v2?: unknown } } | undefined;
-	return ice?.subagents?.v2 === true;
+	return isSubagentsV2Enabled(ice?.subagents?.v2, env);
 }
 
 export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsOptions = {}): void {
@@ -142,7 +142,6 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			global: (manager?.getGlobalSettings() as { ice?: { subagents?: unknown } } | undefined)?.ice?.subagents,
 			project: (manager?.getProjectSettings() as { ice?: { subagents?: unknown } } | undefined)?.ice?.subagents,
 			projectTrusted: trusted,
-			env: process.env.ICE_SUBAGENTS_V2,
 		});
 	};
 	const hubListeners = new Set<() => void>();

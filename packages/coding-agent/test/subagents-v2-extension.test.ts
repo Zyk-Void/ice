@@ -26,11 +26,11 @@ function fakeApi() {
 }
 
 describe("subagent V2 rollout gate", () => {
-	it("selects V2 only from the env var or the global ice.subagents.v2 setting", () => {
-		expect(isSubagentsV2Selected(undefined, undefined)).toBe(false);
-		expect(isSubagentsV2Selected({ ice: { subagents: { v2: true } } }, undefined)).toBe(true);
-		expect(isSubagentsV2Selected({ ice: { subagents: { v2: "yes" } } }, undefined)).toBe(false);
-		expect(isSubagentsV2Selected(undefined, "1")).toBe(true);
+	it("selects V2 by default and legacy only from ice.subagents.v2: false or the env var", () => {
+		expect(isSubagentsV2Selected(undefined, undefined)).toBe(true);
+		expect(isSubagentsV2Selected({ ice: { subagents: { v2: false } } }, undefined)).toBe(false);
+		expect(isSubagentsV2Selected({ ice: { subagents: { v2: false } } }, "1")).toBe(true);
+		expect(isSubagentsV2Selected(undefined, "0")).toBe(false);
 	});
 
 	it("registers only V2 tools, never a legacy one", () => {
