@@ -17,7 +17,7 @@ Target implementation root: packages/coding-agent/src/subagents/
 | 1.3 | Done | `ice-subagents.ts` split into 21 modules under `src/subagents/` by a checker-driven codemod. 524 declarations verified token-identical except added `export` (one format-only rewrap) |
 | 1.4 | Partial | Observatory and transcript components moved to `subagents/ui/`. `ice-agent-view-bridge.ts` and `subagent-view-switcher.ts` stay as interactive-mode integration points until P8 |
 | 1.5 | Done | `ice-subagents.ts` is a 79-line re-export barrel. Satellite modules moved under `subagents/` too. Largest remaining files: `legacy-extension.ts` (3.4k lines, the tool registration closure) and `runtime/runner.ts` (2.5k lines, one class) |
-| 1 tests | Pending | `test/ice-subagents.test.ts` (252 cases) is not split yet; the ledger split log is filled in during that split |
+| 1 tests | Done | `test/ice-subagents.test.ts` split into 12 themed files + `test/ice-subagents-harness.ts`; 253 cases token-identical; split log in the ledger |
 
 ### Revision 2 (review pass)
 
