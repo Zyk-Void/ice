@@ -8,7 +8,7 @@
  */
 
 import type { AgentDefinitionSource, AgentIsolationMode, AgentThinkingLevel } from "../definitions/schema.ts";
-import type { PermissionDecision } from "../permissions/rules.ts";
+import type { AgentPermissionMode, PermissionDecision, PermissionRuleScope } from "../permissions/rules.ts";
 import type { SubagentTaskContract } from "../results/task-contract.ts";
 
 export const CHILD_RUNTIME_CONTRACT_VERSION = 2;
@@ -27,11 +27,14 @@ export function isChildGroupId(value: unknown): value is string {
 	return typeof value === "string" && CHILD_GROUP_ID_PATTERN.test(value);
 }
 
-/** A normalized rule as frozen into the contract; matching semantics are owned by the Phase 3 evaluator. */
+/**
+ * A child rule as frozen into the contract, in `tool` or `tool(pattern)` form. The origin
+ * scope is kept because only user/managed allow rules lift the child mutation ceiling.
+ */
 export interface NormalizedPermissionRule {
-	tool: string;
-	pattern?: string;
+	rule: string;
 	decision: PermissionDecision;
+	scope: PermissionRuleScope;
 }
 
 export interface FrozenChildTool {
@@ -84,8 +87,13 @@ export interface ChildRuntimeContract {
 		mcpServers: readonly string[];
 		spawns: readonly string[];
 		maxDepth: number;
-		/** Whether `--sub-yolo` was active at acceptance; revival requires the same or stricter state. */
+		/** Whether `--sub-yolo` was active at acceptance; revival requires it to still be active. */
 		subYolo: boolean;
+		/** Agent permission preset frozen at acceptance. */
+		agentMode: AgentPermissionMode;
+		/** Parent ICE mode at acceptance; a parent that has since moved to plan blocks mutation-capable children. */
+		parentMode: "plan" | "build";
+		worktree: boolean;
 	};
 
 	result: {

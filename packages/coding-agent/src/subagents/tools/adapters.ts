@@ -54,6 +54,9 @@ export const ICE_CAPABILITY_LIMITS = Object.freeze({
 
 export const ICE_BUILTIN_CHILD_TOOLS = ["read", "grep", "find", "ls", "bash", "edit", "write"] as const;
 const MANAGEMENT_TOOLS = new Set([
+	"agent",
+	"agent_control",
+	"agent_patch",
 	"delegate",
 	"delegate_async",
 	"delegate_batch",
