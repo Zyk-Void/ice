@@ -1,4 +1,4 @@
-import { redactCredentialText } from "./utils/redact.ts";
+import { redactCredentialText } from "../../utils/redact.ts";
 
 /**
  * Local structural unions for subagent quality telemetry (plan 7.1). Declared here

@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-	buildSubagentQualityTelemetry,
-	renderSubagentQualityTelemetry,
-} from "../src/ice-subagent-quality-telemetry.ts";
-import { buildSubagentTaskContract, recommendSubagentReviewerGate } from "../src/ice-subagent-task-contract.ts";
+import { buildSubagentTaskContract, recommendSubagentReviewerGate } from "../src/subagents/results/task-contract.ts";
+import { buildSubagentQualityTelemetry, renderSubagentQualityTelemetry } from "../src/subagents/telemetry/quality.ts";
 
 describe("subagent quality completion regressions", () => {
 	it.each([

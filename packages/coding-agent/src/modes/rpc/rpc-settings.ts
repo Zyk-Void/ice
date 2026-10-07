@@ -1,8 +1,8 @@
 import type { SettingItem } from "@zykairotis/ice-tui";
 import type { RegisteredSettings } from "../../core/extensions/types.ts";
 import type { IceSettingsValue, PackageSource, SettingsManager, SettingsScope } from "../../core/settings-manager.ts";
-import { resolveSubagentConcurrencyPolicy } from "../../ice-subagent-concurrency.ts";
-import { parseIceSettings, resolveIceSubagentContract } from "../../ice-subagent-settings.ts";
+import { resolveSubagentConcurrencyPolicy } from "../../subagents/registry/admission.ts";
+import { parseIceSettings, resolveIceSubagentContract } from "../../subagents/settings.ts";
 
 export type RpcSettingsFieldKind = "boolean" | "select" | "number" | "text" | "string-list" | "package-sources";
 export type RpcSettingsFieldScope = SettingsScope | "both";

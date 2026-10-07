@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
-import type { ToolDefinition } from "./core/extensions/types.ts";
-import { redactCredentialText } from "./utils/redact.ts";
+import type { ToolDefinition } from "../../core/extensions/types.ts";
+import { redactCredentialText } from "../../utils/redact.ts";
 
 /** A trusted adapter is an authority boundary, not a sandbox or a tool-description heuristic. */
 export type IceCapabilityAccess = "read-only" | "mutation" | "unknown";

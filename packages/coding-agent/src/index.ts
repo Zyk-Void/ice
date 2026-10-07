@@ -328,15 +328,6 @@ export {
 	type ProjectTrustStoreEntry,
 	type ProjectTrustUpdate,
 } from "./core/trust-manager.ts";
-// Explicit parent-owned ICE adapter APIs. Importing these grants no child authority.
-export {
-	type IceCapabilitySnapshot,
-	type IceChildDispatchContext,
-	type IceDelegableTool,
-	isIceDelegableAdapterId,
-	registerIceDelegableTool,
-} from "./ice-subagent-capabilities.ts";
-export { type IceHookHandler, registerIceSubagentHook } from "./ice-subagent-settings.ts";
 export {
 	type IceSubagentMcpAdapter,
 	type IceSubagentMcpToolAuthorization,
@@ -432,6 +423,15 @@ export {
 	Theme,
 	type ThemeColor,
 } from "./modes/interactive/theme/theme.ts";
+export { type IceHookHandler, registerIceSubagentHook } from "./subagents/settings.ts";
+// Explicit parent-owned ICE adapter APIs. Importing these grants no child authority.
+export {
+	type IceCapabilitySnapshot,
+	type IceChildDispatchContext,
+	type IceDelegableTool,
+	isIceDelegableAdapterId,
+	registerIceDelegableTool,
+} from "./subagents/tools/adapters.ts";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.ts";
 export { parseFrontmatter, stripFrontmatter } from "./utils/frontmatter.ts";

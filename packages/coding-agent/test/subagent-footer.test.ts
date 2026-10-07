@@ -8,12 +8,12 @@ import {
 	type IceAgentViewLiveSession,
 	type IceAgentViewLiveSessionSource,
 } from "../src/ice-agent-view-bridge.ts";
-import type { SubagentRuntimeAttention } from "../src/ice-subagent-timeout-supervisor.ts";
 import { createSubagentLiveSessionControl, SubagentLiveSessionRegistry } from "../src/ice-subagents.ts";
 import {
 	createSubagentFooterSnapshot,
 	SubagentFooterSwitcher,
 } from "../src/modes/interactive/components/subagent-view-switcher.ts";
+import type { SubagentRuntimeAttention } from "../src/subagents/runtime/supervisor.ts";
 
 function session(sessionId: string, isStreaming = false): AgentSession {
 	return {

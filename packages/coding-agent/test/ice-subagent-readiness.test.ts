@@ -10,9 +10,6 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../src/core
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { registerIceDelegableTool } from "../src/ice-subagent-capabilities.ts";
-import { SUBAGENT_CONCURRENCY_LIMITS } from "../src/ice-subagent-concurrency.ts";
-import { registerIceSubagentHook } from "../src/ice-subagent-settings.ts";
 import iceSubagents, {
 	type IceSubagentMcpAdapter,
 	NativeSubagentRunner,
@@ -21,6 +18,9 @@ import iceSubagents, {
 	type SubagentResult,
 	subagentMcpToolName,
 } from "../src/ice-subagents.ts";
+import { SUBAGENT_CONCURRENCY_LIMITS } from "../src/subagents/registry/admission.ts";
+import { registerIceSubagentHook } from "../src/subagents/settings.ts";
+import { registerIceDelegableTool } from "../src/subagents/tools/adapters.ts";
 
 const cleanup: Array<() => void | Promise<void>> = [];
 afterEach(async () => {

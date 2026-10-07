@@ -3,8 +3,8 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createIceCommandHookHandler, parseIceCommandHookPolicy } from "../src/ice-subagent-command-hooks.ts";
-import type { IceHookDecisionInput } from "../src/ice-subagent-settings.ts";
+import { createIceCommandHookHandler, parseIceCommandHookPolicy } from "../src/subagents/hooks/command-hooks.ts";
+import type { IceHookDecisionInput } from "../src/subagents/settings.ts";
 
 const dirs: string[] = [];
 afterEach(() => {

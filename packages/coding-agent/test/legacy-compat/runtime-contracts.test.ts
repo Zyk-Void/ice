@@ -8,10 +8,10 @@ import { compatibleBlackholeConfigPath, compatibleCogneeStorageDir } from "../..
 import { DefaultResourceLoader } from "../../src/core/resource-loader.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { hasTrustRequiringProjectResources } from "../../src/core/trust-manager.ts";
-import { SubagentJobRegistry } from "../../src/ice-subagent-jobs.ts";
 import { getThemeByName, initTheme, setTheme, stopThemeWatcher } from "../../src/modes/interactive/theme/theme.ts";
 import { getIceSettingsCommandSchemaResult, invokeIceSettingsCommand } from "../../src/modes/rpc/rpc-command-schema.ts";
 import { applyRpcSetting } from "../../src/modes/rpc/rpc-settings.ts";
+import { SubagentJobRegistry } from "../../src/subagents/registry/jobs.ts";
 
 const roots: string[] = [];
 const registries: SubagentJobRegistry[] = [];

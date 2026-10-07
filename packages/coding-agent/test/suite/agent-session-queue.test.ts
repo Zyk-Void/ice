@@ -3,7 +3,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@zykairotis/ice-ai";
 import type { ExtensionAPI } from "@zykairotis/ice-coding-agent";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { SubagentCheckInCoordinator } from "../../src/ice-subagent-checkin.ts";
+import { SubagentCheckInCoordinator } from "../../src/subagents/runtime/checkin.ts";
 import { createHarness, getAssistantTexts, getMessageText, getUserTexts, type Harness } from "./harness.ts";
 
 async function createWaitingHarness(

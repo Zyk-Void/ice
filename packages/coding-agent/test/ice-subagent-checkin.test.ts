@@ -6,7 +6,7 @@ import {
 	type SubagentCheckInClock,
 	SubagentCheckInCoordinator,
 	type SubagentCheckInNotice,
-} from "../src/ice-subagent-checkin.ts";
+} from "../src/subagents/runtime/checkin.ts";
 
 class TestClock implements SubagentCheckInClock {
 	private time = 1000;

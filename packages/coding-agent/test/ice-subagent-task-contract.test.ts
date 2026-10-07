@@ -10,7 +10,7 @@ import {
 	type SubagentTaskContractInput,
 	type SubagentTaskContractKind,
 	type SubagentTaskVerificationMode,
-} from "../src/ice-subagent-task-contract.ts";
+} from "../src/subagents/results/task-contract.ts";
 
 function expectContractError(
 	run: () => unknown,

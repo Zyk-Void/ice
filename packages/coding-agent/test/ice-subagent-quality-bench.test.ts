@@ -20,8 +20,8 @@ import {
 	type SubagentQualityRunObservation,
 	type SubagentQualityRunRecord,
 	serializeQualityBenchmarkJson,
-} from "../src/ice-subagent-quality-bench.ts";
-import { executeLiveQualityBenchmark } from "../src/ice-subagent-quality-live-bench.ts";
+} from "../src/subagents/bench/quality-bench.ts";
+import { executeLiveQualityBenchmark } from "../src/subagents/bench/quality-live-bench.ts";
 import { qualityCaseManifest } from "./fixtures/quality/cases.ts";
 
 /**

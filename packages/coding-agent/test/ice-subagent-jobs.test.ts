@@ -4,6 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+	type ReviewFinding,
+	type SubagentReportArtifact,
+	type SubagentResult,
+	type SubagentVerification,
+	writeSubagentReportArtifact,
+} from "../src/ice-subagents.ts";
+import {
 	JOB_ENTRY_TYPE,
 	type PersistedSubagentJobSnapshot,
 	SUBAGENT_JOB_QUEUE_LIMIT,
@@ -11,16 +18,9 @@ import {
 	SubagentJobError,
 	SubagentJobRegistry,
 	type SubagentJobRunResult,
-} from "../src/ice-subagent-jobs.ts";
-import { SubagentOutputArtifactStore } from "../src/ice-subagent-output-artifacts.ts";
-import type { IceHookDispatchRecord } from "../src/ice-subagent-settings.ts";
-import {
-	type ReviewFinding,
-	type SubagentReportArtifact,
-	type SubagentResult,
-	type SubagentVerification,
-	writeSubagentReportArtifact,
-} from "../src/ice-subagents.ts";
+} from "../src/subagents/registry/jobs.ts";
+import { SubagentOutputArtifactStore } from "../src/subagents/results/output-artifacts.ts";
+import type { IceHookDispatchRecord } from "../src/subagents/settings.ts";
 
 const TEST_REPORT_ARTIFACT_ROOT = "/tmp/ice-subagent-report-artifacts";
 const registries: SubagentJobRegistry[] = [];

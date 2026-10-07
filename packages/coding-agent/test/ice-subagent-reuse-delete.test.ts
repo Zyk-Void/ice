@@ -7,7 +7,6 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
 import type { CreateAgentSessionResult } from "../src/core/sdk.ts";
-import { SubagentRunSupervisorRegistry } from "../src/ice-subagent-timeout-supervisor.ts";
 import {
 	NativeSubagentRunner,
 	normalizeSubagentRequest,
@@ -15,6 +14,7 @@ import {
 	type SubagentResult,
 	subagentMcpToolName,
 } from "../src/ice-subagents.ts";
+import { SubagentRunSupervisorRegistry } from "../src/subagents/runtime/supervisor.ts";
 
 const tempDirs: string[] = [];
 const PARENT_SESSION = "parent-session";

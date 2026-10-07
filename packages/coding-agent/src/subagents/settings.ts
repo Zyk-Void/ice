@@ -13,11 +13,10 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-
-import { type IceCommandHookPolicy, parseIceCommandHookPolicy } from "./ice-subagent-command-hooks.ts";
-import { SUBAGENT_CONCURRENCY_LIMITS, type SubagentConcurrencySettings } from "./ice-subagent-concurrency.ts";
-import type { SubagentRequestedToolName, SubagentThinkingLevel } from "./ice-subagents.ts";
-import { redactCredentialText } from "./utils/redact.ts";
+import type { SubagentRequestedToolName, SubagentThinkingLevel } from "../ice-subagents.ts";
+import { redactCredentialText } from "../utils/redact.ts";
+import { type IceCommandHookPolicy, parseIceCommandHookPolicy } from "./hooks/command-hooks.ts";
+import { SUBAGENT_CONCURRENCY_LIMITS, type SubagentConcurrencySettings } from "./registry/admission.ts";
 
 // ---------------------------------------------------------------------------
 // W03 — configuration schema

@@ -1,4 +1,4 @@
-import { redactCredentialText } from "./utils/redact.ts";
+import { redactCredentialText } from "../../utils/redact.ts";
 
 /**
  * Pure assurance-level and evidence-verification library for ICE subagent

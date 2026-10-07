@@ -4,15 +4,6 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { SettingsManager, type SettingsStorage } from "../src/core/settings-manager.ts";
 import {
-	IceSubagentHookDispatcher,
-	narrowIceSubagentTools,
-	parseIceHooksSettings,
-	parseIceSettings,
-	parseIceSubagentSettings,
-	resolveIceSubagentContract,
-	resolveIceSubagentHooks,
-} from "../src/ice-subagent-settings.ts";
-import {
 	createSubagentLiveSessionControl,
 	normalizeSubagentOutputSchema,
 	normalizeSubagentRequest as normalizeSubagentRequestWithAgentDir,
@@ -20,6 +11,15 @@ import {
 	type SubagentNormalizationOptions,
 	type SubagentRequest,
 } from "../src/ice-subagents.ts";
+import {
+	IceSubagentHookDispatcher,
+	narrowIceSubagentTools,
+	parseIceHooksSettings,
+	parseIceSettings,
+	parseIceSubagentSettings,
+	resolveIceSubagentContract,
+	resolveIceSubagentHooks,
+} from "../src/subagents/settings.ts";
 
 function normalizeSubagentRequest(
 	request: SubagentRequest,

@@ -30,13 +30,6 @@ import { createAgentSession } from "../src/core/sdk.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { importRufloAgentPack, mapAgentPackTools, unsupportedAgentPackFields } from "../src/ice-agent-packs.ts";
 import { IceAgentViewBridge } from "../src/ice-agent-view-bridge.ts";
-import { getIceDelegableTools, registerIceDelegableTool } from "../src/ice-subagent-capabilities.ts";
-import { SUBAGENT_CONCURRENCY_LIMITS } from "../src/ice-subagent-concurrency.ts";
-import { JOB_COMPLETION_MESSAGE_TYPE, JOB_ENTRY_TYPE, SubagentJobRegistry } from "../src/ice-subagent-jobs.ts";
-import { getProgressSnapshot } from "../src/ice-subagent-observatory.ts";
-import { SubagentOutputArtifactStore } from "../src/ice-subagent-output-artifacts.ts";
-import { ICE_HOOK_JOURNAL_ENTRY_TYPE, type IceHookHandler } from "../src/ice-subagent-settings.ts";
-import { SubagentRunSupervisorRegistry } from "../src/ice-subagent-timeout-supervisor.ts";
 import * as iceSubagentsModule from "../src/ice-subagents.ts";
 import iceSubagents, {
 	assertSubagentToolEligible,
@@ -107,6 +100,13 @@ import iceSubagents, {
 	type WriterResult,
 	writeSubagentReportArtifact,
 } from "../src/ice-subagents.ts";
+import { SUBAGENT_CONCURRENCY_LIMITS } from "../src/subagents/registry/admission.ts";
+import { JOB_COMPLETION_MESSAGE_TYPE, JOB_ENTRY_TYPE, SubagentJobRegistry } from "../src/subagents/registry/jobs.ts";
+import { SubagentOutputArtifactStore } from "../src/subagents/results/output-artifacts.ts";
+import { SubagentRunSupervisorRegistry } from "../src/subagents/runtime/supervisor.ts";
+import { ICE_HOOK_JOURNAL_ENTRY_TYPE, type IceHookHandler } from "../src/subagents/settings.ts";
+import { getIceDelegableTools, registerIceDelegableTool } from "../src/subagents/tools/adapters.ts";
+import { getProgressSnapshot } from "../src/subagents/ui/observatory.ts";
 
 const tempDirs: string[] = [];
 const execFileAsync = promisify(execFile);

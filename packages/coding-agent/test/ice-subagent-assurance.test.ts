@@ -10,7 +10,7 @@ import {
 	type SubagentEvidenceDescriptor,
 	validateSubagentEvidenceClaims,
 	validateSubagentImplementationClaims,
-} from "../src/ice-subagent-assurance.ts";
+} from "../src/subagents/results/assurance.ts";
 
 const ALL_ASSURANCE_LEVELS: readonly SubagentAssuranceLevel[] = [
 	"unverified_plain",

@@ -16,8 +16,8 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { getAgentDir } from "./config.ts";
-import { redactCredentialText } from "./utils/redact.ts";
+import { getAgentDir } from "../../config.ts";
+import { redactCredentialText } from "../../utils/redact.ts";
 
 export const SUBAGENT_OUTPUT_ARTIFACT_LIMITS = {
 	inlineBytes: 48 * 1024,

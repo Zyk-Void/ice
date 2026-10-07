@@ -1,17 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { rmdirSync, unlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { getAgentDir } from "./config.ts";
-import { matchesEntryType } from "./core/legacy-compat/identity.ts";
-import { isIceDelegableAdapterId } from "./ice-subagent-capabilities.ts";
-import { SUBAGENT_CONCURRENCY_LIMITS, type SubagentConcurrencyAdmission } from "./ice-subagent-concurrency.ts";
-import {
-	isSubagentOutput,
-	type SubagentOutput,
-	type SubagentOutputArtifactStore,
-} from "./ice-subagent-output-artifacts.ts";
-import type { IceModelCandidateSkip, IceSubagentRouteSnapshot } from "./ice-subagent-routing.ts";
-import type { IceHookDispatchRecord } from "./ice-subagent-settings.ts";
+import { getAgentDir } from "../../config.ts";
+import { matchesEntryType } from "../../core/legacy-compat/identity.ts";
 import type {
 	ReviewFinding,
 	SubagentAssuranceLevel,
@@ -22,8 +13,17 @@ import type {
 	SubagentResult,
 	SubagentUsage,
 	SubagentVerification,
-} from "./ice-subagents.ts";
-import { redactCredentialText } from "./utils/redact.ts";
+} from "../../ice-subagents.ts";
+import { redactCredentialText } from "../../utils/redact.ts";
+import {
+	isSubagentOutput,
+	type SubagentOutput,
+	type SubagentOutputArtifactStore,
+} from "../results/output-artifacts.ts";
+import type { IceModelCandidateSkip, IceSubagentRouteSnapshot } from "../runtime/routing.ts";
+import type { IceHookDispatchRecord } from "../settings.ts";
+import { isIceDelegableAdapterId } from "../tools/adapters.ts";
+import { SUBAGENT_CONCURRENCY_LIMITS, type SubagentConcurrencyAdmission } from "./admission.ts";
 
 export const JOB_ENTRY_TYPE = "ice-subagent-job-v1";
 export const JOB_COMPLETION_MESSAGE_TYPE = "ice-subagent-job-completion";

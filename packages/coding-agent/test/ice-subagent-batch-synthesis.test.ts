@@ -1,13 +1,13 @@
 import { Buffer } from "node:buffer";
 import { describe, expect, it } from "vitest";
+import type { ReviewFinding, SubagentBatchTask } from "../src/ice-subagents.ts";
 import {
 	findExactDuplicateBatchTasks,
 	renderBatchSynthesisSection,
 	type SubagentBatchSynthesis,
 	type SubagentBatchSynthesisItem,
 	summarizeBatchSynthesis,
-} from "../src/ice-subagent-batch-synthesis.ts";
-import type { ReviewFinding, SubagentBatchTask } from "../src/ice-subagents.ts";
+} from "../src/subagents/results/batch-synthesis.ts";
 
 function batchTask(overrides: Partial<SubagentBatchTask> & { id: string }): SubagentBatchTask {
 	return {

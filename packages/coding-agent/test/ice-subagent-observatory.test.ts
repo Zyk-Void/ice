@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { SubagentJobInspection, SubagentJobStatus } from "../src/ice-subagent-jobs.ts";
+import type { SubagentBatchTaskLifecycleEvent, SubagentEvent, SubagentUsage } from "../src/ice-subagents.ts";
+import type { SubagentJobInspection, SubagentJobStatus } from "../src/subagents/registry/jobs.ts";
 import {
 	createObservatoryState,
 	durableJobEntryKeys,
@@ -21,8 +22,7 @@ import {
 	type SubagentCompletionInboxSessionEntry,
 	SubagentObservatoryStore,
 	type SubagentProgressSnapshot,
-} from "../src/ice-subagent-observatory.ts";
-import type { SubagentBatchTaskLifecycleEvent, SubagentEvent, SubagentUsage } from "../src/ice-subagents.ts";
+} from "../src/subagents/ui/observatory.ts";
 
 const usage: SubagentUsage = {
 	inputTokens: 10,

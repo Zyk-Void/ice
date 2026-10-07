@@ -6,13 +6,6 @@ import type { Api, Model } from "@zykairotis/ice-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CreateAgentSessionResult } from "../src/core/sdk.ts";
 import {
-	type IceHookDispatchRecord,
-	IceSubagentHookDispatcher,
-	parseIceHooksSettings,
-	projectIceHookRecords,
-	resolveIceSubagentHooks,
-} from "../src/ice-subagent-settings.ts";
-import {
 	extractCandidateEvidencePaths,
 	NativeSubagentRunner,
 	normalizeSubagentRequest as normalizeSubagentRequestWithAgentDir,
@@ -23,6 +16,13 @@ import {
 	type SubagentResult,
 	verifySubagentResult,
 } from "../src/ice-subagents.ts";
+import {
+	type IceHookDispatchRecord,
+	IceSubagentHookDispatcher,
+	parseIceHooksSettings,
+	projectIceHookRecords,
+	resolveIceSubagentHooks,
+} from "../src/subagents/settings.ts";
 
 const tempDirs: string[] = [];
 

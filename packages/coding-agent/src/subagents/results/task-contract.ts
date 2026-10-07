@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { redactCredentialText } from "./utils/redact.ts";
+import { redactCredentialText } from "../../utils/redact.ts";
 
 /**
  * Host-owned Delegation Task Contract.

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { type Api, getSupportedThinkingLevels, type Model, type ModelThinkingLevel } from "@zykairotis/ice-ai";
-import type { ModelRuntime } from "./core/model-runtime.ts";
+import type { ModelRuntime } from "../../core/model-runtime.ts";
 
 export interface IceSubagentRouteSnapshot {
 	provider: string;

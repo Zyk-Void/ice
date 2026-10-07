@@ -10,7 +10,7 @@ import {
 	SUBAGENT_CONTEXT_BOOTSTRAP_LIMITS,
 	type SubagentContextManifest,
 	selectInstructionChain,
-} from "../src/ice-subagent-context-bootstrap.ts";
+} from "../src/subagents/runtime/context-bootstrap.ts";
 
 const createdDirs: string[] = [];
 

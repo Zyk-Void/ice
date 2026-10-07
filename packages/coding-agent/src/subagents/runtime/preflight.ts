@@ -1,6 +1,6 @@
 import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { redactCredentialText } from "./utils/redact.ts";
+import { redactCredentialText } from "../../utils/redact.ts";
 
 /**
  * Executable environment preflight for ICE subagents.

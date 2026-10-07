@@ -7,7 +7,7 @@ import {
 	isSubagentOutput,
 	SubagentOutputArtifactStore,
 	type SubagentOutputArtifactStoreLimits,
-} from "../src/ice-subagent-output-artifacts.ts";
+} from "../src/subagents/results/output-artifacts.ts";
 
 const roots: string[] = [];
 const stores: SubagentOutputArtifactStore[] = [];

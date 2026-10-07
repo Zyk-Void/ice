@@ -5,7 +5,7 @@ import {
 	projectSubagentManagementState,
 	SubagentRunSupervisor,
 	SubagentRunSupervisorRegistry,
-} from "../src/ice-subagent-timeout-supervisor.ts";
+} from "../src/subagents/runtime/supervisor.ts";
 
 afterEach(() => {
 	vi.useRealTimers();

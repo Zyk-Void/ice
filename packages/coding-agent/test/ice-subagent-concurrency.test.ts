@@ -2,20 +2,20 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import {
-	resolveSubagentConcurrencyPolicy,
-	SUBAGENT_CONCURRENCY_LIMITS,
-	SubagentConcurrencyAdmission,
-} from "../src/ice-subagent-concurrency.ts";
-import type { PersistedSubagentJobSnapshot, SubagentJobRunResult } from "../src/ice-subagent-jobs.ts";
-import { SubagentJobRegistry } from "../src/ice-subagent-jobs.ts";
-import { parseIceSettings } from "../src/ice-subagent-settings.ts";
 import type { SubagentResult } from "../src/ice-subagents.ts";
 import {
 	normalizeSubagentRequest,
 	type ResolvedSubagentBatchTask,
 	runResolvedSubagentBatch,
 } from "../src/ice-subagents.ts";
+import {
+	resolveSubagentConcurrencyPolicy,
+	SUBAGENT_CONCURRENCY_LIMITS,
+	SubagentConcurrencyAdmission,
+} from "../src/subagents/registry/admission.ts";
+import type { PersistedSubagentJobSnapshot, SubagentJobRunResult } from "../src/subagents/registry/jobs.ts";
+import { SubagentJobRegistry } from "../src/subagents/registry/jobs.ts";
+import { parseIceSettings } from "../src/subagents/settings.ts";
 
 function completedRun(): SubagentJobRunResult {
 	const result: SubagentResult = {

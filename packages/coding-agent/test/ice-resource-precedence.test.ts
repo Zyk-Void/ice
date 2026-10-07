@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager } from "../src/core/package-manager.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { resolveIceSubagentContract, resolveIceSubagentHooks } from "../src/ice-subagent-settings.ts";
+import { resolveIceSubagentContract, resolveIceSubagentHooks } from "../src/subagents/settings.ts";
 
 const roots: string[] = [];
 afterEach(() => {

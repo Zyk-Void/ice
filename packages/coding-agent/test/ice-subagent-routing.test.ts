@@ -4,7 +4,7 @@ import {
 	resolveIceSubagentCandidates,
 	resolveIceSubagentRoute,
 	snapshotIceSubagentRoute,
-} from "../src/ice-subagent-routing.ts";
+} from "../src/subagents/runtime/routing.ts";
 
 const faux = registerFauxProvider();
 afterAll(() => faux.unregister());

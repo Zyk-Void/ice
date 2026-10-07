@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SubagentJobInspection, SubagentJobResultEnvelope } from "../src/ice-subagent-jobs.ts";
-import {
-	type DurableSubagentJobResultView,
-	formatDurableSubagentJobDetail,
-	projectDurableSubagentJobResult,
-} from "../src/ice-subagent-observatory.ts";
+import type { SubagentJobInspection, SubagentJobResultEnvelope } from "../src/subagents/registry/jobs.ts";
 import {
 	buildSubagentQualityTelemetry,
 	formatWeakRunDiagnostics,
@@ -12,7 +7,12 @@ import {
 	SUBAGENT_QUALITY_TELEMETRY_MAX_BYTES,
 	SUBAGENT_WEAK_RUN_DIAGNOSTIC_CODES,
 	type SubagentQualityTelemetryInput,
-} from "../src/ice-subagent-quality-telemetry.ts";
+} from "../src/subagents/telemetry/quality.ts";
+import {
+	type DurableSubagentJobResultView,
+	formatDurableSubagentJobDetail,
+	projectDurableSubagentJobResult,
+} from "../src/subagents/ui/observatory.ts";
 
 const TASK_HASH = "a".repeat(64);
 const CONTEXT_HASH = "b".repeat(64);

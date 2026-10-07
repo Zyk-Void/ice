@@ -14,13 +14,13 @@ import {
 	type IceMode,
 	validateIceStartupArgs,
 } from "./ice-safe-verify.ts";
-import { getIceSubagentHookHandlers } from "./ice-subagent-settings.ts";
 import iceSubagents, {
 	getSubagentGlobalAgentsDir,
 	normalizeUnsafeSubagentStartupArgs,
 	registerIceSubagentMcpAdapter,
 } from "./ice-subagents.ts";
 import { main } from "./main.ts";
+import { getIceSubagentHookHandlers } from "./subagents/settings.ts";
 
 process.title = "ice";
 process.env.ICE_CODING_AGENT = "true";

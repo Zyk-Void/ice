@@ -3,7 +3,7 @@ import {
 	formatSubagentTelemetrySummary,
 	SUBAGENT_TELEMETRY_LIMIT,
 	SubagentTelemetryStore,
-} from "../src/ice-subagent-telemetry.ts";
+} from "../src/subagents/telemetry/outcomes.ts";
 
 describe("subagent outcome telemetry", () => {
 	it("records bounded local per-run outcomes", () => {

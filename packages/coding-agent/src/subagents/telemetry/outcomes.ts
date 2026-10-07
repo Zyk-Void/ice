@@ -1,5 +1,5 @@
-import type { SubagentStatus, SubagentUsage } from "./ice-subagents.ts";
-import { redactCredentialText } from "./utils/redact.ts";
+import type { SubagentStatus, SubagentUsage } from "../../ice-subagents.ts";
+import { redactCredentialText } from "../../utils/redact.ts";
 
 /**
  * Local structured delegation telemetry (P2-2). Bounded per-run outcome records

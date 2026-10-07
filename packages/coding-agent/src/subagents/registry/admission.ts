@@ -10,8 +10,8 @@
  * packages/coding-agent/test/ice-subagent-concurrency.bench.test.ts).
  */
 
-import type { IceSettingSource, ParsedIceSubagentSettings } from "./ice-subagent-settings.ts";
-import { redactCredentialText } from "./utils/redact.ts";
+import { redactCredentialText } from "../../utils/redact.ts";
+import type { IceSettingSource, ParsedIceSubagentSettings } from "../settings.ts";
 
 export const SUBAGENT_CONCURRENCY_LIMITS = {
 	min: 1,

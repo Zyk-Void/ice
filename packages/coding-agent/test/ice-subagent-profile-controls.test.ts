@@ -6,16 +6,16 @@ import type { Api, Context, Model, StreamFunction, StreamOptions } from "@zykair
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CreateAgentSessionResult } from "../src/core/sdk.ts";
 import {
-	getIceSubagentHookHandlers,
-	registerIceSubagentHook,
-	resolveIceSubagentHooks,
-} from "../src/ice-subagent-settings.ts";
-import {
 	createNativeSubagentSession,
 	listSubagentProfiles,
 	normalizeSubagentRequest,
 	resolveSubagentProfileResolution,
 } from "../src/ice-subagents.ts";
+import {
+	getIceSubagentHookHandlers,
+	registerIceSubagentHook,
+	resolveIceSubagentHooks,
+} from "../src/subagents/settings.ts";
 
 const dirs: string[] = [];
 afterEach(() => {

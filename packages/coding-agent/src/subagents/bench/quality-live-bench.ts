@@ -2,10 +2,18 @@ import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir } from "./config.ts";
-import { AuthStorage } from "./core/auth-storage.ts";
-import { ModelRegistry } from "./core/model-registry.ts";
-import { ModelRuntime } from "./core/model-runtime.ts";
+import { getAgentDir } from "../../config.ts";
+import { AuthStorage } from "../../core/auth-storage.ts";
+import { ModelRegistry } from "../../core/model-registry.ts";
+import { ModelRuntime } from "../../core/model-runtime.ts";
+import {
+	NativeSubagentRunner,
+	type NormalizedSubagentRequest,
+	normalizeSubagentRequest,
+	type SubagentEvent,
+	type SubagentRequest,
+	type SubagentTaskContractKind,
+} from "../../ice-subagents.ts";
 import {
 	createQualityBenchmarkRun,
 	type LiveQualityBenchMode,
@@ -15,15 +23,7 @@ import {
 	SubagentQualityBenchError,
 	type SubagentQualityObservedToolCall,
 	type SubagentQualityRunRecord,
-} from "./ice-subagent-quality-bench.ts";
-import {
-	NativeSubagentRunner,
-	type NormalizedSubagentRequest,
-	normalizeSubagentRequest,
-	type SubagentEvent,
-	type SubagentRequest,
-	type SubagentTaskContractKind,
-} from "./ice-subagents.ts";
+} from "./quality-bench.ts";
 
 const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"] as const;
 const DEFAULT_MODES: readonly LiveQualityBenchMode[] = [
@@ -35,7 +35,7 @@ const DEFAULT_MODES: readonly LiveQualityBenchMode[] = [
 	"batch",
 	"review",
 ];
-const FILE_AGENT_DIR = fileURLToPath(new URL("../test/fixtures/quality/agent-fixture", import.meta.url));
+const FILE_AGENT_DIR = fileURLToPath(new URL("../../../test/fixtures/quality/agent-fixture", import.meta.url));
 
 function taskKind(qualityCase: QualityCase, mode: LiveQualityBenchMode): SubagentTaskContractKind {
 	if (mode === "review" || qualityCase.class === "review_precision" || qualityCase.class === "conflicting_evidence") {

@@ -2,12 +2,12 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { normalizeSubagentRequest, type SubagentRequest } from "../src/ice-subagents.ts";
 import {
 	evaluateSubagentPreflight,
 	formatSubagentPreflight,
 	normalizeSubagentPreflightRequirements,
-} from "../src/ice-subagent-preflight.ts";
-import { normalizeSubagentRequest, type SubagentRequest } from "../src/ice-subagents.ts";
+} from "../src/subagents/runtime/preflight.ts";
 
 const tempDirs: string[] = [];
 

@@ -15,7 +15,7 @@ import {
 	getProgressSnapshot,
 	OBSERVATORY_TOOL_NAMES,
 	type SubagentProgressSnapshot,
-} from "../ice-subagent-observatory.ts";
+} from "../subagents/ui/observatory.ts";
 
 /** Max activity items kept in the ring buffer. */
 const MAX_ITEMS = 500;

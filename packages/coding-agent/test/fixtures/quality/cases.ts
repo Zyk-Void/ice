@@ -1,4 +1,4 @@
-import type { QualityCase, QualityCaseManifestFile } from "../../../src/ice-subagent-quality-bench.ts";
+import type { QualityCase, QualityCaseManifestFile } from "../../../src/subagents/bench/quality-bench.ts";
 
 /**
  * Fixture corpus for the ICE subagent quality benchmark: one case per quality

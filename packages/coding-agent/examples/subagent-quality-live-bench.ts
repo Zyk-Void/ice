@@ -9,8 +9,8 @@ import {
 	renderQualityBenchmarkMarkdown,
 	resolveQualityCaseManifest,
 	serializeQualityBenchmarkJson,
-} from "../src/ice-subagent-quality-bench.ts";
-import { executeLiveQualityBenchmark } from "../src/ice-subagent-quality-live-bench.ts";
+} from "../src/subagents/bench/quality-bench.ts";
+import { executeLiveQualityBenchmark } from "../src/subagents/bench/quality-live-bench.ts";
 import { qualityCaseManifest } from "../test/fixtures/quality/cases.ts";
 
 const execFileAsync = promisify(execFile);

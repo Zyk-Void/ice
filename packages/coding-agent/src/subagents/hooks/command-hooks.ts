@@ -2,8 +2,8 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { IceHookDecisionInput, IceHookDecisionResult, IceHookHandler } from "./ice-subagent-settings.ts";
-import { killProcessTree, trackDetachedChildPid, untrackDetachedChildPid } from "./utils/shell.ts";
+import { killProcessTree, trackDetachedChildPid, untrackDetachedChildPid } from "../../utils/shell.ts";
+import type { IceHookDecisionInput, IceHookDecisionResult, IceHookHandler } from "../settings.ts";
 
 export interface IceCommandHookPolicy {
 	enabled: boolean;

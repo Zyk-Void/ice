@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { redactCredentialText } from "./utils/redact.ts";
+import { redactCredentialText } from "../../utils/redact.ts";
 
 /**
  * Deterministic scoring library for the ICE subagent quality benchmark. The

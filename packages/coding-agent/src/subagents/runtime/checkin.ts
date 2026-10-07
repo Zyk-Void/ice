@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { AgentSession, AgentSessionEvent } from "./core/agent-session.ts";
-import { redactCredentialText } from "./utils/redact.ts";
+import type { AgentSession, AgentSessionEvent } from "../../core/agent-session.ts";
+import { redactCredentialText } from "../../utils/redact.ts";
 
 export const SUBAGENT_CHECKIN_INTERVAL_MS = 120_000;
 export const SUBAGENT_CHECKIN_MESSAGE_TYPE = "subagent_checkin";

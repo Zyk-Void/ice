@@ -9,14 +9,6 @@ import type { ExtensionContext } from "../src/core/extensions/types.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { loadSkillsFromDir } from "../src/core/skills.ts";
 import {
-	boundedIceToolOutput,
-	createIceDelegableToolDefinitions,
-	getIceDelegableTools,
-	type IceDelegableTool,
-	registerIceDelegableTool,
-	resolveIceDelegableTools,
-} from "../src/ice-subagent-capabilities.ts";
-import {
 	createNativeSubagentSession,
 	NativeSubagentRunner,
 	normalizeSubagentRequest,
@@ -24,6 +16,14 @@ import {
 	revalidateSubagentResources,
 	subagentMcpToolName,
 } from "../src/ice-subagents.ts";
+import {
+	boundedIceToolOutput,
+	createIceDelegableToolDefinitions,
+	getIceDelegableTools,
+	type IceDelegableTool,
+	registerIceDelegableTool,
+	resolveIceDelegableTools,
+} from "../src/subagents/tools/adapters.ts";
 
 const dirs: string[] = [];
 afterEach(() => {

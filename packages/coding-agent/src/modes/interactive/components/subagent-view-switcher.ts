@@ -9,11 +9,8 @@ import {
 } from "@zykairotis/ice-tui";
 import type { KeybindingsManager } from "../../../core/keybindings.ts";
 import type { IceAgentViewBridge, IceAgentViewDescriptor } from "../../../ice-agent-view-bridge.ts";
-import type { SubagentCheckInState } from "../../../ice-subagent-checkin.ts";
-import type {
-	SubagentRuntimeAttention,
-	SubagentToolActivityOutcome,
-} from "../../../ice-subagent-timeout-supervisor.ts";
+import type { SubagentCheckInState } from "../../../subagents/runtime/checkin.ts";
+import type { SubagentRuntimeAttention, SubagentToolActivityOutcome } from "../../../subagents/runtime/supervisor.ts";
 import { createDefaultAppearance } from "../appearance/appearance-defaults.ts";
 import { resolveAppearanceColorFn } from "../appearance/appearance-resolve.ts";
 import type { SubagentChromeAppearance } from "../appearance/appearance-types.ts";
