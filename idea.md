@@ -10,6 +10,39 @@ Core design:
 
 > Ice decides, reasons, routes models, and owns interaction. ICE constrains, records, verifies, and recovers execution.
 
+## Approved Subagent V2 Rewrite — 2026-10-07 (target, not shipped)
+
+The user approved a clean-break V2 of the subagent subsystem. The design, locked decisions D1–D25, and phases live in `Plan/subagent-rewrite.md` (revision 2). Nothing in this section is implemented yet. The dated sections below and "### 9. Controlled delegation" still describe shipped behavior until each V2 phase lands and updates them.
+
+V2 targets:
+
+- **Definitions** follow Claude Code's agent-directory model:
+  - frontmatter `name` is the identity;
+  - recursive `.ice/agents/**/*.md` discovered from cwd to the git root, plus `~/.ice/agents`, settings `ice.subagents.agents`, `--agents` JSON, the SDK, and built-ins (`general`, `explore`, `plan`, `review`, `worker`);
+  - trusted project definitions override user ones;
+  - managed policy is a lock layer;
+  - the callable agent list reaches the model automatically through cache-stable delta messages.
+  - This **supersedes** global-first resolution, filename identity, and the "no bundled catalog" decision recorded below.
+- **Permissions:** one allow/ask/deny evaluator (deny wins) for parent and children.
+  - A child decision is never more permissive than the parent decision for the same operation.
+  - A child mutation ceiling keeps today's safe default: edit, write, Bash, and mutation adapters default to `ask` for children. Only `--sub-yolo`, user-scope or managed allow rules, or worktree isolation (edit/write only) raise them.
+  - Project-scope sources can only narrow.
+  - Headless children without an approval client deny.
+- **Runtime:**
+  - every child is an ordinary `AgentSession` with a persisted transcript and a frozen, hashed `ChildRuntimeContract`, using one `ChildRegistry` and one `ag_` ID;
+  - children can be parked and cold-revived without re-resolving authority;
+  - durable completion delivery is at-most-once;
+  - optional `maxTurns`/`maxTokens`/`timeoutMs` budgets, with no default lifetime timeout. This reverses the removal of `maxTurns` recorded in the subagent settings parser;
+  - interrupted tool calls are never replayed.
+- **API:** `agent`, `agent_control`, `agent_patch` replace the 15 current tools.
+  - The "delegate only for two or more children" rule becomes advice.
+  - During migration the new tools stay behind `ice.subagents.v2` and are never visible together with the old tools.
+- **Isolation:** worktree isolation is available to any agent.
+  - The child sees the captured dirty parent baseline, and its patch contains only its own delta.
+  - Apply is baseline-aware and conflict-safe.
+  - Isolation never grants authority.
+- **Recursion:** `spawns` + `maxDepth` infrastructure exists, with `maxDepth` defaulting to 0.
+
 ## Subagent Background Execution and Parent Check-Ins — 2026-09-23
 
 ICE now defaults `delegate`, `delegate_async`, `delegate_batch`, `review_batch`, and `delegate_write` to managed background execution. Each path continues through the existing child runner and parent `AgentSession`; ICE does not add a second model loop or provider client. Managed `delegate` handles remain process-local, durable async jobs retain their owner-scoped persistence and restart-interruption semantics, batch/review aggregates retain deterministic child order with a separate bounded presentation cap, and writer acceptance occurs only after clean-parent/base-commit and isolated-worktree preflight succeeds.
