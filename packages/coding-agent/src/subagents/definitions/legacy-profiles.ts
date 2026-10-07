@@ -442,14 +442,33 @@ function loadProfilesFromDirectory(
 			}
 			const diagnostics: string[] = [];
 			let requestedModel: string | undefined;
-			if (frontmatter.model !== undefined) {
+			// Subagent V2 writes `model: [primary, fallback, inherit]`. Legacy supports a primary and one
+			// fallback with an implicit final parent model, so a trailing `inherit` is dropped.
+			let listFallback: string | undefined;
+			if (Array.isArray(frontmatter.model)) {
+				const candidates = frontmatter.model.filter((entry, index, list) => !(entry === "inherit" && index === list.length - 1));
+				if (
+					candidates.length < 1 ||
+					candidates.length > 2 ||
+					candidates.some((entry) => typeof entry !== "string" || !entry.trim() || entry === "inherit") ||
+					frontmatter.fallbackModel !== undefined ||
+					frontmatter.fallback_model !== undefined
+				) {
+					throw new SubagentError(
+						"malformed_result",
+						`Invalid model list in ${sourcePath}: legacy subagents accept [primary] or [primary, fallback], optionally ending with inherit.`,
+					);
+				}
+				requestedModel = parseExactModelReference(candidates[0] as string, sourcePath);
+				listFallback = candidates[1] as string | undefined;
+			} else if (frontmatter.model !== undefined && frontmatter.model !== "inherit") {
 				if (typeof frontmatter.model !== "string" || !frontmatter.model.trim()) {
 					throw new SubagentError("malformed_result", `Invalid primary model in ${sourcePath}.`);
 				}
 				requestedModel = parseExactModelReference(frontmatter.model, sourcePath);
 			}
 			let fallbackModel: string | undefined;
-			const fallbackRaw = frontmatter.fallbackModel ?? frontmatter.fallback_model;
+			const fallbackRaw = listFallback ?? frontmatter.fallbackModel ?? frontmatter.fallback_model;
 			if (fallbackRaw !== undefined) {
 				if (typeof fallbackRaw !== "string" || !fallbackRaw.trim()) {
 					throw new SubagentError("malformed_result", `Invalid fallback model in ${sourcePath}.`);

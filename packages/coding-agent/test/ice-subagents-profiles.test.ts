@@ -62,6 +62,26 @@ describe("ICE subagent contracts", () => {
 		);
 	});
 
+	it("reads the subagent V2 model list form as primary and fallback", async () => {
+		const cwd = await createWorkspace();
+		const agentDir = await mkdtemp(join(tmpdir(), "ice-subagents-agent-"));
+		tempDirs.push(agentDir);
+		await mkdir(join(agentDir, "agents"), { recursive: true });
+		const write = (name: string, model: string) =>
+			writeFile(join(agentDir, "agents", `${name}.md`), `---\nname: ${name}\ndescription: d\nmodel: ${model}\n---\nInspect.\n`);
+		await write("listed", "[provider/a, provider/b, inherit]");
+		await write("single", "[provider/a]");
+		await write("inherited", "inherit");
+		await write("toolong", "[provider/a, provider/b, provider/c]");
+		expect(resolveSubagentProfileResolution("listed", { cwd, agentDir })).toMatchObject({
+			requestedModel: "provider/a",
+			fallbackModel: "provider/b",
+		});
+		expect(resolveSubagentProfileResolution("single", { cwd, agentDir }).requestedModel).toBe("provider/a");
+		expect(resolveSubagentProfileResolution("inherited", { cwd, agentDir }).requestedModel).toBeUndefined();
+		expect(() => resolveSubagentProfileResolution("toolong", { cwd, agentDir })).toThrow(/legacy subagents accept/);
+	});
+
 	it("records profile model metadata without overriding the parent model", async () => {
 		const cwd = await createWorkspace();
 		const agentDir = await mkdtemp(join(tmpdir(), "ice-subagents-agent-"));

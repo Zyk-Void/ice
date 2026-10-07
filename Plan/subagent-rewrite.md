@@ -169,7 +169,7 @@ These are no longer open questions for this plan.
 | D23 | self profile | Removed as a distinct built-in; general is the default identity |
 | D24 | Child retention | Child artifacts live with the parent session and cascade-delete when that parent session is deleted |
 | D25 | Rewrite strategy | Preserve proven external behavior/contracts, but replace the internal registry/tool taxonomy decisively |
-| D26 | Agent navigation keys (proposed, unconfirmed) | Plain `←` on an eligible empty composer opens the Hub; `Alt+←/→` cycle parent and children (section 15.1). Requires user confirmation; until then the Hub opens via `/agents` and the remappable `app.agents.hub` action |
+| D26 | Agent navigation keys | Not adopted (2026-10-07, conservative default chosen by the user's "apply the recommended options"): the Hub opens via `/agents`; existing configurable `app.subagents.*` keys (Alt+Left parent, Alt+Right next) stay. Plain `←` keeps its editor meaning. P8.9 is closed as not planned |
 
 ---
 
@@ -1436,7 +1436,7 @@ Show one compact child summary near the normal interactive shell:
 
 Opening it enters /agents.
 
-Codex-style empty-composer navigation (proposed decision D26, pending user confirmation before P8.9 ships as a default):
+Codex-style empty-composer navigation (decision D26: not adopted; kept for reference only):
 
 - a **single plain `←` press** opens the `/agents` Hub from the parent chat, and from a focused local child chat, when agent navigation is available;
 - the shortcut fires only on a real key press while the composer is focused, input is enabled, the composer is empty, no paste burst is active, no popup/modal/transient input surface owns the key, slash/command navigation is available, and no Vim operator is pending;
