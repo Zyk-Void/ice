@@ -16,6 +16,8 @@ import type {
 } from "./observe-recorder.ts";
 
 const MAX_REPLAY_EVENTS = 10_000;
+/** Runs older than this are pruned when a store opens, so the shared database cannot grow without bound. */
+export const OBSERVE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface ObserveRunSummary {
 	runId: string;
@@ -273,5 +275,12 @@ export async function openObserveRunStore(
 	db.exec("PRAGMA journal_mode=WAL");
 	db.exec("PRAGMA synchronous=FULL");
 	db.exec("PRAGMA busy_timeout=5000");
-	return new SqliteObserveRunStore(db);
+	const store = new SqliteObserveRunStore(db);
+	// foreign_keys is off, so ON DELETE CASCADE does not fire; delete events explicitly.
+	const cutoff = Date.now() - OBSERVE_RETENTION_MS;
+	db.prepare(
+		"DELETE FROM observe_events WHERE run_id IN (SELECT run_id FROM observe_runs WHERE started_at_ms < ?)",
+	).run(cutoff);
+	db.prepare("DELETE FROM observe_runs WHERE started_at_ms < ?").run(cutoff);
+	return store;
 }

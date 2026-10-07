@@ -5,6 +5,7 @@ import { configureHttpDispatcher } from "./core/http-dispatcher.ts";
 import { formatAgentPackImportResult, importRufloAgentPack } from "./ice-agent-packs.ts";
 import { IceAgentViewBridge } from "./ice-agent-view-bridge.ts";
 import iceCogneeExtension from "./ice-cognee.ts";
+import { createPiMcpSubagentAdapter } from "./ice-mcp-bridge.ts";
 import { refreshLocalModelsForStartup } from "./ice-provider.ts";
 import iceProviderSettings from "./ice-provider-settings.ts";
 import {
@@ -14,12 +15,19 @@ import {
 	validateIceStartupArgs,
 } from "./ice-safe-verify.ts";
 import { getIceSubagentHookHandlers } from "./ice-subagent-settings.ts";
-import iceSubagents, { getSubagentGlobalAgentsDir, normalizeUnsafeSubagentStartupArgs } from "./ice-subagents.ts";
+import iceSubagents, {
+	getSubagentGlobalAgentsDir,
+	normalizeUnsafeSubagentStartupArgs,
+	registerIceSubagentMcpAdapter,
+} from "./ice-subagents.ts";
 import { main } from "./main.ts";
 
 process.title = "ice";
 process.env.ICE_CODING_AGENT = "true";
 process.env.AI_AGENT = "ice";
+// pi packages (pi-mcp-adapter, ...) resolve their config via PI_CODING_AGENT_DIR and otherwise fall back to
+// ~/.pi/agent, silently ignoring ICE's own mcp.json and sharing approval/cache state with stock pi.
+process.env.PI_CODING_AGENT_DIR ??= getAgentDir();
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 configureHttpDispatcher();
 
@@ -93,13 +101,23 @@ await main(args, {
 		{ name: "ice-cognee", factory: iceCogneeExtension, hidden: true, priority: "before-user" },
 		{
 			name: "ice-subagents",
-			factory: (ice) =>
-				iceSubagents(ice, {
+			factory: (ice) => {
+				// Give subagents the parent's pi-mcp-adapter servers through the public adapter seam.
+				const unregisterMcp = registerIceSubagentMcpAdapter(
+					ice.events,
+					createPiMcpSubagentAdapter({
+						agentDir: getAgentDir(),
+						getParentSession: () => agentViewBridge.getParentSession(),
+					}),
+				);
+				ice.on("session_shutdown", () => unregisterMcp());
+				return iceSubagents(ice, {
 					hookHandlers: getIceSubagentHookHandlers(ice.events),
 					agentViewBridge,
 					getIceMode: () => currentIceMode,
 					getIceCapabilityState: () => currentIceCapabilityState,
-				}),
+				});
+			},
 			hidden: true,
 			priority: "before-user",
 		},

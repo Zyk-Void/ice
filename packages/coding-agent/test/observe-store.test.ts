@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ContextUsage } from "../src/core/extensions/types.ts";
 import { type ObserveSessionLike, startObserveRecorder } from "../src/observe/observe-recorder.ts";
-import { openObserveRunStore } from "../src/observe/observe-store.ts";
+import { OBSERVE_RETENTION_MS, openObserveRunStore } from "../src/observe/observe-store.ts";
 
 function createFakeSession() {
 	const listeners = new Set<(event: unknown) => void>();
@@ -59,5 +59,52 @@ describe("observe run store", () => {
 		expect(replay).toHaveLength(1);
 		expect(replay[0].sequence).toBe(2);
 		reopened.close();
+	});
+
+	it("prunes runs older than the retention window when opened", async () => {
+		const directory = mkdtempSync(join("/tmp", "ice-observe-store-"));
+		tempDirs.push(directory);
+		const databasePath = join(directory, "observability.sqlite");
+		const store = await openObserveRunStore(databasePath);
+		const header = (runId: string, startedAt: number) => ({
+			runId,
+			sessionId: "s",
+			mainThreadId: "s",
+			mainThreadName: "main",
+			model: null,
+			thinkingLevel: null,
+			context: undefined,
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+			startedAt,
+		});
+		const old = header("old", Date.now() - OBSERVE_RETENTION_MS - 60_000);
+		store.recordEvent({ type: "header" }, old);
+		store.recordEvent({ type: "header" }, header("fresh", Date.now()));
+		store.close();
+
+		const reopened = await openObserveRunStore(databasePath);
+		expect(reopened.getRun("old")).toBeUndefined();
+		expect(reopened.getEvents("old")).toEqual([]);
+		expect(reopened.getRun("fresh")).toBeDefined();
+		reopened.close();
+	});
+
+	it("persists polled headers only when they change", async () => {
+		const directory = mkdtempSync(join("/tmp", "ice-observe-store-"));
+		tempDirs.push(directory);
+		const store = await openObserveRunStore(join(directory, "observability.sqlite"));
+		const session = createFakeSession();
+		const recorder = startObserveRecorder(session, { pollMs: 5, persistence: store });
+		const runId = recorder.getHeader().runId;
+
+		await new Promise((resolve) => setTimeout(resolve, 60));
+		const headers = () => store.getEvents(runId).filter((event) => event.type === "header");
+		expect(headers()).toHaveLength(1);
+
+		Object.assign(session, { thinkingLevel: "high" });
+		await new Promise((resolve) => setTimeout(resolve, 60));
+		expect(headers()).toHaveLength(2);
+		recorder.stop();
+		store.close();
 	});
 });

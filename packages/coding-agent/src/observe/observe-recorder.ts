@@ -284,10 +284,17 @@ export function startObserveRecorder(session: ObserveSessionLike, options?: Obse
 	const listeners = new Set<(event: ObserveRecorderEvent) => void>();
 	let nextId = 1;
 	let usageTotals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+	let lastPersistedHeader: string | undefined;
 
 	function emit(event: ObserveRecorderEvent): void {
 		try {
-			persistence?.recordEvent(event, buildHeader());
+			const header = buildHeader();
+			// The poll timer emits a header every tick; persist only real changes so idle sessions stay bounded.
+			const serialized = event.type === "header" ? JSON.stringify(header) : undefined;
+			if (serialized === undefined || serialized !== lastPersistedHeader) {
+				persistence?.recordEvent(event, header);
+				if (serialized !== undefined) lastPersistedHeader = serialized;
+			}
 		} catch {
 			// Observability persistence is advisory and cannot affect the agent loop.
 		}

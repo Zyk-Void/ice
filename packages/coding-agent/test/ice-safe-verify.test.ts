@@ -187,6 +187,8 @@ function extensionFixture(
 		abort?: () => void;
 		stopAfterTurn?: () => void;
 		idle?: boolean;
+		additionalToolNames?: string[];
+		additionalTools?: Array<{ name: string; sourceInfo: { source: string; origin: string } }>;
 	} = {},
 ) {
 	const { root } = fixture();
@@ -223,6 +225,12 @@ function extensionFixture(
 		},
 		getFlag(name: string) {
 			return options.flags?.[name];
+		},
+		getAllTools() {
+			return [
+				...[...tools.keys(), ...(options.additionalToolNames ?? [])].map((name) => ({ name })),
+				...(options.additionalTools ?? []),
+			];
 		},
 		sendMessage(message: { content: string }, sendOptions?: unknown) {
 			steeredMessages.push(message.content);
@@ -384,10 +392,43 @@ describe("ICE guarded extension", () => {
 		expect(Object.isFrozen(snapshots[0]?.tools)).toBe(true);
 	});
 
+	it("enables installed package tools and Cognee search by source, not by name", async () => {
+		const external = (name: string, source: string) => ({ name, sourceInfo: { source, origin: "package" } });
+		const inline = (name: string) => ({ name, sourceInfo: { source: "inline", origin: "top-level" } });
+		const runtime = extensionFixture({
+			flags: { "ice-mode": "build", "allow-external": true },
+			additionalTools: [
+				external("cua-driver_list_windows", "npm:pi-mcp-adapter"),
+				external("mcpScript", "npm:pi-mcp-adapter@2.37.0"),
+				external("web_search", "npm:pi-web-access"),
+				inline("cognee_search"),
+				inline("unlisted_inline_tool"),
+			],
+			hasUI: true,
+		});
+		await runtime.emit("session_start");
+		expect(runtime.activeTools.at(-1)).toEqual(
+			expect.arrayContaining(["cua-driver_list_windows", "mcpScript", "web_search", "cognee_search"]),
+		);
+		expect(runtime.activeTools.at(-1)).not.toContain("unlisted_inline_tool");
+
+		const withoutExternal = extensionFixture({
+			flags: { "ice-mode": "build" },
+			additionalTools: [external("web_search", "npm:pi-web-access")],
+			hasUI: true,
+		});
+		await withoutExternal.emit("session_start");
+		expect(withoutExternal.activeTools.at(-1)).not.toContain("web_search");
+		expect(
+			await runtime.emit("tool_call", { toolCallId: "direct", toolName: "cua-driver_list_windows", input: {} }),
+		).toBeUndefined();
+	});
+
 	it("publishes external capability only for an approved trusted build", async () => {
 		const snapshots: IceCapabilityState[] = [];
 		const runtime = extensionFixture({
-			flags: { "ice-mode": "build", "allow-external": true },
+			flags: { "ice-mode": "build", "ice-allow-bash": true, "allow-external": true },
+			additionalToolNames: ["mcp", "mcp__cua_driver"],
 			hasUI: true,
 			onCapabilityChange: async (capabilities) => {
 				snapshots.push(capabilities);
@@ -395,8 +436,22 @@ describe("ICE guarded extension", () => {
 		});
 		await runtime.emit("session_start");
 		expect(snapshots.at(-1)).toMatchObject({ mode: "build", allowExternal: true });
+		expect(snapshots.at(-1)?.tools).toEqual(expect.arrayContaining(["mcp", "mcp__cua_driver"]));
+		expect(
+			await runtime.emit("tool_call", { toolCallId: "mcp-allowed", toolName: "mcp", input: {} }),
+		).toBeUndefined();
+		expect(
+			await runtime.emit("tool_call", { toolCallId: "cua-allowed", toolName: "mcp__cua_driver", input: {} }),
+		).toBeUndefined();
+		expect(
+			await runtime.emit("tool_call", {
+				toolCallId: "mcp-unregistered",
+				toolName: "mcp__not_registered",
+				input: {},
+			}),
+		).toMatchObject({ block: true });
 		expect(runtime.notifications).toContain(
-			"External filesystem access is enabled for this process. This is unrestricted host access, not a sandbox.",
+			"External filesystem access, configured MCP tools, and installed package tools are enabled for this process. This is unrestricted host access, not a sandbox.",
 		);
 	});
 
@@ -404,13 +459,32 @@ describe("ICE guarded extension", () => {
 		const snapshots: IceCapabilityState[] = [];
 		const runtime = extensionFixture({
 			flags: { "ice-mode": "build", "allow-external": true },
+			additionalToolNames: ["mcp", "mcp__cua_driver"],
 			trusted: false,
+			hasUI: true,
 			onCapabilityChange: async (capabilities) => {
 				snapshots.push(capabilities);
 			},
 		});
 		await runtime.emit("session_start");
 		expect(snapshots.at(-1)).toMatchObject({ mode: "build", allowExternal: false });
+		expect(snapshots.at(-1)?.tools).not.toContain("mcp");
+		expect(snapshots.at(-1)?.tools).not.toContain("mcp__cua_driver");
+		expect(
+			await runtime.emit("tool_call", { toolCallId: "mcp-untrusted", toolName: "mcp__cua_driver", input: {} }),
+		).toMatchObject({ block: true });
+	});
+
+	it("enables MCP for headless external-access requests; approvals fail closed in the adapter", async () => {
+		const runtime = extensionFixture({
+			flags: { "ice-mode": "build", "allow-external": true },
+			additionalToolNames: ["mcp", "mcp__cua_driver"],
+		});
+		await runtime.emit("session_start");
+		expect(runtime.activeTools.at(-1)).toEqual(expect.arrayContaining(["mcp", "mcp__cua_driver"]));
+		expect(
+			await runtime.emit("tool_call", { toolCallId: "mcp-headless", toolName: "mcp__cua_driver", input: {} }),
+		).toBeUndefined();
 	});
 
 	it("injects OMP-style planning instructions while in plan mode", async () => {
@@ -445,7 +519,7 @@ describe("ICE guarded extension", () => {
 	});
 
 	it("applies the default plan tool set and independently denies unknown calls", async () => {
-		const plan = extensionFixture();
+		const plan = extensionFixture({ additionalToolNames: ["mcp", "mcp__cua_driver"] });
 		await plan.emit("session_start");
 		expect(plan.activeTools.at(-1)).toEqual([
 			"read",
@@ -481,11 +555,15 @@ describe("ICE guarded extension", () => {
 		expect(await plan.emit("tool_call", { toolCallId: "1b", toolName: "read_plan", input: {} })).toMatchObject({
 			block: true,
 		});
-		expect(await plan.emit("tool_call", { toolCallId: "2", toolName: "mcp_unknown", input: {} })).toMatchObject({
+		expect(await plan.emit("tool_call", { toolCallId: "2", toolName: "mcp__cua_driver", input: {} })).toMatchObject({
 			block: true,
 		});
 
-		const build = extensionFixture({ flags: { "ice-mode": "build", "ice-allow-bash": true } });
+		const build = extensionFixture({
+			flags: { "ice-mode": "build", "ice-allow-bash": true },
+			hasUI: true,
+			additionalToolNames: ["mcp", "mcp__cua_driver"],
+		});
 		await build.emit("session_start");
 		expect(build.activeTools.at(-1)).toEqual([
 			"read",
@@ -532,7 +610,7 @@ describe("ICE guarded extension", () => {
 		expect(
 			await build.emit("tool_call", { toolCallId: "5", toolName: "propose_goal_draft", input: {} }),
 		).toBeUndefined();
-		expect(await build.emit("tool_call", { toolCallId: "6", toolName: "mcp", input: {} })).toMatchObject({
+		expect(await build.emit("tool_call", { toolCallId: "6", toolName: "mcp__cua_driver", input: {} })).toMatchObject({
 			block: true,
 		});
 		expect(build.notifications).toContain(

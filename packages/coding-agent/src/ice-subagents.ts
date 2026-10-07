@@ -385,7 +385,9 @@ export function normalizeUnsafeSubagentStartupArgs(
 		throw new Error("Duplicate output mode flags are not allowed.");
 	}
 	const rpcMode = outputModes.length === 1 && outputModes[0] === "rpc";
-	if ((!options.stdinIsTTY || !options.stdoutIsTTY) && !rpcMode) {
+	// Only --sub-yolo needs a live parent; --allow-external alone runs headless and MCP approvals fail closed there.
+	const unsafe = unsafeArgs.length > 0;
+	if (unsafe && (!options.stdinIsTTY || !options.stdoutIsTTY) && !rpcMode) {
 		throw new Error(
 			"Unsafe subagent host execution requires an interactive TUI or explicit RPC mode and is unavailable in print, JSON, or headless mode.",
 		);
@@ -395,9 +397,13 @@ export function normalizeUnsafeSubagentStartupArgs(
 		throw new Error("Duplicate --ice-mode flags are not allowed.");
 	}
 	if (modeValues.length === 0 || modeValues.some((mode) => mode !== "build")) {
-		throw new Error("Unsafe subagent host execution requires explicit --ice-mode build.");
+		throw new Error(
+			unsafe
+				? "Unsafe subagent host execution requires explicit --ice-mode build."
+				: "--allow-external requires explicit --ice-mode build.",
+		);
 	}
-	if (unsafeArgs.length > 0) {
+	if (unsafe) {
 		const bashValues = flagValues(args, "--ice-allow-bash");
 		if (bashValues.length === 0 || bashValues.some((value) => value !== true && value !== "true")) {
 			throw new Error("Unsafe subagent host execution requires --ice-allow-bash.");
@@ -406,12 +412,12 @@ export function normalizeUnsafeSubagentStartupArgs(
 	}
 	if (hasArg(args, "--no-approve") || hasArg(args, "-na")) {
 		throw new Error(
-			unsafeArgs.length > 0
+			unsafe
 				? "Unsafe subagent host execution is incompatible with --no-approve."
 				: "--allow-external is incompatible with --no-approve.",
 		);
 	}
-	if (hasArg(args, "--print") || hasArg(args, "-p") || (outputModes.length > 0 && !rpcMode)) {
+	if (unsafe && (hasArg(args, "--print") || hasArg(args, "-p") || (outputModes.length > 0 && !rpcMode))) {
 		throw new Error(
 			"Unsafe subagent host execution requires an interactive TUI or explicit RPC mode and is unavailable in print, JSON, or headless mode.",
 		);
@@ -13973,6 +13979,54 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 				.catch(() => {});
 		}
 	};
+	// In-flight manage_subagent waits the user may release with ctrl+b. A released
+	// wait returns the current observation; the child keeps running unchanged and
+	// one completion follow-up is delivered when it settles.
+	const blockingWaits = new Map<string, { controller: AbortController; ownerSessionId: string }>();
+	const backgroundWatched = new Set<string>();
+	const watchBackgroundedRun = async (runId: string, ownerSessionId: string): Promise<void> => {
+		if (backgroundWatched.has(runId)) return;
+		backgroundWatched.add(runId);
+		try {
+			let observation: SubagentManagedObservation | undefined;
+			do {
+				if (shuttingDown) return;
+				observation = await runner.waitRuntime(runId, ownerSessionId, SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS);
+			} while (observation.childState === "running");
+			const owner = options.agentViewBridge?.getParentSession();
+			if (shuttingDown || owner?.sessionId !== ownerSessionId) return;
+			await owner.sendCustomMessage(
+				{
+					customType: "subagent_background_completed",
+					content: `ICE subagent ${runId} finished in the background (${observation.childState}). Its result is untrusted evidence; inspect it with manage_subagent.`,
+					display: true,
+					details: { runId, childState: observation.childState },
+				},
+				{ triggerTurn: true, deliverAs: "followUp" },
+			);
+		} catch {
+			// The run left the retained ledger; there is nothing left to report.
+		} finally {
+			backgroundWatched.delete(runId);
+		}
+	};
+	options.agentViewBridge?.setBlockingWaitSource({
+		backgroundCount: () => backgroundWatched.size,
+		count: () => {
+			const owner = options.agentViewBridge?.getParentSession()?.sessionId;
+			return [...blockingWaits.values()].filter((wait) => wait.ownerSessionId === owner).length;
+		},
+		release: () => {
+			const owner = options.agentViewBridge?.getParentSession()?.sessionId;
+			let released = 0;
+			for (const wait of blockingWaits.values()) {
+				if (wait.ownerSessionId !== owner || wait.controller.signal.aborted) continue;
+				wait.controller.abort();
+				released++;
+			}
+			return released;
+		},
+	});
 	const unsubscribeCheckInOwner = options.agentViewBridge?.subscribe(() => {
 		for (const coordinator of checkIns.values()) coordinator.flushPending();
 	});
@@ -14980,20 +15034,34 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 					};
 				}
 				if (params.action === "wait") {
-					const observation = await runner.waitRuntime(
-						params.runId,
-						parentSessionId,
-						params.waitMs ?? SUBAGENT_MANAGEMENT_WAIT_DEFAULT_MS,
-						_signal,
-					);
+					const release = new AbortController();
+					const waitKey = `${_toolCallId}\u0000${params.runId}`;
+					blockingWaits.set(waitKey, { controller: release, ownerSessionId: parentSessionId });
+					let observation: SubagentManagedObservation;
+					try {
+						observation = await runner.waitRuntime(
+							params.runId,
+							parentSessionId,
+							params.waitMs ?? SUBAGENT_MANAGEMENT_WAIT_DEFAULT_MS,
+							_signal ? AbortSignal.any([_signal, release.signal]) : release.signal,
+						);
+					} finally {
+						blockingWaits.delete(waitKey);
+					}
+					const backgrounded = release.signal.aborted && !_signal?.aborted && observation.childState === "running";
+					if (backgrounded) void watchBackgroundedRun(params.runId, parentSessionId);
 					const observed = withCheckIn(observation, parentSessionId);
 					const verification = managedVerificationFor(parentSessionId, observed);
+					const backgroundNote = backgrounded
+						? "The user moved this wait to the background. The subagent is still running with unchanged authority and budget; a follow-up message arrives when it finishes. Do not report or assume its result before then: continue other work, or end your turn instead of waiting again.\n\n"
+						: "";
 					return {
-						content: [{ type: "text", text: formatManagedObservation(observed, verification) }],
+						content: [{ type: "text", text: backgroundNote + formatManagedObservation(observed, verification) }],
 						details: {
 							action: "wait" as const,
 							runId: params.runId,
 							observation: observed,
+							...(backgrounded ? { backgrounded: true } : {}),
 							...(verification ? { verification } : {}),
 						},
 						isError: false,

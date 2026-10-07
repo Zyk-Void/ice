@@ -44,9 +44,9 @@ ice --mode rpc \
   --approve
 ```
 
-The flag requires explicit build mode, an approval-capable TUI or RPC client, project trust, and no `--no-approve`. It does not imply `--sub-yolo`: delegated children and direct YOLO writers receive external scope access only when `--sub-yolo` is also explicitly authorized. Normal isolated `delegate_write` remains contained in its detached worktree even if a request carries an external-scope bit.
+The flag requires explicit build mode, an approval-capable TUI or RPC client, project trust, and no `--no-approve`. In this authorized build context, registered parent MCP tools named `mcp` or `mcp__*` are also available; they remain blocked in plan mode, ordinary builds, untrusted projects, and headless sessions. This does not imply `--sub-yolo`: delegated children and direct YOLO writers receive external scope access only when `--sub-yolo` is also explicitly authorized. Normal isolated `delegate_write` remains contained in its detached worktree even if a request carries an external-scope bit. Child MCP tools still require explicit parent-owned adapter selection.
 
-`--allow-external` is unrestricted host access, not a sandbox. It does not contain shell commands, processes, network access, credentials, symlinks, or descendants; use it only in a trusted worktree with explicit user approval.
+`--allow-external` is unrestricted host access, not a sandbox. It does not contain shell commands, processes, network access, credentials, symlinks, or descendants; a registered MCP integration may itself have external or credential-backed effects. Use this capability only in a trusted worktree with explicit user approval.
 
 ## Protocol Overview
 

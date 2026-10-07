@@ -17,6 +17,7 @@ import {
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { clearSessionEnvironment } from "../legacy-compat/env.ts";
+import type { BashBackgroundRegistry } from "./bash-background.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { getTextOutput, invalidArgText, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -48,6 +49,8 @@ export type BashToolInput = Static<typeof bashSchema>;
 export interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
+	/** Set when the user moved the running command to the background; the result holds output so far. */
+	backgroundTaskId?: string;
 }
 
 /**
@@ -191,6 +194,8 @@ export interface BashToolOptions {
 	exposeSessionEnvironment?: boolean;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
+	/** Lets the user move running calls to the background. Omit to keep every call in the foreground. */
+	background?: BashBackgroundRegistry;
 }
 
 const BASH_PREVIEW_LINES = 5;
@@ -318,6 +323,7 @@ export function createBashToolDefinition(
 	const commandPrefix = options?.commandPrefix;
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
+	const background = options?.background;
 	return {
 		name: "bash",
 		label: "bash",
@@ -328,7 +334,7 @@ export function createBashToolDefinition(
 			: undefined,
 		parameters: bashSchema,
 		async execute(
-			_toolCallId,
+			toolCallId,
 			{ command, timeout }: { command: string; timeout?: number },
 			signal?: AbortSignal,
 			onUpdate?,
@@ -342,8 +348,10 @@ export function createBashToolDefinition(
 			let updateDirty = false;
 			let lastUpdateAt = 0;
 
+			// A backgrounded call has already returned; later output goes only to the final result.
+			let detached = false;
 			const emitOutputUpdate = () => {
-				if (!onUpdate || !updateDirty) return;
+				if (!onUpdate || !updateDirty || detached) return;
 				updateDirty = false;
 				lastUpdateAt = Date.now();
 				const snapshot = output.snapshot({ persistIfTruncated: true });
@@ -420,38 +428,89 @@ export function createBashToolDefinition(
 
 			const appendStatus = (text: string, status: string) => `${text ? `${text}\n\n` : ""}${status}`;
 
-			try {
-				let exitCode: number | null;
-				try {
-					const result = await ops.exec(spawnContext.command, spawnContext.cwd, {
-						onData: handleData,
-						signal,
-						timeout,
-						env: spawnContext.env,
-					});
-					exitCode = result.exitCode;
-				} catch (err) {
-					const snapshot = await finishOutput();
-					const { text } = formatOutput(snapshot, "");
-					if (err instanceof Error && err.message === "aborted") {
-						throw new Error(appendStatus(text, "Command aborted"));
-					}
-					if (err instanceof Error && err.message.startsWith("timeout:")) {
-						const timeoutSecs = err.message.split(":")[1];
-						throw new Error(appendStatus(text, `Command timed out after ${timeoutSecs} seconds`));
-					}
-					throw err;
-				}
+			// The process listens to its own signal so a backgrounded command outlives this tool call.
+			const execAbort = new AbortController();
+			const forwardAbort = () => execAbort.abort();
+			if (signal?.aborted) execAbort.abort();
+			else signal?.addEventListener("abort", forwardAbort, { once: true });
+			const startedAt = Date.now();
 
-				const snapshot = await finishOutput();
-				const { text: outputText, details } = formatOutput(snapshot);
-				if (exitCode !== 0 && exitCode !== null) {
-					throw new Error(appendStatus(outputText, `Command exited with code ${exitCode}`));
+			const runToCompletion = async () => {
+				try {
+					let exitCode: number | null;
+					try {
+						const result = await ops.exec(spawnContext.command, spawnContext.cwd, {
+							onData: handleData,
+							signal: execAbort.signal,
+							timeout,
+							env: spawnContext.env,
+						});
+						exitCode = result.exitCode;
+					} catch (err) {
+						const snapshot = await finishOutput();
+						const { text } = formatOutput(snapshot, "");
+						if (err instanceof Error && err.message === "aborted") {
+							throw new Error(appendStatus(text, "Command aborted"));
+						}
+						if (err instanceof Error && err.message.startsWith("timeout:")) {
+							const timeoutSecs = err.message.split(":")[1];
+							throw new Error(appendStatus(text, `Command timed out after ${timeoutSecs} seconds`));
+						}
+						throw err;
+					}
+
+					const snapshot = await finishOutput();
+					const { text: outputText, details } = formatOutput(snapshot);
+					if (exitCode !== 0 && exitCode !== null) {
+						throw new Error(appendStatus(outputText, `Command exited with code ${exitCode}`));
+					}
+					return { content: [{ type: "text" as const, text: outputText }], details };
+				} finally {
+					clearUpdateTimer();
+					signal?.removeEventListener("abort", forwardAbort);
 				}
-				return { content: [{ type: "text", text: outputText }], details };
+			};
+
+			if (!background) return await runToCompletion();
+
+			let releaseCall!: () => void;
+			const released = new Promise<"released">((resolve) => {
+				releaseCall = () => resolve("released");
+			});
+			const unregister = background.registerForeground(toolCallId, command, releaseCall);
+			const completion = runToCompletion();
+			try {
+				const first = await Promise.race([completion.then(() => "settled" as const), released]);
+				if (first === "settled") return await completion;
+			} catch {
+				return await completion;
 			} finally {
-				clearUpdateTimer();
+				unregister();
 			}
+
+			detached = true;
+			signal?.removeEventListener("abort", forwardAbort);
+			const settled = completion.then(
+				(result) => ({ text: result.content[0]?.text ?? "", isError: false }),
+				(err: unknown) => ({ text: err instanceof Error ? err.message : String(err), isError: true }),
+			);
+			const taskId = background.adopt(command, startedAt, () => execAbort.abort(), settled);
+			const snapshot = output.snapshot({ persistIfTruncated: true });
+			const soFar = snapshot.content ? `Output so far:\n${snapshot.content}` : "No output yet.";
+			return {
+				content: [
+					{
+						type: "text",
+						text: `The user moved this command to the background as ${taskId}; it is still running. ${soFar}\n\nIts final output arrives as a follow-up message when it exits. Do not report or assume its result before then: continue other work, or end your turn if nothing else is left.`,
+					},
+				],
+				details: {
+					backgroundTaskId: taskId,
+					...(snapshot.truncation.truncated
+						? { truncation: snapshot.truncation, fullOutputPath: snapshot.fullOutputPath }
+						: {}),
+				},
+			};
 		},
 		renderCall(args, _theme, context) {
 			const state = context.state;

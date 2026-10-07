@@ -655,7 +655,7 @@ describe("ICE agent-view integration", () => {
 		const release = registry.register({ runId: "run-escape", role: "coder", session: child, control });
 		bridge.requestDisplay("run-escape");
 		bridge.requestTakeControl();
-		const defaultEditor: Record<string, unknown> = { onAction: vi.fn() };
+		const defaultEditor: Record<string, unknown> = { onAction: vi.fn(), onConditionalAction: vi.fn() };
 		const mode = Object.create(InteractiveMode.prototype) as InteractiveMode & Record<string, unknown>;
 		Object.assign(mode, {
 			runtimeHost: { session: parent },

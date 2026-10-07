@@ -2146,6 +2146,31 @@ describe("ICE subagent contracts", () => {
 		).toThrow(/explicit --ice-mode build/);
 	});
 
+	it("allows --allow-external without --sub-yolo in print and headless runs", () => {
+		const normalizer = (
+			iceSubagentsModule as unknown as {
+				normalizeUnsafeSubagentStartupArgs: (
+					args: readonly string[],
+					options: { stdinIsTTY: boolean; stdoutIsTTY: boolean },
+				) => string[];
+			}
+		).normalizeUnsafeSubagentStartupArgs;
+		const headless = { stdinIsTTY: false, stdoutIsTTY: false };
+		expect(normalizer(["--ice-mode", "build", "--allow-external", "-p", "prompt"], headless)).toEqual([
+			"--ice-mode",
+			"build",
+			"--allow-external=true",
+			"-p",
+			"prompt",
+		]);
+		expect(() => normalizer(["--allow-external", "-p", "prompt"], headless)).toThrow(
+			"--allow-external requires explicit --ice-mode build.",
+		);
+		expect(() =>
+			normalizer(["--ice-mode", "build", "--ice-allow-bash", "--sub-yolo", "--allow-external", "-p", "x"], headless),
+		).toThrow(/interactive TUI/);
+	});
+
 	it("denies unsafe delegation outside the current build mode", async () => {
 		const harness = await createAsyncToolHarness({
 			activeTools: ["delegate", "read", "bash"],

@@ -488,8 +488,19 @@ export function normalizeIceAgentViewPresentation(
 	return Object.keys(normalized).length > 0 ? (deepFreezeSnapshot(normalized) as IceAgentViewPresentation) : undefined;
 }
 
+/** Blocking subagent waits that the user can move to the background (ctrl+b). */
+export interface IceBlockingWaitSource {
+	/** Number of in-flight blocking waits owned by the current parent session. */
+	count(): number;
+	/** End every in-flight blocking wait early; the children keep running. Returns how many were released. */
+	release(): number;
+	/** Subagents released to the background that have not finished yet. */
+	backgroundCount(): number;
+}
+
 export class IceAgentViewBridge {
 	private parentSession: AgentSession | undefined;
+	private blockingWaits: IceBlockingWaitSource | undefined;
 	private liveSource: IceAgentViewLiveSessionSource | undefined;
 	private unsubscribeLiveSource: (() => void) | undefined;
 	private readonly historical = new Map<string, IceAgentViewDescriptor>();
@@ -513,6 +524,22 @@ export class IceAgentViewBridge {
 			this.displayedId = "parent";
 		}
 		this.publish();
+	}
+
+	setBlockingWaitSource(source: IceBlockingWaitSource | undefined): void {
+		this.blockingWaits = source;
+	}
+
+	hasBlockingWait(): boolean {
+		return (this.blockingWaits?.count() ?? 0) > 0;
+	}
+
+	releaseBlockingWaits(): number {
+		return this.blockingWaits?.release() ?? 0;
+	}
+
+	backgroundSubagentCount(): number {
+		return this.blockingWaits?.backgroundCount() ?? 0;
 	}
 
 	connectLiveSessions(source: IceAgentViewLiveSessionSource): void {

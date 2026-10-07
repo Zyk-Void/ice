@@ -109,6 +109,7 @@ import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
+import { BashBackgroundRegistry } from "./tools/bash-background.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
@@ -369,6 +370,8 @@ export class AgentSession {
 	private _customTools: ToolDefinition[];
 	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
 	private _cwd: string;
+	/** Bash calls the user moved to the background (ctrl+b); completions arrive as follow-up messages. */
+	readonly bashBackground = new BashBackgroundRegistry();
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _allowedToolNames?: Set<string>;
@@ -408,6 +411,22 @@ export class AgentSession {
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
+		this.bashBackground.onComplete((completion) => {
+			const limit = 8000;
+			const text =
+				completion.text.length > limit
+					? `[earlier output omitted]\n${completion.text.slice(-limit)}`
+					: completion.text;
+			void this.sendCustomMessage(
+				{
+					customType: "bash_background_completed",
+					content: `Background command ${completion.taskId} finished${completion.isError ? " with an error" : ""}: ${completion.command}\n\n${text}`,
+					display: true,
+					details: { taskId: completion.taskId, isError: completion.isError, durationMs: completion.durationMs },
+				},
+				{ triggerTurn: true, deliverAs: "followUp" },
+			).catch(() => {});
+		});
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
@@ -887,6 +906,7 @@ export class AgentSession {
 			this.abortCompaction();
 			this.abortBranchSummary();
 			this.abortBash();
+			this.bashBackground.dispose();
 			this.agent.abort();
 		} catch {
 			// Dispose must succeed even if an abort hook throws.
@@ -962,6 +982,11 @@ export class AgentSession {
 
 	getToolDefinition(name: string): ToolDefinition | undefined {
 		return this._toolDefinitions.get(name)?.definition;
+	}
+
+	/** Registered tool with its extension context bound, as the agent loop would execute it. */
+	getRegisteredTool(name: string): AgentTool | undefined {
+		return this._toolRegistry.get(name);
 	}
 
 	/**
@@ -2789,7 +2814,7 @@ export class AgentSession {
 				)
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
-					bash: { commandPrefix: shellCommandPrefix, shellPath },
+					bash: { commandPrefix: shellCommandPrefix, shellPath, background: this.bashBackground },
 				});
 
 		this._baseToolDefinitions = new Map(

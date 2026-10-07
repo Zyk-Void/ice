@@ -1015,6 +1015,61 @@ describe("ModelRegistry", () => {
 			expect(registry.getProviderDisplayName("oauth-provider")).toBe("OAuth Provider");
 		});
 
+		test("catalog context windows govern matching extension models and refresh dynamically", async () => {
+			const providerId = "catalog-context-provider";
+			const baseUrl = "https://provider.test/v1";
+			const cxId = "cx/shared-model";
+			const codexId = "codex/shared-model";
+			const overrideId = "cx/overridden-model";
+			const liveOnlyId = "cx/live-only-model";
+			const writeCatalog = (cxContextWindow: number) =>
+				writeRawModelsJson({
+					[providerId]: {
+						baseUrl,
+						apiKey: "test-key",
+						api: "openai-completions",
+						models: [
+							{ id: cxId, contextWindow: cxContextWindow },
+							{ id: codexId, contextWindow: 872000 },
+							{ id: overrideId, contextWindow: 272000 },
+						],
+						modelOverrides: { [overrideId]: { contextWindow: 260000 } },
+					},
+				});
+			const liveModel = (id: string, contextWindow: number) => ({
+				id,
+				name: id,
+				reasoning: false,
+				input: ["text" as const],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow,
+				maxTokens: 128000,
+			});
+
+			writeCatalog(272000);
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			registry.registerProvider(providerId, {
+				baseUrl,
+				apiKey: "test-key",
+				api: "openai-completions",
+				models: [
+					liveModel(cxId, 872000),
+					liveModel(codexId, 872000),
+					liveModel(overrideId, 872000),
+					liveModel(liveOnlyId, 400000),
+				],
+			});
+
+			expect(registry.find(providerId, cxId)?.contextWindow).toBe(272000);
+			expect(registry.find(providerId, codexId)?.contextWindow).toBe(872000);
+			expect(registry.find(providerId, overrideId)?.contextWindow).toBe(260000);
+			expect(registry.find(providerId, liveOnlyId)?.contextWindow).toBe(400000);
+
+			writeCatalog(300000);
+			await registry.refresh({ allowNetwork: false });
+			expect(registry.find(providerId, cxId)?.contextWindow).toBe(300000);
+		});
+
 		test("modelOverrides apply to dynamically registered provider models", async () => {
 			writeRawModelsJson({
 				"extension-provider": {

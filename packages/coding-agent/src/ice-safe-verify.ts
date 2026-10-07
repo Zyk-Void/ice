@@ -12,6 +12,7 @@ import type {
 	ExtensionContext,
 	ExtensionUIContext,
 	ToolCallEvent,
+	ToolInfo,
 	ToolResultEvent,
 } from "./core/extensions/types.ts";
 import { matchesEntryType } from "./core/legacy-compat/identity.ts";
@@ -60,6 +61,17 @@ const BUILD_TOOLS = [
 	"edit",
 	"write",
 ];
+/**
+ * Tools enabled by --allow-external in a trusted build: MCP proxy tools plus every tool from an installed
+ * package (pi-mcp-adapter direct tools use `<server>_<tool>` names; pi-web-access, ...) and ICE's
+ * Cognee memory search. All of these reach services outside the workspace.
+ */
+const EXTERNAL_INLINE_TOOLS = new Set(["cognee_search"]);
+const isExternalTool = (tool: ToolInfo) =>
+	tool.name === "mcp" ||
+	tool.name.startsWith("mcp__") ||
+	tool.sourceInfo?.origin === "package" ||
+	EXTERNAL_INLINE_TOOLS.has(tool.name);
 const MAX_PLAN_TITLE_BYTES = 512;
 const MAX_PLAN_MARKDOWN_BYTES = 64 * 1024;
 const MAX_PLAN_DECISION_REMINDERS = 3;
@@ -795,7 +807,8 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 		type: "boolean",
 	});
 	ice.registerFlag("allow-external", {
-		description: "Allow unrestricted external host filesystem access in trusted build mode",
+		description:
+			"Allow unrestricted external filesystem access, configured MCP tools, and installed package tools in trusted build mode",
 		type: "boolean",
 	});
 	ice.registerFlag("ice-verify", { description: "Trusted verifier JSON argv for this process", type: "string" });
@@ -816,13 +829,21 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 		state?.mode === "build" && bashRequested() && ctx.isProjectTrusted();
 	const allowExternalRequested = () => ice.getFlag("allow-external") === true;
 	const allowExternalEffective = (ctx: ExtensionContext) =>
-		state?.mode === "build" &&
-		allowExternalRequested() &&
-		ctx.isProjectTrusted() &&
-		(ctx.mode === "tui" || ctx.mode === "rpc") &&
-		ctx.hasUI;
+		state?.mode === "build" && allowExternalRequested() && ctx.isProjectTrusted();
 	const effectiveTools = (ctx: ExtensionContext) => {
-		const tools = state?.mode === "plan" ? PLAN_TOOLS : bashEffective(ctx) ? [...BUILD_TOOLS, "bash"] : BUILD_TOOLS;
+		const tools =
+			state?.mode === "plan"
+				? PLAN_TOOLS
+				: [
+						...BUILD_TOOLS,
+						...(bashEffective(ctx) ? ["bash"] : []),
+						...(allowExternalEffective(ctx)
+							? ice
+									.getAllTools()
+									.filter(isExternalTool)
+									.map((tool) => tool.name)
+							: []),
+					];
 		if (!state || state.plan.status === "none") return tools.filter((tool) => tool !== "read_plan");
 		return state.mode === "plan" ? [...tools, "read_plan"] : tools;
 	};
@@ -903,11 +924,13 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 			ctx.ui.notify(
 				"Bash is enabled for this process. Direct path guards do not contain shell commands.",
 				"warning",
+				{ id: "safety:bash", sticky: true },
 			);
 		if (allowExternalEffective(ctx))
 			ctx.ui.notify(
-				"External filesystem access is enabled for this process. This is unrestricted host access, not a sandbox.",
+				"External filesystem access, configured MCP tools, and installed package tools are enabled for this process. This is unrestricted host access, not a sandbox.",
 				"warning",
+				{ id: "safety:external", sticky: true },
 			);
 		await options.onModeChange?.(mode, ctx);
 	};
@@ -1587,11 +1610,13 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 			ctx.ui.notify(
 				"Bash is enabled for this process. Direct path guards do not contain shell commands.",
 				"warning",
+				{ id: "safety:bash", sticky: true },
 			);
 		if (allowExternalEffective(ctx))
 			ctx.ui.notify(
-				"External filesystem access is enabled for this process. This is unrestricted host access, not a sandbox.",
+				"External filesystem access, configured MCP tools, and installed package tools are enabled for this process. This is unrestricted host access, not a sandbox.",
 				"warning",
+				{ id: "safety:external", sticky: true },
 			);
 		await options.onModeChange?.(mode, ctx);
 	};
