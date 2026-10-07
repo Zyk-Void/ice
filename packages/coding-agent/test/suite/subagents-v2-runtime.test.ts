@@ -8,9 +8,10 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/c
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { worktreeSnapshotRef } from "../../src/subagents/isolation/worktree.ts";
 import { CHILD_INIT_ENTRY_TYPE } from "../../src/subagents/registry/child-sessions.ts";
+import { type IceSubagentMcpAdapter, subagentMcpToolName } from "../../src/subagents/types.ts";
 import iceSubagentsV2 from "../../src/subagents/v2/extension.ts";
 import { MAX_RESIDENT_CHILDREN, SubagentV2Runtime } from "../../src/subagents/v2/runtime.ts";
-import type { ChildTurnResult, V2RuntimeHost } from "../../src/subagents/v2/runtime-support.ts";
+import { type ChildTurnResult, mcpDelegableTools, type V2RuntimeHost } from "../../src/subagents/v2/runtime-support.ts";
 import { createV2ChildSession } from "../../src/subagents/v2/session-factory.ts";
 import { resolveSubagentsV2Settings } from "../../src/subagents/v2/settings.ts";
 import { CHILD_WRAP_UP_LIMITS } from "../../src/subagents/v2/turn-budget.ts";
@@ -1127,6 +1128,49 @@ describe("subagent V2 runtime", () => {
 		await expect(runtime.runTurn(second!.id, "go", { foreground: true })).rejects.toThrow(
 			/cannot run: Selected context hash changed: notes.md/,
 		);
+	});
+
+	it("bridges selected parent MCP tools to a child only through the parent's mcp proxy", async () => {
+		const dispatch = vi.fn(async () => ({ content: [{ type: "text", text: "ISSUE-42" }] }));
+		const adapter: IceSubagentMcpAdapter = {
+			listAuthorizedTools: () => [
+				{ selector: "github/list_issues", access: "read-only", parameters: { type: "object", properties: {} } },
+				{ selector: "github/broken", access: "unknown", parameters: { type: "object", properties: {} } },
+			],
+			dispatch,
+		};
+		const { harness, parent, host } = await setup({ tools: ["read", "mcp"] });
+		mkdirSync(join(harness.tempDir, "agents"), { recursive: true });
+		writeFileSync(
+			join(harness.tempDir, "agents", "triage.md"),
+			"---\nname: triage\ndescription: d\ntools: [read]\nmcp: [github/*]\n---\nTriage.\n",
+		);
+		const runtime = new SubagentV2Runtime(host({ getAdapters: () => mcpDelegableTools(adapter, () => true) }));
+		const toolName = subagentMcpToolName("github/list_issues");
+		let toolResult = "";
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall(toolName, {}), { stopReason: "toolUse" }),
+			(context) => {
+				toolResult = JSON.stringify(context.messages.at(-1));
+				return fauxAssistantMessage("done");
+			},
+		]);
+		const [record] = await runtime.launch([task("triage", "list")]);
+		expect(
+			runtime.registry
+				.resident(runtime.ownerSessionId(), record!.id)!
+				.contract.capabilities.tools.map((tool) => tool.name),
+		).toEqual([toolName, "read"].sort());
+		await runtime.runTurn(record!.id, "list", { foreground: true });
+		expect(dispatch).toHaveBeenCalledWith("github", "list_issues", {}, expect.anything());
+		expect(toolResult).toContain("ISSUE-42");
+		parent.tools = ["read"];
+		const [withoutProxy] = await runtime.launch([task("triage", "list")]);
+		expect(
+			runtime.registry
+				.resident(runtime.ownerSessionId(), withoutProxy!.id)!
+				.contract.capabilities.tools.map((tool) => tool.name),
+		).toEqual(["read"]);
 	});
 
 	it("refuses unknown agents with the available list and launches nothing for a bad batch", async () => {

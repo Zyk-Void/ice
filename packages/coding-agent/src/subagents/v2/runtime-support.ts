@@ -6,6 +6,7 @@ import type { IceVerifierState } from "../../ice-safe-verify.ts";
 import type { AgentTaskInput } from "../api/agent.ts";
 import type { ChildRuntimeContract, NormalizedPermissionRule } from "../contract/child-runtime-contract.ts";
 import type { AgentDefinitionSource } from "../definitions/schema.ts";
+import type { SubagentHookTarget } from "../extension-support.ts";
 import { removeIsolatedWorktree, worktreeGit, worktreeSnapshotRef } from "../isolation/worktree.ts";
 import type { ApprovalAnswer, ApprovalBroker, ApprovalRequest, PendingApproval } from "../permissions/approval.ts";
 import type { PermissionRuleSet } from "../permissions/evaluate.ts";
@@ -15,9 +16,11 @@ import { openChildSession } from "../registry/child-sessions.ts";
 import type { ChildRegistry } from "../registry/registry.ts";
 import type { V2ChildTurnResult, V2OutputCapture, V2ResultObservations } from "../results/v2-result.ts";
 import { normalizeSubagentContextPacket } from "../runtime/helpers.ts";
+import type { SubagentHookRuntime } from "../runtime/live-session.ts";
 import type { IceResolvedDelegableTool } from "../tools/adapters.ts";
-import { ICE_BUILTIN_CHILD_TOOLS } from "../tools/adapters.ts";
+import { ICE_BUILTIN_CHILD_TOOLS, resolveIceDelegableTool } from "../tools/adapters.ts";
 import type { ParentToolInfo } from "../tools/resolve.ts";
+import { type IceSubagentMcpAdapter, subagentMcpToolName } from "../types.ts";
 import type { createV2ChildSession } from "./session-factory.ts";
 import type { SubagentsV2Settings } from "./settings.ts";
 import type { ChildTurnBudget } from "./turn-budget.ts";
@@ -69,6 +72,8 @@ export interface V2RuntimeHost {
 	hasApprovalInbox?: () => boolean;
 	/** Called whenever the set of pending approvals changes. */
 	onApprovalsChanged?: (pending: readonly PendingApproval[]) => void;
+	/** Resolve configured subagent hooks for one child; undefined when none apply. Throws on invalid configuration. */
+	createHookRuntime?: (target: SubagentHookTarget) => SubagentHookRuntime | undefined;
 	createChildAgentSession?: typeof createV2ChildSession;
 	now?: () => number;
 }
@@ -79,6 +84,8 @@ export interface ResidentChild {
 	grants: string[];
 	pendingNote?: string;
 	recoveryNotice?: string;
+	/** Hooks resolved when this resident was created (launch or revival). */
+	hooks?: SubagentHookRuntime;
 	controller?: AbortController;
 	budget?: ChildTurnBudget;
 	observations?: V2ResultObservations;
@@ -124,7 +131,7 @@ export function parentToolInfos(parent: AgentSession, adapters: readonly IceReso
 			infos.push({ name, access: READ_ONLY_BUILTINS.has(name) ? "read-only" : "mutation", childSafe: true });
 			continue;
 		}
-		const adapter = adapters.find((candidate) => candidate.name === name && candidate.isCurrent());
+		const adapter = adapters.find((candidate) => !candidate.mcp && candidate.name === name && candidate.isCurrent());
 		if (adapter) {
 			infos.push({
 				name,
@@ -138,7 +145,66 @@ export function parentToolInfos(parent: AgentSession, adapters: readonly IceReso
 			infos.push({ name, access: "unknown", childSafe: false });
 		}
 	}
+	// MCP tools reach children only through the parent's own `mcp` proxy tool.
+	if (active.has("mcp")) {
+		for (const adapter of adapters) {
+			if (!adapter.mcp || !adapter.isCurrent()) continue;
+			infos.push({
+				name: adapter.name,
+				access: adapter.access,
+				childSafe: adapter.definition.childSafe,
+				adapterId: adapter.adapterId,
+				fingerprint: adapter.fingerprint,
+				mcp: { server: adapter.mcp.server, tool: adapter.mcp.tool },
+			});
+		}
+	}
 	return infos;
+}
+
+/**
+ * Bridge the parent MCP adapter's authorized `server/tool` selectors into delegable tools.
+ * Tools of unknown access, without an installed schema, or with invalid identities are left
+ * out; dispatch always goes through the parent-owned adapter while it stays registered.
+ */
+export function mcpDelegableTools(
+	adapter: IceSubagentMcpAdapter | undefined,
+	isCurrentAdapter: () => boolean,
+): IceResolvedDelegableTool[] {
+	if (!adapter) return [];
+	const tools: IceResolvedDelegableTool[] = [];
+	for (const entry of adapter.listAuthorizedTools()) {
+		const slash = entry.selector.indexOf("/");
+		if (slash <= 0 || slash === entry.selector.length - 1 || entry.access === "unknown" || !entry.parameters)
+			continue;
+		const server = entry.selector.slice(0, slash);
+		const tool = entry.selector.slice(slash + 1);
+		const label = `mcp:${server.replace(/[^A-Za-z0-9_.-]/g, "_")}`.slice(0, 128);
+		try {
+			tools.push(
+				resolveIceDelegableTool(
+					{
+						adapterId: label,
+						name: subagentMcpToolName(entry.selector),
+						origin: label,
+						access: entry.access,
+						childSafe: true,
+						description: entry.description ?? `MCP tool ${entry.selector}`,
+						parameters: entry.parameters,
+						execute: async (params, context) => {
+							if (!isCurrentAdapter()) throw new Error("The parent MCP adapter was removed or replaced.");
+							return adapter.dispatch(server, tool, { ...params }, context.signal);
+						},
+					},
+					isCurrentAdapter,
+					{ server, tool },
+				),
+			);
+		} catch {
+			// An entry that fails delegated-tool validation is simply not offered to children.
+		}
+	}
+	return tools;
 }
 
 export function splitModelReference(reference: string): { provider: string; model: string } | undefined {

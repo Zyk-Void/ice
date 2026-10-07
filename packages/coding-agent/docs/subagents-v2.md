@@ -121,6 +121,14 @@ With `isolation: worktree` (the built-in `worker` uses it), the subagent works i
 
 Extensions can observe subagents on the event bus channel `ice:subagent`. Events: `subagent_start`, `subagent_turn_start`, `subagent_turn_end`, `subagent_parked`, `subagent_revived`, `subagent_blocked`, `subagent_interrupted`, `subagent_end`, `subagent_patch`, `subagent_completion_queued`, `subagent_permission_request`. Each carries the child ID, agent name, owner session, depth, and state, never prompts or output.
 
+## MCP tools
+
+An agent file can give its subagent MCP tools with `mcp: [server/tool, ...]` (globs allowed, for example `github/*`). Only tools the parent may already use are offered: the parent must have its `mcp` tool, and the tool must be listed by the parent's MCP adapter (for pi-mcp-adapter, tools approved in `approveTools` count as changes, the rest as read-only). Calls run through the parent's `mcp` tool and follow the same permission rules as other tools, so tools that change things ask by default.
+
+## Hooks
+
+The `ice.hooks` settings and `registerIceSubagentHook` handlers apply to V2 subagents too. Decision hooks can stop work: `subagent.beforeLaunch` runs before a subagent is created and may add short context for its first turn, `subagent.beforeTool` runs before each tool the subagent uses, and `subagent.beforeAccept` runs before a finished turn is accepted (a deny marks the turn failed). Observation hooks report `subagent.started`, `subagent.afterTool`, `subagent.completed`, `subagent.failed`, `subagent.timedOut` (a budget ran out), and `subagent.cancelled`. An agent file selects optional hooks with `hooks: [id, ...]`; required global hooks always run. A required hook that fails or times out blocks the action, and each hook is journaled before it runs.
+
 ## Not done yet
 
-The full V2 plan is in `Plan/subagent-rewrite.md`. Still open: removing the legacy tools and making V2 the default, SDK and RPC agent APIs, subagent hooks rebuilt on the event bus, MCP tools from pi-mcp-adapter for children, and the proposed keyboard navigation (decision D26).
+The full V2 plan is in `Plan/subagent-rewrite.md`. Still open: removing the legacy tools and making V2 the default, SDK and RPC agent APIs, the `subagent.checkpoint` and `subagent.attention` hook events (V2 has no periodic check-ins), and the proposed keyboard navigation (decision D26).

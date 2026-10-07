@@ -16,6 +16,7 @@ import type {
 	ExtensionContext,
 	ToolDefinition,
 } from "../../core/extensions/index.ts";
+import { SettingsManager } from "../../core/settings-manager.ts";
 import { truncateHead } from "../../core/tools/truncate.ts";
 import type {
 	IceAgentViewLiveSession,
@@ -35,7 +36,13 @@ import {
 	computeAgentListingDelta,
 	renderAgentListingMessage,
 } from "../definitions/listing.ts";
-import { authorizeUnsafeSubagentHostExecution, flagEnabled, type IceSubagentsOptions } from "../extension-support.ts";
+import {
+	appendSubagentHookJournal,
+	authorizeUnsafeSubagentHostExecution,
+	buildSubagentHookRuntime,
+	flagEnabled,
+	type IceSubagentsOptions,
+} from "../extension-support.ts";
 import type { ApprovalAnswer } from "../permissions/approval.ts";
 import type { ChildRecord } from "../registry/registry.ts";
 import { renderSubagentAssuranceSection } from "../results/assurance.ts";
@@ -43,12 +50,12 @@ import { renderBatchSynthesisSection, summarizeV2BatchSynthesis } from "../resul
 import { isSubagentOutputArtifactRef } from "../results/output-artifacts.ts";
 import { createSubagentLiveSessionControl } from "../runtime/live-session.ts";
 import { getIceDelegableTools } from "../tools/adapters.ts";
-import { SUBAGENT_PRESENTATION_LIMIT_BYTES } from "../types.ts";
+import { parentMcpAdapters, SUBAGENT_PRESENTATION_LIMIT_BYTES } from "../types.ts";
 import { AgentHubView, type HubSource } from "../ui/hub.ts";
 import { createAgentDefinitionFile, formatAgentDefinitions } from "./agent-manager.ts";
 import { completionEvent, lifecycleEvents, SUBAGENT_EVENT_CHANNEL } from "./events.ts";
 import { SubagentV2Runtime } from "./runtime.ts";
-import { type ChildTurnResult, withContextPacket } from "./runtime-support.ts";
+import { type ChildTurnResult, mcpDelegableTools, withContextPacket } from "./runtime-support.ts";
 import { resolveSubagentsV2Settings } from "./settings.ts";
 
 const AGENT_TOOL_DESCRIPTION =
@@ -159,7 +166,14 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 				return false;
 			}
 		},
-		getAdapters: () => getIceDelegableTools(ice.events),
+		getAdapters: () => {
+			const mcpAdapter = options.mcpAdapter ?? parentMcpAdapters.get(ice.events);
+			const identity = mcpAdapter?.getIdentity?.();
+			const isCurrentAdapter = () =>
+				(options.mcpAdapter ?? parentMcpAdapters.get(ice.events)) === mcpAdapter &&
+				mcpAdapter?.getIdentity?.() === identity;
+			return [...getIceDelegableTools(ice.events), ...mcpDelegableTools(mcpAdapter, isCurrentAdapter)];
+		},
 		getPatchVerifier: () => {
 			const argv = parseVerifierArgv(ice.getFlag("ice-verify"));
 			return argv ? (root, signal) => runVerifier(argv, root, { signal }) : undefined;
@@ -172,6 +186,14 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			} catch {
 				return raw; // Reported as an invalid --agents source by the definition loader.
 			}
+		},
+		createHookRuntime: (target) => {
+			const ctx = latestCtx;
+			if (!ctx) throw new Error("no parent context is available to resolve subagent hooks");
+			const settingsManager = ctx.settingsManager ?? SettingsManager.create(ctx.cwd, agentDir);
+			return buildSubagentHookRuntime(ctx, settingsManager, target, options, undefined, (entry) =>
+				appendSubagentHookJournal(ice, entry),
+			);
 		},
 		// Background asks wait for the Agent Hub inbox only in an interactive TUI.
 		hasApprovalInbox: () => latestCtx?.mode === "tui" && latestCtx.hasUI === true,

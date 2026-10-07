@@ -49,6 +49,7 @@ import {
 	suggestSubagentProfiles,
 } from "./definitions/legacy-profiles.ts";
 import {
+	appendSubagentHookJournal,
 	applyIceProfileSettingsSummary,
 	authorizeUnsafeSubagentHostExecution,
 	createSubagentHookRuntime,
@@ -163,7 +164,6 @@ import {
 	ICE_HOOK_JOURNAL_ENTRY_TYPE,
 	type IceHookJournalEntry,
 	parseIceSettings,
-	projectIceHookRecords,
 	resolveIceSubagentContract,
 	resolveIceSubagentHooks,
 } from "./settings.ts";
@@ -629,26 +629,8 @@ export default function iceSubagents(ice: ExtensionAPI, options: IceSubagentsOpt
 	const observatory = new SubagentObservatoryStore();
 	observatoryStore = observatory;
 	const telemetry = new SubagentTelemetryStore();
-	// Intent entries are the durable boundary crossed before any hook handler
-	// runs: throwing here blocks required hooks and skips optional hooks, so a
-	// later crash can leave an unresolved intent but never an unknown effect.
-	// Outcome entries stay best-effort; their absence also leaves the matching
-	// intent unresolved on restart without replaying the hook.
-	const appendHookJournal = (entry: IceHookJournalEntry): void => {
-		// Persist the same bounded redacted projection exposed to parent views;
-		// intent/outcome correlation remains durable without retaining hook payloads.
-		const record = projectIceHookRecords([entry.record])[0];
-		if (!record) return;
-		ice.appendEntry(
-			ICE_HOOK_JOURNAL_ENTRY_TYPE,
-			{
-				schemaVersion: entry.schemaVersion,
-				phase: entry.phase,
-				record,
-			},
-			{ durable: entry.phase === "intent" },
-		);
-	};
+	const appendHookJournal = (entry: IceHookJournalEntry): void => appendSubagentHookJournal(ice, entry);
+
 	/** Bounded per-run attention ledger used to compute telemetry after terminal results. */
 	const attentionLedger = new Map<string, { activeElapsedMs: number; steering: number }>();
 	const noteAttention = (runId: string, attention: SubagentRuntimeAttention | undefined): void => {

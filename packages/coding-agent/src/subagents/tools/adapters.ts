@@ -42,6 +42,8 @@ export interface IceCapabilitySnapshot {
 export interface IceResolvedDelegableTool extends IceCapabilitySnapshot {
 	readonly definition: IceDelegableTool;
 	readonly isCurrent: () => boolean;
+	/** Set for tools bridged from the parent MCP adapter; matched by definition `mcp` selectors. */
+	readonly mcp?: { readonly server: string; readonly tool: string };
 }
 
 export const ICE_CAPABILITY_LIMITS = Object.freeze({
@@ -190,6 +192,21 @@ export function registerIceDelegableTool(owner: object, input: IceDelegableTool)
 	return () => {
 		if (tools.get(definition.name) === definition) tools.delete(definition.name);
 	};
+}
+
+/** Validate a parent-owned tool definition and pair it with its capability snapshot. */
+export function resolveIceDelegableTool(
+	input: IceDelegableTool,
+	isCurrent: () => boolean,
+	mcp?: { server: string; tool: string },
+): IceResolvedDelegableTool {
+	const definition = checkedDefinition(input);
+	return Object.freeze({
+		...snapshotIceCapability(definition),
+		definition,
+		isCurrent: () => isCurrent() && definition.isAuthorized?.() !== false,
+		...(mcp ? { mcp: Object.freeze({ ...mcp }) } : {}),
+	});
 }
 
 export function getIceDelegableTools(owner: object): readonly IceResolvedDelegableTool[] {

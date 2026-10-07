@@ -28,6 +28,7 @@ import { revalidateSubagentResources } from "./runtime/resources.ts";
 import { resolveIceSubagentCandidates, resolveIceSubagentRoute, snapshotIceSubagentRoute } from "./runtime/routing.ts";
 import {
 	getIceSubagentHookHandlers,
+	ICE_HOOK_JOURNAL_ENTRY_TYPE,
 	ICE_SUBAGENT_SETTINGS_LIMITS,
 	type IceHookDispatcherOptions,
 	type IceHookDispatchRecord,
@@ -36,6 +37,7 @@ import {
 	type IceResolvedHook,
 	IceSubagentHookDispatcher,
 	parseIceSettings,
+	projectIceHookRecords,
 	resolveIceSubagentContract,
 	resolveIceSubagentHooks,
 } from "./settings.ts";
@@ -508,13 +510,70 @@ export function createSubagentHookRuntime(
 	attempt?: 1 | 2,
 	onJournal?: (entry: IceHookJournalEntry) => void,
 ): SubagentHookRuntime | undefined {
+	return buildSubagentHookRuntime(
+		ctx,
+		settingsManager,
+		{
+			projectTrusted: normalized.projectTrusted,
+			role: normalized.role,
+			roleHookIds: normalized.profile.hooks,
+			callHookIds: normalized.hookIds,
+			cwd: normalized.cwd,
+			readOnly: normalized.readOnlyReview === true,
+			ownerSessionId: normalized.parentSessionId,
+			runId: normalized.runId,
+		},
+		options,
+		attempt,
+		onJournal,
+	);
+}
+
+/**
+ * Persist the bounded redacted hook record. Intent entries are the durable boundary crossed
+ * before any hook handler runs: a throw blocks required hooks and skips optional hooks, so a
+ * crash can leave an unresolved intent but never an unknown effect. Outcome entries stay
+ * best-effort; their absence also leaves the intent unresolved on restart without replay.
+ */
+export function appendSubagentHookJournal(ice: Pick<ExtensionAPI, "appendEntry">, entry: IceHookJournalEntry): void {
+	const record = projectIceHookRecords([entry.record])[0];
+	if (!record) return;
+	ice.appendEntry(
+		ICE_HOOK_JOURNAL_ENTRY_TYPE,
+		{ schemaVersion: entry.schemaVersion, phase: entry.phase, record },
+		{ durable: entry.phase === "intent" },
+	);
+}
+
+/** The request-independent identity a hook runtime is resolved for. */
+export interface SubagentHookTarget {
+	projectTrusted: boolean;
+	role: string;
+	roleHookIds?: readonly string[];
+	callHookIds?: readonly string[];
+	cwd: string;
+	/** Read-only children never run command hooks. */
+	readOnly: boolean;
+	ownerSessionId: string;
+	runId: string;
+}
+
+/** Resolve configured hooks for one child and bind them to parent-owned handlers. Undefined when none apply. */
+export function buildSubagentHookRuntime(
+	ctx: ExtensionContext,
+	settingsManager: SettingsManager,
+	target: SubagentHookTarget,
+	options: IceSubagentsOptions,
+	attempt?: 1 | 2,
+	onJournal?: (entry: IceHookJournalEntry) => void,
+): SubagentHookRuntime | undefined {
 	const resolvedHooks = resolveIceSubagentHooks({
 		globalHooks: settingsManager.getGlobalSettings(),
 		projectHooks: settingsManager.getProjectSettings(),
-		projectTrusted: normalized.projectTrusted,
-		role: normalized.role,
-		roleHookIds: normalized.profile.hooks,
-		callHookIds: normalized.hookIds,
+		projectTrusted: target.projectTrusted,
+		role: target.role,
+		roleHookIds: target.roleHookIds,
+		callHookIds: target.callHookIds,
 	});
 	if (resolvedHooks.length === 0) return undefined;
 	const defaultApproval: NonNullable<IceHookDispatcherOptions["requestApproval"]> = async (approval) => {
@@ -534,7 +593,7 @@ export function createSubagentHookRuntime(
 	const pendingObservations = new Set<PendingSubagentHookObservation>();
 	const globalPolicy = parseIceSettings(settingsManager.getGlobalSettings().ice).hooks.commandPolicy;
 	const projectPolicy = parseIceSettings(settingsManager.getProjectSettings().ice).hooks.commandPolicy;
-	if (normalized.projectTrusted && projectPolicy?.enabled) {
+	if (target.projectTrusted && projectPolicy?.enabled) {
 		throw new SubagentError(
 			"capability_denied",
 			"Projects cannot authorize command hooks; configure host-owned global policy.",
@@ -555,12 +614,12 @@ export function createSubagentHookRuntime(
 		if (!globalPolicy?.enabled) continue;
 		handlers[hook.id] = createIceCommandHookHandler({
 			policy: globalPolicy,
-			workspace: normalized.cwd,
+			workspace: target.cwd,
 			isAuthorized: () => {
 				const capabilities = options.getIceCapabilityState?.();
 				const current = parseIceSettings(settingsManager.getGlobalSettings().ice).hooks.commandPolicy;
 				return (
-					!normalized.readOnlyReview &&
+					!target.readOnly &&
 					ctx.isProjectTrusted() &&
 					settingsManager.isProjectTrusted() &&
 					capabilities?.mode === "build" &&
@@ -603,9 +662,9 @@ export function createSubagentHookRuntime(
 		hooks: resolvedHooks,
 		records,
 		pendingObservations,
-		ownerSessionId: normalized.parentSessionId,
-		runId: normalized.runId,
-		role: normalized.role,
+		ownerSessionId: target.ownerSessionId,
+		runId: target.runId,
+		role: target.role,
 		attempt,
 	};
 }

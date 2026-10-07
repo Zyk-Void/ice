@@ -68,6 +68,12 @@ import {
 	validateV2Result,
 } from "../results/v2-result.ts";
 import type { ChildBudgetLimits } from "../runtime/budgets.ts";
+import {
+	dispatchSubagentHookDecision,
+	dispatchSubagentHookObservation,
+	flushSubagentHookObservations,
+	type SubagentHookRuntime,
+} from "../runtime/live-session.ts";
 import { resolveSubagentResources, revalidateSubagentResources } from "../runtime/resources.ts";
 import { ICE_BUILTIN_CHILD_TOOLS } from "../tools/adapters.ts";
 import { resolveChildTools } from "../tools/resolve.ts";
@@ -94,6 +100,7 @@ import {
 	SubagentV2Error,
 	type TurnResultContext,
 	type V2RuntimeHost,
+	withContextPacket,
 } from "./runtime-support.ts";
 import { type ChildToolGuard, createV2ChildSession } from "./session-factory.ts";
 import type { SubagentsV2Settings } from "./settings.ts";
@@ -228,16 +235,40 @@ export class SubagentV2Runtime {
 		const settings = this.host.getSettings();
 		if (settings.diagnostics.length) return "deny";
 		if (subject.tool === "external_directory") return mode === "plan" ? "deny" : "ask";
-		const active = parent.getActiveToolNames().includes(subject.tool);
-		return evaluatePermission({
-			subject,
-			ruleSets: settings.ruleSets,
-			fallback: active ? "allow" : "deny",
-			mode,
-		}).decision;
+		const activeTools = parent.getActiveToolNames();
+		// A bridged MCP tool carries the parent authority of its `mcp` proxy tool, never more.
+		const bridgedMcp =
+			!activeTools.includes(subject.tool) &&
+			activeTools.includes("mcp") &&
+			this.host.getAdapters().some((adapter) => adapter.mcp && adapter.name === subject.tool);
+		const decide = (candidate: PermissionSubject) =>
+			evaluatePermission({
+				subject: candidate,
+				ruleSets: settings.ruleSets,
+				fallback: activeTools.includes(subject.tool) || bridgedMcp ? "allow" : "deny",
+				mode,
+			}).decision;
+		const decision = decide(subject);
+		return bridgedMcp ? mostRestrictiveDecision(decision, decide({ ...subject, tool: "mcp" })) : decision;
 	}
 
 	private guardFor(contract: ChildRuntimeContract, resident: () => ResidentChild | undefined): ChildToolGuard {
+		const permit = this.permissionGuardFor(contract, resident);
+		return async (toolName, args, signal) => {
+			await permit(toolName, args, signal);
+			await dispatchSubagentHookDecision(
+				resident()?.hooks,
+				"subagent.beforeTool",
+				{ agent: contract.agent.name, tool: toolName, args },
+				signal,
+			);
+		};
+	}
+
+	private permissionGuardFor(
+		contract: ChildRuntimeContract,
+		resident: () => ResidentChild | undefined,
+	): ChildToolGuard {
 		const childRuleSets = ruleSetsFromFrozen(contract.capabilities.permissionRules);
 		const access = new Map(contract.capabilities.tools.map((tool) => [tool.name, tool.access]));
 		return async (toolName, args, signal) => {
@@ -454,6 +485,7 @@ export class SubagentV2Runtime {
 				...(definition.sourcePath ? { sourcePath: definition.sourcePath } : {}),
 				sourceHash: definition.sourceHash,
 				resolvedDefinitionHash: definition.sourceHash,
+				...(fields.hooks?.length ? { hooks: [...fields.hooks] } : {}),
 			},
 			prompt: {
 				system: systemPrompt,
@@ -557,6 +589,7 @@ export class SubagentV2Runtime {
 		contract: ChildRuntimeContract,
 		sessionManager: Parameters<typeof createV2ChildSession>[0]["sessionManager"],
 		model: Model<Api>,
+		hooks: SubagentHookRuntime | undefined = this.hooksFor(contract, "blocked"),
 	): Promise<ResidentChild> {
 		const parent = this.parent();
 		const owner = this.state();
@@ -571,7 +604,17 @@ export class SubagentV2Runtime {
 			modelRuntime: parent.modelRuntime,
 			adapters: this.host.getAdapters(),
 			guard: this.guardFor(contract, () => resident),
-			observeTool: (toolName, args) => resident?.observations?.startTool(toolName, args),
+			observeTool: (toolName, args) => {
+				const done = resident?.observations?.startTool(toolName, args);
+				return (success) => {
+					done?.(success);
+					dispatchSubagentHookObservation(hooks, "subagent.afterTool", {
+						agent: contract.agent.name,
+						tool: toolName,
+						success,
+					});
+				};
+			},
 		});
 		try {
 			if (owner.closed || this.owner !== owner)
@@ -588,6 +631,7 @@ export class SubagentV2Runtime {
 			contract,
 			grants: [],
 			foreground: false,
+			...(hooks ? { hooks } : {}),
 			dispose: async () => {
 				await session.abort().catch(() => {});
 				session.dispose();
@@ -631,6 +675,35 @@ export class SubagentV2Runtime {
 					"preflight",
 					`Delegation to ${input.agent.name} was not approved (${approval.source}).`,
 				);
+		}
+		// beforeLaunch hooks decide before anything is persisted; their bounded additions become
+		// untrusted parent context for the first turn and cannot change the frozen contract.
+		const launchHooks = new Map<string, { hooks?: SubagentHookRuntime; note?: string }>();
+		for (const { task, input } of prepared) {
+			const contract = buildChildRuntimeContract(input);
+			const hooks = this.hooksFor(contract, "preflight");
+			let additions: Awaited<ReturnType<typeof dispatchSubagentHookDecision>>;
+			try {
+				additions = await dispatchSubagentHookDecision(hooks, "subagent.beforeLaunch", {
+					agent: contract.agent.name,
+					description: task.description,
+					isolation: contract.isolation.mode,
+					tools: contract.capabilities.tools.map((tool) => tool.name),
+				});
+			} catch (error) {
+				throw new SubagentV2Error("preflight", error instanceof Error ? error.message : String(error));
+			}
+			const note = additions.length
+				? withContextPacket(
+						"",
+						additions.map((addition, index) => ({
+							id: `hook-context-${index + 1}`,
+							kind: "parent_note" as const,
+							content: addition.content,
+						})),
+					).trim()
+				: undefined;
+			launchHooks.set(input.id, { ...(hooks ? { hooks } : {}), ...(note ? { note } : {}) });
 		}
 		if (
 			state.closed ||
@@ -680,7 +753,9 @@ export class SubagentV2Runtime {
 				records.push(record);
 			}
 			for (const { contract, created, model } of staged) {
-				const resident = await this.residentFor(contract, created.sessionManager, model);
+				const launch = launchHooks.get(contract.id);
+				const resident = await this.residentFor(contract, created.sessionManager, model, launch?.hooks);
+				if (launch?.note) resident.pendingNote = launch.note;
 				state.registry.attach(state.sessionId, contract.id, resident);
 			}
 			return records;
@@ -817,6 +892,9 @@ export class SubagentV2Runtime {
 				resident.foreground = options.foreground;
 				const record = state.registry.get(state.sessionId, id);
 				state.registry.transition(state.sessionId, id, record.generation, "running", { turnInFlight: true }, true);
+				dispatchSubagentHookObservation(resident.hooks, "subagent.started", {
+					agent: resident.contract.agent.name,
+				});
 				controller.signal.addEventListener("abort", () => void resident.session.abort().catch(() => {}), {
 					once: true,
 				});
@@ -878,6 +956,29 @@ export class SubagentV2Runtime {
 					resident.foreground = false;
 				}
 			}
+			if (outcome === "completed" && resident.hooks) {
+				try {
+					await dispatchSubagentHookDecision(resident.hooks, "subagent.beforeAccept", {
+						agent: resident.contract.agent.name,
+						outcome,
+					});
+				} catch (caught) {
+					outcome = "failed";
+					error = caught instanceof Error ? caught.message : String(caught);
+				}
+			}
+			dispatchSubagentHookObservation(
+				resident.hooks,
+				outcome === "completed"
+					? "subagent.completed"
+					: outcome === "cancelled"
+						? "subagent.cancelled"
+						: outcome === "budget_exhausted"
+							? "subagent.timedOut"
+							: "subagent.failed",
+				{ agent: resident.contract.agent.name, outcome, ...(error ? { error } : {}) },
+			);
+			await flushSubagentHookObservations(resident.hooks);
 			return this.finishTurn(state, resident, id, outcome, options.background === true, error, resultContext);
 		})().finally(() => {
 			options.signal?.removeEventListener("abort", cancel);
@@ -1123,6 +1224,23 @@ export class SubagentV2Runtime {
 	}
 
 	// --- continuation and control ----------------------------------------
+
+	/** Resolve hooks under current settings; invalid hook configuration refuses the child. */
+	private hooksFor(contract: ChildRuntimeContract, code: "preflight" | "blocked"): SubagentHookRuntime | undefined {
+		try {
+			return this.host.createHookRuntime?.({
+				projectTrusted: this.host.isProjectTrusted(),
+				role: contract.agent.name,
+				...(contract.agent.hooks ? { roleHookIds: contract.agent.hooks } : {}),
+				cwd: childCwd(contract, this.parent().sessionManager.getCwd()),
+				readOnly: contract.capabilities.agentMode === "plan" || contract.capabilities.agentMode === "review",
+				ownerSessionId: contract.ownerSessionId,
+				runId: contract.id,
+			});
+		} catch (error) {
+			throw new SubagentV2Error(code, `Subagent hooks: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
 
 	private assertChildAuthority(contract: ChildRuntimeContract): void {
 		const parent = this.parent();

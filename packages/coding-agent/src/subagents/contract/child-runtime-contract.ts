@@ -60,6 +60,8 @@ export interface ChildRuntimeContract {
 		sourcePath?: string;
 		sourceHash: string;
 		resolvedDefinitionHash: string;
+		/** Optional hook IDs the definition selects; mandatory global hooks always apply. */
+		hooks?: string[];
 	};
 
 	prompt: {
