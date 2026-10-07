@@ -133,6 +133,7 @@ This routing remains configurable through the ordinary action bindings. For exam
 | Keybinding id | Default | Description |
 |--------|---------|-------------|
 | `app.model.select` | `ctrl+l` | Open model selector |
+| `app.model.toggleFavorite` | `shift+f` | Toggle the highlighted model's favorite status inside the model selector |
 | `app.model.cycleForward` | `ctrl+p` | Cycle to next model |
 | `app.model.cycleBackward` | `shift+ctrl+p` | Cycle to previous model |
 | `app.thinking.cycle` | `shift+tab` | Cycle thinking level |
@@ -143,6 +144,9 @@ This routing remains configurable through the ordinary action bindings. For exam
 | Keybinding id | Default | Description |
 |--------|---------|-------------|
 | `app.tools.expand` | `ctrl+o` | Collapse or expand tool output |
+| `app.notices.show` | `f2` | Show warnings, update notices, and captured extension output |
+| `app.shortcuts.show` | `?` | Show the keyboard shortcut overview; only when the editor is empty, otherwise `?` is typed |
+| `app.tasks.background` | `ctrl+b` | Move a running bash command or subagent wait to the background; falls through to the editor (cursor left) when nothing can be backgrounded |
 | `app.message.copy` | `ctrl+x` | Copy the last assistant message, or the selected message in `/tree` |
 | `app.message.followUp` | `alt+enter` | Queue follow-up message |
 | `app.message.dequeue` | `alt+up` | Restore queued messages to editor |

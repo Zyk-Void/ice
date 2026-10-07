@@ -104,6 +104,17 @@ export interface ExtensionUIDialogOptions {
 	content?: string;
 }
 
+/** Options for extension notifications. */
+export interface ExtensionNotifyOptions {
+	/**
+	 * Stable notice id. Interactive mode deduplicates notices with the same id and
+	 * shows warnings/errors that carry one in the notices badge instead of the transcript.
+	 */
+	id?: string;
+	/** Notice describes ongoing process state and cannot be dismissed. Requires `id`. */
+	sticky?: boolean;
+}
+
 /** Placement for extension widgets. */
 export type WidgetPlacement = "aboveEditor" | "belowEditor";
 
@@ -143,7 +154,7 @@ export interface ExtensionUIContext {
 	input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 
 	/** Show a notification to the user. */
-	notify(message: string, type?: "info" | "warning" | "error"): void;
+	notify(message: string, type?: "info" | "warning" | "error", options?: ExtensionNotifyOptions): void;
 
 	/** Listen to raw terminal input (interactive mode only). Returns an unsubscribe function. */
 	onTerminalInput(handler: TerminalInputHandler): () => void;

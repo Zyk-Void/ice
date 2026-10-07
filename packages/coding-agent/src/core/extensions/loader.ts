@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { formatWithOptions } from "node:util";
 import * as _bundledIceAgentCore from "@zykairotis/ice-agent-core";
 import type { Provider } from "@zykairotis/ice-ai";
 import * as _bundledIceAiCompat from "@zykairotis/ice-ai/compat";
@@ -557,6 +558,60 @@ export async function loadExtensionFromFactory(
 /**
  * Load extensions from paths.
  */
+export type ExtensionConsoleLevel = "log" | "info" | "warn" | "error";
+
+export interface ExtensionConsoleEntry {
+	extensionPath: string;
+	level: ExtensionConsoleLevel;
+	text: string;
+}
+
+type ExtensionConsoleSink = (entry: ExtensionConsoleEntry) => void;
+
+/**
+ * Console output written by extensions while they load. Interactive mode enables
+ * capture before the TUI owns the terminal so stray writes do not appear above it.
+ */
+let extensionConsoleCapture: { buffer: ExtensionConsoleEntry[]; sink?: ExtensionConsoleSink } | undefined;
+
+export function enableExtensionConsoleCapture(): void {
+	extensionConsoleCapture ??= { buffer: [] };
+}
+
+/** Stop capturing and return entries no sink consumed. */
+export function disableExtensionConsoleCapture(): ExtensionConsoleEntry[] {
+	const buffered = extensionConsoleCapture?.buffer ?? [];
+	extensionConsoleCapture = undefined;
+	return buffered;
+}
+
+/** Deliver captured entries to `sink`, flushing anything buffered before it was attached. */
+export function setExtensionConsoleSink(sink: ExtensionConsoleSink): void {
+	if (!extensionConsoleCapture) return;
+	extensionConsoleCapture.sink = sink;
+	const buffered = extensionConsoleCapture.buffer.splice(0);
+	for (const entry of buffered) sink(entry);
+}
+
+async function withExtensionConsoleCapture<T>(extensionPath: string, run: () => Promise<T>): Promise<T> {
+	const capture = extensionConsoleCapture;
+	if (!capture) return run();
+	const levels: ExtensionConsoleLevel[] = ["log", "info", "warn", "error"];
+	const originals = levels.map((level) => [level, console[level]] as const);
+	for (const level of levels) {
+		console[level] = (...args: unknown[]) => {
+			const entry: ExtensionConsoleEntry = { extensionPath, level, text: formatWithOptions({}, ...args) };
+			if (capture.sink) capture.sink(entry);
+			else capture.buffer.push(entry);
+		};
+	}
+	try {
+		return await run();
+	} finally {
+		for (const [level, original] of originals) console[level] = original;
+	}
+}
+
 async function loadExtensionsInternal(
 	paths: string[],
 	cwd: string,
@@ -572,12 +627,8 @@ async function loadExtensionsInternal(
 	const resolvedRuntime = runtime ?? createExtensionRuntime();
 
 	for (const extPath of paths) {
-		const { extension, error } = await loadExtension(
-			extPath,
-			resolvedCwd,
-			resolvedEventBus,
-			resolvedRuntime,
-			cacheToken,
+		const { extension, error } = await withExtensionConsoleCapture(extPath, () =>
+			loadExtension(extPath, resolvedCwd, resolvedEventBus, resolvedRuntime, cacheToken),
 		);
 
 		if (error) {

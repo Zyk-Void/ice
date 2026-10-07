@@ -85,6 +85,7 @@ export type {
 	ExtensionFactory,
 	ExtensionFlag,
 	ExtensionHandler,
+	ExtensionNotifyOptions,
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionUIContext,

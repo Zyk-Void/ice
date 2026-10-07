@@ -35,6 +35,7 @@ import {
 } from "./core/agent-session-services.ts";
 import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
+import { disableExtensionConsoleCapture, enableExtensionConsoleCapture } from "./core/extensions/loader.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
@@ -594,6 +595,10 @@ export async function main(args: string[], options?: MainOptions) {
 	if (shouldTakeOverStdout) {
 		takeOverStdout();
 	}
+	// Keep extension load-time console output out of the TUI; interactive mode shows it as notices.
+	if (appMode === "interactive" && !parsed.help && parsed.listModels === undefined) {
+		enableExtensionConsoleCapture();
+	}
 
 	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {
 		console.error(chalk.red("Error: @file arguments are not supported in RPC mode"));
@@ -832,6 +837,7 @@ export async function main(args: string[], options?: MainOptions) {
 		stdinContent = await readPipedStdin();
 		if (stdinContent !== undefined && appMode === "interactive") {
 			appMode = "print";
+			for (const entry of disableExtensionConsoleCapture()) process.stderr.write(`${entry.text}\n`);
 		}
 	}
 	time("readPipedStdin");

@@ -31,6 +31,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 |---------|------|---------|-------------|
 | `defaultProvider` | string | - | Default provider (e.g., `"anthropic"`, `"openai"`) |
 | `defaultModel` | string | - | Default model ID |
+| `favoriteModels` | string[] | `[]` | Global-only exact `provider/model` IDs pinned first in `/model`; toggle with Shift+F. Does not change Ctrl+P cycling |
 | `defaultThinkingLevel` | string | - | `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`, `"ultra"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses |
@@ -56,6 +57,9 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | `theme` | string | `"dark"` | Theme name (`"dark"`, `"light"`, or custom) |
 | `externalEditor` | string | `$VISUAL`, then `$EDITOR`, then Notepad on Windows or `nano` elsewhere | Command for Ctrl+G external editor; takes precedence over environment variables |
 | `quietStartup` | boolean | `false` | Hide startup header |
+| `toolStyle` | string | `"compact"` | Interactive tool calls: `"compact"` (bullet rows, consecutive read/search/shell/MCP calls merged into one summary row, `ctrl+o` expands) or `"boxed"` (padded background blocks) |
+| `symbols` | string | `"auto"` | Glyph set for interactive chrome: `"auto"` (unicode, or ascii for `TERM=dumb` and non-UTF-8 locales), `"unicode"`, `"nerd"` (Nerd Fonts v3), or `"ascii"` |
+| `footerStyle` | string | `"compact"` | Interactive footer: `"compact"` (one status row: mode, directory, branch, model, context, notices) or `"legacy"` (multi-row usage footer). Footer color/style customization preserves the compact layout; custom field order, visibility, or separators use the customized multi-row layout |
 | `defaultProjectTrust` | string | `"ask"` | Fallback project trust behavior: `"ask"`, `"always"`, or `"never"`. Global setting only |
 | `collapseChangelog` | boolean | `false` | Show condensed changelog after updates |
 | `enableInstallTelemetry` | boolean | `true` | Send an anonymous install/update version ping after first install or changelog-detected updates. This does not control update checks |

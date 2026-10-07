@@ -138,6 +138,9 @@ export interface Settings {
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: boolean;
+	footerStyle?: "compact" | "legacy"; // default: "compact" - one-row status line; "legacy" keeps the multi-row usage footer
+	toolStyle?: "compact" | "boxed"; // default: "compact" - bullet rows grouped into summaries; "boxed" keeps padded background blocks
+	symbols?: "auto" | "unicode" | "nerd" | "ascii"; // default: "auto" - unicode, or ascii for dumb terminals and non-UTF-8 locales
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
@@ -154,6 +157,7 @@ export interface Settings {
 	terminal?: TerminalSettings;
 	images?: ImageSettings;
 	enabledModels?: string[]; // Model patterns for cycling (same format as --models CLI flag)
+	favoriteModels?: string[]; // Global-only exact provider/model IDs pinned in the model selector
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
@@ -1121,6 +1125,37 @@ export class SettingsManager {
 		return this.settings.quietStartup ?? false;
 	}
 
+	getFooterStyle(): "compact" | "legacy" {
+		return this.settings.footerStyle === "legacy" ? "legacy" : "compact";
+	}
+
+	setFooterStyle(style: "compact" | "legacy"): void {
+		this.globalSettings.footerStyle = style;
+		this.markModified("footerStyle");
+		this.save();
+	}
+
+	getToolStyle(): "compact" | "boxed" {
+		return this.settings.toolStyle === "boxed" ? "boxed" : "compact";
+	}
+
+	setToolStyle(style: "compact" | "boxed"): void {
+		this.globalSettings.toolStyle = style;
+		this.markModified("toolStyle");
+		this.save();
+	}
+
+	getSymbols(): "auto" | "unicode" | "nerd" | "ascii" {
+		const value = this.settings.symbols;
+		return value === "unicode" || value === "nerd" || value === "ascii" ? value : "auto";
+	}
+
+	setSymbols(symbols: "auto" | "unicode" | "nerd" | "ascii"): void {
+		this.globalSettings.symbols = symbols;
+		this.markModified("symbols");
+		this.save();
+	}
+
 	setQuietStartup(quiet: boolean): void {
 		this.globalSettings.quietStartup = quiet;
 		this.markModified("quietStartup");
@@ -1395,6 +1430,17 @@ export class SettingsManager {
 		}
 		this.globalSettings.images.blockImages = blocked;
 		this.markModified("images", "blockImages");
+		this.save();
+	}
+
+	getFavoriteModels(): string[] {
+		const favorites = this.globalSettings.favoriteModels;
+		return Array.isArray(favorites) ? favorites.filter((value) => typeof value === "string") : [];
+	}
+
+	setFavoriteModels(models: string[]): void {
+		this.globalSettings.favoriteModels = [...new Set(models)];
+		this.markModified("favoriteModels");
 		this.save();
 	}
 

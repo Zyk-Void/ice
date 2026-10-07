@@ -19,7 +19,11 @@ export interface AppKeybindings {
 	"app.model.cycleForward": true;
 	"app.model.cycleBackward": true;
 	"app.model.select": true;
+	"app.model.toggleFavorite": true;
 	"app.tools.expand": true;
+	"app.notices.show": true;
+	"app.tasks.background": true;
+	"app.shortcuts.show": true;
 	"app.subagents.attach": true;
 	"app.subagents.expand": true;
 	"app.subagents.inspect": true;
@@ -91,7 +95,17 @@ export const KEYBINDINGS = {
 		description: "Cycle to previous model",
 	},
 	"app.model.select": { defaultKeys: "ctrl+l", description: "Open model selector" },
+	"app.model.toggleFavorite": { defaultKeys: "shift+f", description: "Toggle favorite in model selector" },
 	"app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output" },
+	"app.notices.show": { defaultKeys: "f2", description: "Show warnings and notices" },
+	"app.shortcuts.show": {
+		defaultKeys: "?",
+		description: "Show keyboard shortcuts (only when the editor is empty)",
+	},
+	"app.tasks.background": {
+		defaultKeys: "ctrl+b",
+		description: "Move a running subagent wait to the background (falls through when nothing can be backgrounded)",
+	},
 	"app.subagents.attach": { defaultKeys: "right", description: "Attach to live subagent" },
 	"app.subagents.expand": { defaultKeys: "space", description: "Expand subagent details" },
 	"app.subagents.inspect": { defaultKeys: "ctrl+enter", description: "Inspect durable subagent job" },

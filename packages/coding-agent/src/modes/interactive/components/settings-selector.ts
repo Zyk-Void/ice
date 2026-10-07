@@ -88,6 +88,9 @@ export interface SettingsConfig {
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
 	uiMode: UiMode;
+	footerStyle: "compact" | "legacy";
+	toolStyle: "compact" | "boxed";
+	symbols: "auto" | "unicode" | "nerd" | "ascii";
 	fullscreenScrollbar: ScrollViewScrollbar;
 	warnings: WarningSettings;
 	tableStyle: string;
@@ -128,6 +131,9 @@ export interface SettingsCallbacks {
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
 	onUiModeChange: (mode: UiMode) => void;
+	onFooterStyleChange: (style: "compact" | "legacy") => void;
+	onToolStyleChange: (style: "compact" | "boxed") => void;
+	onSymbolsChange: (symbols: "auto" | "unicode" | "nerd" | "ascii") => void;
 	onFullscreenScrollbarChange: (mode: ScrollViewScrollbar) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
 	onTableStyleChange: (style: string) => void;
@@ -715,6 +721,27 @@ export class SettingsSelectorComponent extends Container {
 				values: ["regular", "fullscreen"],
 			},
 			{
+				id: "footer-style",
+				label: "Footer style",
+				description: "compact: one status row; legacy: multi-row footer with token usage and cost",
+				currentValue: config.footerStyle,
+				values: ["compact", "legacy"],
+			},
+			{
+				id: "tool-style",
+				label: "Tool rows",
+				description: "compact: bullet rows merged into summaries (ctrl+o expands); boxed: padded background blocks",
+				currentValue: config.toolStyle,
+				values: ["compact", "boxed"],
+			},
+			{
+				id: "symbols",
+				label: "Symbols",
+				description: "Glyph set for bullets, gutters, and badges; auto picks unicode, or ascii for dumb terminals",
+				currentValue: config.symbols,
+				values: ["auto", "unicode", "nerd", "ascii"],
+			},
+			{
 				id: "fullscreen-scrollbar",
 				label: "Fullscreen scrollbar",
 				description: "Scrollbar behavior in fullscreen mode; has no effect in regular mode",
@@ -960,6 +987,15 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "terminal-progress":
 						callbacks.onShowTerminalProgressChange(newValue === "true");
+						break;
+					case "footer-style":
+						callbacks.onFooterStyleChange(newValue === "legacy" ? "legacy" : "compact");
+						break;
+					case "tool-style":
+						callbacks.onToolStyleChange(newValue === "boxed" ? "boxed" : "compact");
+						break;
+					case "symbols":
+						callbacks.onSymbolsChange(newValue as "auto" | "unicode" | "nerd" | "ascii");
 						break;
 					case "ui-mode":
 						callbacks.onUiModeChange(newValue as UiMode);

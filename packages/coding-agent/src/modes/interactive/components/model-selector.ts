@@ -49,6 +49,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private scopedModelItems: ModelItem[] = [];
 	private activeModels: ModelItem[] = [];
 	private filteredModels: ModelItem[] = [];
+	private favoriteModels: Set<string>;
 	private selectedIndex: number = 0;
 	private currentModel?: Model<any>;
 	private settingsManager: SettingsManager;
@@ -82,6 +83,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.tui = tui;
 		this.currentModel = currentModel;
 		this.settingsManager = settingsManager;
+		this.favoriteModels = new Set(settingsManager.getFavoriteModels());
 		this.modelRuntime = modelRuntime;
 		this.scopedModels = scopedModels;
 		this.scope = scopedModels.length > 0 ? "scoped" : "all";
@@ -124,6 +126,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.addChild(this.listContainer);
 
 		this.addChild(new Spacer(1));
+		this.addChild(new Text(keyHint("app.model.toggleFavorite", "toggle favorite"), 0, 0));
 
 		// Add bottom border
 		this.addChild(new DynamicBorder());
@@ -152,7 +155,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			id: scoped.model.id,
 			model: scoped.model,
 		}));
-		this.activeModels = this.scope === "scoped" ? this.scopedModelItems : this.allModels;
+		this.activeModels = this.favoritesFirst(this.scope === "scoped" ? this.scopedModelItems : this.allModels);
 		this.filteredModels = this.activeModels;
 		const currentIndex = this.filteredModels.findIndex((item) => modelsAreEqual(this.currentModel, item.model));
 		this.selectedIndex =
@@ -206,6 +209,28 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.refreshAbortController.abort();
 	}
 
+	private isFavorite(item: ModelItem): boolean {
+		return this.favoriteModels.has(`${item.provider}/${item.id}`);
+	}
+
+	private favoritesFirst(models: ModelItem[]): ModelItem[] {
+		return [...models].sort((a, b) => Number(this.isFavorite(b)) - Number(this.isFavorite(a)));
+	}
+
+	private toggleFavorite(): void {
+		const selected = this.filteredModels[this.selectedIndex];
+		if (!selected) return;
+		const id = `${selected.provider}/${selected.id}`;
+		if (this.favoriteModels.has(id)) this.favoriteModels.delete(id);
+		else this.favoriteModels.add(id);
+		this.settingsManager.setFavoriteModels([...this.favoriteModels]);
+		this.activeModels = this.favoritesFirst(this.scope === "scoped" ? this.scopedModelItems : this.allModels);
+		this.filterModels(this.searchInput.getValue());
+		this.selectedIndex = this.filteredModels.findIndex((item) => modelsAreEqual(selected.model, item.model));
+		this.updateList();
+		this.tui.requestRender();
+	}
+
 	private sortModels(models: ModelItem[]): ModelItem[] {
 		const sorted = [...models];
 		// Sort: current model first, then by provider
@@ -232,7 +257,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private setScope(scope: ModelScope): void {
 		if (this.scope === scope) return;
 		this.scope = scope;
-		this.activeModels = this.scope === "scoped" ? this.scopedModelItems : this.allModels;
+		this.activeModels = this.favoritesFirst(this.scope === "scoped" ? this.scopedModelItems : this.allModels);
 		const currentIndex = this.activeModels.findIndex((item) => modelsAreEqual(this.currentModel, item.model));
 		this.selectedIndex = currentIndex >= 0 ? currentIndex : 0;
 		this.filterModels(this.searchInput.getValue());
@@ -242,11 +267,13 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	}
 
 	private filterModels(query: string): void {
-		this.filteredModels = query
-			? fuzzyFilter(this.activeModels, query, ({ id, provider, model }) =>
-					getModelSelectorSearchText({ id, provider, name: model.name }),
-				)
-			: this.activeModels;
+		this.filteredModels = this.favoritesFirst(
+			query
+				? fuzzyFilter(this.activeModels, query, ({ id, provider, model }) =>
+						getModelSelectorSearchText({ id, provider, name: model.name }),
+					)
+				: this.activeModels,
+		);
 		// When filtering by a query, move the selector to the top row so the best
 		// match is highlighted. When the query is cleared, keep the current position
 		// clamped to the (restored) list length.
@@ -286,6 +313,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 				line = `${modelText} ${providerBadge}${checkmark}`;
 			}
 
+			if (this.isFavorite(item)) line += theme.fg("warning", " [fav]");
 			this.listContainer.addChild(new Text(line, 0, 0));
 		}
 
@@ -319,6 +347,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
+		if (kb.matches(keyData, "app.model.toggleFavorite")) {
+			this.toggleFavorite();
+			return;
+		}
 		if (kb.matches(keyData, "tui.input.tab")) {
 			if (this.scopedModelItems.length > 0) {
 				const nextScope: ModelScope = this.scope === "all" ? "scoped" : "all";

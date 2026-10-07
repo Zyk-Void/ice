@@ -576,10 +576,9 @@ function validateAppearanceV2(value: unknown, issues: AppearanceValidationIssue[
 			},
 			block: {
 				showByDefault: boolOr(block.showByDefault, defaults.thinking.block.showByDefault),
+				// An empty label hides thinking blocks entirely instead of showing a placeholder.
 				hiddenLabel:
-					typeof block.hiddenLabel === "string" &&
-					block.hiddenLabel.trim().length > 0 &&
-					utf8Length(block.hiddenLabel) <= MAX_LABEL_BYTES
+					typeof block.hiddenLabel === "string" && utf8Length(block.hiddenLabel) <= MAX_LABEL_BYTES
 						? block.hiddenLabel
 						: defaults.thinking.block.hiddenLabel,
 				styles: normalizeStyles(block.styles, defaults.thinking.block.styles),

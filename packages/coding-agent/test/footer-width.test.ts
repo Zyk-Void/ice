@@ -2,7 +2,9 @@ import { visibleWidth } from "@zykairotis/ice-tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
+import { createDefaultAppearance } from "../src/modes/interactive/appearance/appearance-defaults.ts";
 import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
+import { setSymbolPreset } from "../src/modes/interactive/theme/symbols.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
@@ -221,5 +223,62 @@ describe("FooterComponent width handling", () => {
 		const footer = new FooterComponent(session, createFooterData(1));
 
 		expect(stripAnsi(footer.render(120)[1])).toContain("$1.234 (sub)");
+	});
+
+	it("right-aligns the notices badge on the first row within width", () => {
+		setSymbolPreset("unicode");
+		const session = createSession({ sessionName: "한글".repeat(30) });
+		const footer = new FooterComponent(session, createFooterData(1));
+		footer.setNoticeSource(
+			() => ({ warning: 2, error: 0, update: 1 }),
+			() => "f2",
+		);
+
+		for (const width of [40, 93]) {
+			const lines = footer.render(width);
+			for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+			expect(stripAnsi(lines[0]!).endsWith("⚠ 2 · ↑ update · f2")).toBe(true);
+		}
+	});
+
+	it("keeps color-only customization compact and preserves safety colors", () => {
+		const session = createSession({ sessionName: "" });
+		const data = createFooterData(1);
+		data.getExtensionStatuses = () => new Map([["ice-mode", "build"]]);
+		const footer = new FooterComponent(session, data);
+		footer.setStyle("compact");
+		footer.setCapabilitySource(() => ["bash"]);
+		const appearance = createDefaultAppearance().footer;
+		appearance.primary.foreground = { kind: "custom", value: "#ff6b70" };
+		appearance.secondary.foreground = { kind: "custom", value: "#ffad66" };
+		footer.setAppearance(appearance);
+		const lines = footer.render(160);
+		expect(lines).toHaveLength(1);
+		expect(stripAnsi(lines[0]!)).toContain("build");
+		expect(stripAnsi(lines[0]!)).toContain("bash");
+		expect(lines[0]).toContain("\x1b[38;2;255;173;102m");
+		for (const width of [40, 80, 160]) {
+			for (const line of footer.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+		}
+	});
+
+	it("keeps custom footer field layouts available", () => {
+		const footer = new FooterComponent(createSession({ sessionName: "" }), createFooterData(1));
+		footer.setStyle("compact");
+		const appearance = createDefaultAppearance().footer;
+		appearance.separator = " | ";
+		footer.setAppearance(appearance);
+		expect(footer.render(160)).toHaveLength(2);
+	});
+
+	it("omits the badge when there are no notices", () => {
+		const session = createSession({ sessionName: "" });
+		const footer = new FooterComponent(session, createFooterData(1));
+		const before = footer.render(80);
+		footer.setNoticeSource(
+			() => ({ warning: 0, error: 0, update: 0 }),
+			() => "f2",
+		);
+		expect(footer.render(80)).toEqual(before);
 	});
 });
