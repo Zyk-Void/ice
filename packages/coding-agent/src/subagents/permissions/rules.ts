@@ -21,9 +21,9 @@ export function mostRestrictiveDecision(left: PermissionDecision, right: Permiss
 
 /**
  * Rule grammar: `tool` or `tool(pattern)`, for example `bash(git push*)`,
- * `edit(src/**)`, `agent(explore)`, `mcp__github__*`.
+ * `edit(src/**)`, `agent(explore)`, `mcp__github__*`, or `*` for every tool.
  */
-export const PERMISSION_RULE_PATTERN = "^[A-Za-z][A-Za-z0-9_.*-]{0,127}(\\(.{1,512}\\))?$";
+export const PERMISSION_RULE_PATTERN = "^(?:\\*|[A-Za-z][A-Za-z0-9_.*-]{0,127})(\\(.{1,512}\\))?$";
 export const PERMISSION_RULE_LIMITS = Object.freeze({ maxRulesPerList: 128, maxRuleBytes: 640 });
 
 export interface PermissionRuleLists {
@@ -45,7 +45,14 @@ export interface PermissionRuleOrigin {
 export const AGENT_PERMISSION_MODES = ["inherit", "plan", "review", "build", "bubble"] as const;
 export type AgentPermissionMode = (typeof AGENT_PERMISSION_MODES)[number];
 
-export type ChildSubjectClass = "read" | "edit-write" | "bash" | "mutation-adapter" | "external-directory";
+export type ChildSubjectClass =
+	| "read"
+	| "edit-write"
+	| "bash"
+	| "mutation-adapter"
+	| "external-directory"
+	/** `agent(name)`; reaches a child only through the gated recursion exception (section 9.4). */
+	| "delegation";
 
 export type CeilingRaiser = "sub-yolo" | "user-allow" | "managed-allow" | "worktree-isolation";
 
@@ -84,9 +91,51 @@ export const CHILD_MUTATION_CEILING: readonly ChildMutationCeilingEntry[] = Obje
 		raisableBy: Object.freeze(["user-allow", "managed-allow"] as const),
 	}),
 	Object.freeze({
+		subjectClass: "delegation",
+		childDefault: "parent",
+		maxDecision: "allow",
+		raisableBy: Object.freeze([]),
+	}),
+	Object.freeze({
 		subjectClass: "external-directory",
 		childDefault: "parent",
 		maxDecision: "ask",
 		raisableBy: Object.freeze(["managed-allow"] as const),
 	}),
 ] satisfies ChildMutationCeilingEntry[]);
+
+export interface ParsedPermissionRule {
+	/** Tool name or glob such as `mcp__github__*`. */
+	tool: string;
+	/** Subject glob inside the parentheses; absent matches every subject of the tool. */
+	pattern?: string;
+}
+
+export function parsePermissionRule(text: string): ParsedPermissionRule {
+	if (!new RegExp(PERMISSION_RULE_PATTERN).test(text)) throw new Error(`Invalid permission rule "${text}"`);
+	const open = text.indexOf("(");
+	if (open === -1) return { tool: text };
+	return { tool: text.slice(0, open), pattern: text.slice(open + 1, -1) };
+}
+
+/**
+ * Glob match. In path mode `*` stays within one segment and `**` crosses
+ * segments (gitignore style); otherwise `*` matches any run of characters.
+ */
+export function globMatches(pattern: string, value: string, pathMode = false): boolean {
+	let source = "";
+	for (let index = 0; index < pattern.length; index++) {
+		const char = pattern[index]!;
+		if (char === "*") {
+			if (pathMode && pattern[index + 1] === "*") {
+				index++;
+				if (pattern[index + 1] === "/") {
+					index++;
+					source += "(?:.*/)?";
+				} else source += ".*";
+			} else source += pathMode ? "[^/]*" : "[\\s\\S]*";
+		} else if (char === "?") source += pathMode ? "[^/]" : ".";
+		else source += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+	}
+	return new RegExp(`^${source}$`).test(value);
+}
