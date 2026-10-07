@@ -1,11 +1,11 @@
 /** Legacy subagent types, limits, and shared constants (moved from ice-subagents.ts). */
+import { createHash } from "node:crypto";
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import type { Api, Model } from "@zykairotis/ice-ai/compat";
 import type { TSchema } from "typebox";
 import type { ModelRuntime } from "../core/model-runtime.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import type { SubagentProfileColor } from "../ice-agent-view-bridge.ts";
-import { hashSource } from "./definitions/legacy-profiles.ts";
 import {
 	type ResolvedSubagentConcurrencyPolicy,
 	SUBAGENT_CONCURRENCY_LIMITS,
@@ -308,7 +308,7 @@ export function registerIceSubagentMcpAdapter(owner: object, adapter: IceSubagen
 
 export function subagentMcpToolName(selector: string): string {
 	const label = selector.replace(/[^A-Za-z0-9]/g, "_").slice(0, 40);
-	return `mcp_${label}_${hashSource(selector).slice(0, 12)}`;
+	return `mcp_${label}_${createHash("sha256").update(selector).digest("hex").slice(0, 12)}`;
 }
 
 export type SubagentProfileAvailability = "available" | "limited" | "requires_yolo" | "invalid" | "untrusted";

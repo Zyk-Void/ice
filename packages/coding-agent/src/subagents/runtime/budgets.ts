@@ -7,6 +7,8 @@
  * outcome `budget_exhausted`. Usage is observational and never grants authority.
  */
 
+import { performance } from "node:perf_hooks";
+
 export interface ChildBudgetLimits {
 	maxTurns?: number;
 	maxTokens?: number;
@@ -25,15 +27,27 @@ export class ChildBudgetTracker {
 	private tokens = 0;
 	private wrapUpUsed = false;
 
-	constructor(limits: ChildBudgetLimits, now: () => number = Date.now) {
-		this.limits = limits;
+	constructor(limits: ChildBudgetLimits, now: () => number = () => performance.now()) {
+		this.limits = { ...limits };
 		this.now = now;
 		this.startedAt = now();
 	}
 
 	recordTurn(inputTokens: number, outputTokens: number): void {
+		this.recordRequest();
+		this.recordUsage(inputTokens, outputTokens);
+	}
+
+	recordRequest(): void {
 		this.turns += 1;
+	}
+
+	recordUsage(inputTokens: number, outputTokens: number): void {
 		this.tokens += Math.max(0, inputTokens) + Math.max(0, outputTokens);
+	}
+
+	remainingTokens(): number | undefined {
+		return this.limits.maxTokens === undefined ? undefined : Math.max(0, this.limits.maxTokens - this.tokens);
 	}
 
 	/** Checked before every model turn and tool call. */

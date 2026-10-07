@@ -93,6 +93,8 @@ export interface ChildRuntimeContract {
 		agentMode: AgentPermissionMode;
 		/** Parent ICE mode at acceptance; a parent that has since moved to plan blocks mutation-capable children. */
 		parentMode: "plan" | "build";
+		/** Drift blocks new turns instead of silently reauthorizing a frozen child. */
+		parentPolicyHash?: string;
 		worktree: boolean;
 	};
 
@@ -112,7 +114,13 @@ export interface ChildRuntimeContract {
 
 	isolation: {
 		mode: AgentIsolationMode;
+		/** Synthetic baseline commit capturing the parent's dirty tree at spawn. */
 		baselineId?: string;
+		baselineTree?: string;
+		headCommit?: string;
+		repoRoot?: string;
+		/** Parent cwd relative to repoRoot; the child cwd is worktreePath + cwdOffset. */
+		cwdOffset?: string;
 		worktreePath?: string;
 	};
 

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ReviewFinding, SubagentBatchTask } from "../../ice-subagents.ts";
 import { redactCredentialText } from "../../utils/redact.ts";
 
@@ -45,6 +46,22 @@ export interface SubagentBatchSynthesisItemResult {
 export interface SubagentBatchSynthesisItem {
 	taskId: string;
 	result?: SubagentBatchSynthesisItemResult;
+}
+
+/** Bounded host-validated V2 projection accepted by the deterministic synthesizer. */
+export interface V2BatchSynthesisResult {
+	id: string;
+	outcome: string;
+	validation?: {
+		paths: readonly string[];
+		findings?: readonly ReviewFinding[];
+		requirements: readonly {
+			requirement: string;
+			required: boolean;
+			verified: boolean;
+			claim?: string;
+		}[];
+	};
 }
 
 export interface SubagentBatchSynthesisCounts {
@@ -224,6 +241,36 @@ export function summarizeBatchSynthesis(items: readonly SubagentBatchSynthesisIt
 		),
 		contradictions,
 	});
+}
+
+/**
+ * Project V2 snapshots into the legacy pure summarizer's bounded structural input.
+ * Criterion identities are task-local, so compare requirements by normalized text
+ * rather than positional IDs such as `criterion-1` that can mean different things
+ * in different sibling tasks.
+ */
+export function summarizeV2BatchSynthesis(results: readonly V2BatchSynthesisResult[]): SubagentBatchSynthesis {
+	return summarizeBatchSynthesis(
+		results.map((result) => ({
+			taskId: result.id,
+			result: {
+				status: result.outcome,
+				evidence: { paths: result.validation?.paths ?? [] },
+				findings: result.validation?.findings,
+				requirementStates: (result.validation?.requirements ?? []).map((requirement) => ({
+					id: synthesisCriterionId(requirement.requirement),
+					required: requirement.required,
+					verified: requirement.verified,
+					...(requirement.claim !== undefined ? { claim: requirement.claim } : {}),
+				})),
+			},
+		})),
+	);
+}
+
+function synthesisCriterionId(requirement: string): string {
+	const normalized = redactCredentialText(requirement.trim().replace(/\s+/g, " ")).toLowerCase();
+	return `criterion-${createHash("sha256").update(normalized).digest("hex")}`;
 }
 
 function classifyStatus(status: string | undefined): SubagentBatchSynthesisStatus {

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionEntry } from "../src/core/session-manager.ts";
 import { buildChildRuntimeContract } from "../src/subagents/contract/serialize.ts";
 import {
@@ -145,6 +145,30 @@ describe("subagent V2 child registry", () => {
 		await expect(registry.revive("s1", ID, async () => ({ handle }))).resolves.toBe(handle);
 		expect(registry.get("s1", ID)).toMatchObject({ state: "idle" });
 		expect(registry.get("s1", ID).blockedReasons).toBeUndefined();
+	});
+
+	it.each(["delete", "shutdown"])("disposes a late revival after %s without resurrection", async (action) => {
+		const registry = new ChildRegistry(new MemoryJournal());
+		accept(registry);
+		toIdle(registry);
+		await registry.park("s1", ID);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const handle = { dispose: vi.fn(async () => {}) };
+		const revival = registry.revive("s1", ID, async () => {
+			await gate;
+			return { handle };
+		});
+		const rejected = expect(revival).rejects.toThrow(/Unknown child|changed during revival/);
+		if (action === "delete") await registry.delete("s1", ID);
+		else await registry.disposeAll();
+		release();
+		await rejected;
+		expect(handle.dispose).toHaveBeenCalledOnce();
+		if (action === "delete") expect(registry.list("s1")).toEqual([]);
+		else expect(registry.resident("s1", ID)).toBeUndefined();
 	});
 
 	it("requires a stopped child before delete and tombstones durably before cleanup", async () => {

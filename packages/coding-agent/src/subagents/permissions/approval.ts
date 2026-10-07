@@ -10,6 +10,8 @@
  * owner session and are offered as rules the caller persists.
  */
 
+import { raceWithAbortSignal } from "../../utils/abort.ts";
+
 export const DEFAULT_ASK_TIMEOUT_MS = 10 * 60 * 1000;
 
 export type ApprovalAnswer = "allow-once" | "allow-session" | "deny";
@@ -29,7 +31,7 @@ export interface ApprovalRequest {
 
 export type ApprovalOutcome =
 	| { decision: "allow"; source: "automated" | "user"; sessionRule?: string }
-	| { decision: "deny"; source: "automated" | "user" | "timeout" | "no-channel" | "disposed" };
+	| { decision: "deny"; source: "automated" | "user" | "timeout" | "no-channel" | "disposed" | "cancelled" };
 
 export interface PendingApproval {
 	request: ApprovalRequest;
@@ -42,7 +44,7 @@ export interface ApprovalBrokerOptions {
 	interactive?: (request: ApprovalRequest, signal: AbortSignal) => Promise<ApprovalAnswer>;
 	/** True when a background inbox (Hub or RPC approval client) is attached. */
 	hasInbox?: () => boolean;
-	automatedCheck?: (request: ApprovalRequest) => Promise<"allow" | "deny" | undefined>;
+	automatedCheck?: (request: ApprovalRequest, signal?: AbortSignal) => Promise<"allow" | "deny" | undefined>;
 	askTimeoutMs?: number;
 	now?: () => number;
 	setTimer?: (callback: () => void, ms: number) => { cancel(): void };
@@ -54,6 +56,7 @@ interface Waiter {
 	resolve: (outcome: ApprovalOutcome) => void;
 	timer: { cancel(): void };
 	abort: AbortController;
+	removeCancellation: () => void;
 }
 
 export class ApprovalBroker {
@@ -69,9 +72,19 @@ export class ApprovalBroker {
 		return [...this.waiters.values()].map((waiter) => waiter.pending);
 	}
 
-	async request(request: ApprovalRequest): Promise<ApprovalOutcome> {
+	async request(request: ApprovalRequest, signal?: AbortSignal): Promise<ApprovalOutcome> {
 		if (this.disposed) return { decision: "deny", source: "disposed" };
-		const automated = await this.options.automatedCheck?.(request);
+		if (signal?.aborted) return { decision: "deny", source: "cancelled" };
+		let automated: "allow" | "deny" | undefined;
+		try {
+			if (this.options.automatedCheck)
+				automated = await raceWithAbortSignal(this.options.automatedCheck(request, signal), signal);
+		} catch (error) {
+			if (signal?.aborted) return { decision: "deny", source: "cancelled" };
+			throw error;
+		}
+		if (signal?.aborted) return { decision: "deny", source: "cancelled" };
+		if (this.disposed) return { decision: "deny", source: "disposed" };
 		if (automated === "deny") return { decision: "deny", source: "automated" };
 		if (automated === "allow") return { decision: "allow", source: "automated" };
 		const viaPrompt = request.foreground && this.options.interactive !== undefined;
@@ -87,15 +100,22 @@ export class ApprovalBroker {
 			});
 		return new Promise<ApprovalOutcome>((resolve) => {
 			const abort = new AbortController();
+			const cancel = () => this.settle(request.id, { decision: "deny", source: "cancelled" });
 			const waiter: Waiter = {
 				pending: { request, queuedAt: now, deadline: now + timeout },
 				resolve,
 				abort,
+				removeCancellation: () => signal?.removeEventListener("abort", cancel),
 				timer: setTimer(() => this.settle(request.id, { decision: "deny", source: "timeout" }), timeout),
 			};
 			this.waiters.set(request.id, waiter);
+			signal?.addEventListener("abort", cancel, { once: true });
+			if (signal?.aborted) {
+				cancel();
+				return;
+			}
 			this.notify();
-			if (viaPrompt) {
+			if (viaPrompt && this.waiters.has(request.id)) {
 				this.options.interactive!(request, abort.signal).then(
 					(answer) => this.respond(request.id, answer),
 					() => this.settle(request.id, { decision: "deny", source: "user" }),
@@ -130,6 +150,7 @@ export class ApprovalBroker {
 		if (!waiter) return false;
 		this.waiters.delete(id);
 		waiter.timer.cancel();
+		waiter.removeCancellation();
 		waiter.abort.abort();
 		waiter.resolve(outcome);
 		this.notify();

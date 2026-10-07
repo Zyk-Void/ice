@@ -30,6 +30,11 @@ export type ChildToolGuard = (
 	signal?: AbortSignal,
 ) => Promise<void>;
 
+export type ChildToolObserver = (
+	toolName: string,
+	args: Readonly<Record<string, unknown>>,
+) => ((success: boolean) => void) | undefined;
+
 export interface V2ChildSessionOptions {
 	contract: ChildRuntimeContract;
 	sessionManager: SessionManager;
@@ -40,15 +45,26 @@ export interface V2ChildSessionOptions {
 	/** Parent-owned child-safe adapters; only frozen names are bound. */
 	adapters: readonly IceResolvedDelegableTool[];
 	guard: ChildToolGuard;
+	/** Host-only observation starts after permission approval, at actual dispatch. */
+	observeTool?: ChildToolObserver;
 }
 
-function guarded(definition: ToolDefinition, guard: ChildToolGuard): ToolDefinition {
+function guarded(definition: ToolDefinition, guard: ChildToolGuard, observeTool?: ChildToolObserver): ToolDefinition {
 	const execute = definition.execute;
 	return {
 		...definition,
 		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
-			await guard(definition.name, (params ?? {}) as Readonly<Record<string, unknown>>, signal);
-			return execute(toolCallId, params, signal, onUpdate, ctx);
+			const args = (params ?? {}) as Readonly<Record<string, unknown>>;
+			await guard(definition.name, args, signal);
+			const observed = observeTool?.(definition.name, args);
+			try {
+				const result = await execute(toolCallId, params, signal, onUpdate, ctx);
+				observed?.(!signal?.aborted);
+				return result;
+			} catch (error) {
+				observed?.(false);
+				throw error;
+			}
 		},
 	} as ToolDefinition;
 }
@@ -80,7 +96,7 @@ export function buildV2ChildToolDefinitions(
 	);
 	const missing = [...frozen].filter((name) => !definitions.some((definition) => definition.name === name));
 	if (missing.length > 0) throw new Error(`No child implementation for frozen tools: ${missing.join(", ")}`);
-	return definitions.map((definition) => guarded(definition, options.guard));
+	return definitions.map((definition) => guarded(definition, options.guard, options.observeTool));
 }
 
 export async function createV2ChildSession(

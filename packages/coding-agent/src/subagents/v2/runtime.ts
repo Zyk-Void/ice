@@ -8,17 +8,36 @@
  * same runtime; background completions are journaled and delivered at most once
  * as `subagent_completed` follow-ups.
  */
-import { realpathSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type { Api, AssistantMessage, Model } from "@zykairotis/ice-ai/compat";
 import type { AgentSession } from "../../core/agent-session.ts";
+import {
+	type IceVerifierState,
+	pathIsWithin,
+	resolveProspectivePath,
+	validateMutationPath,
+} from "../../ice-safe-verify.ts";
+import { redactCredentialText } from "../../utils/redact.ts";
 import type { AgentTaskInput } from "../api/agent.ts";
 import type { ChildRuntimeContract, NormalizedPermissionRule } from "../contract/child-runtime-contract.ts";
-import { buildChildRuntimeContract, createChildId } from "../contract/serialize.ts";
+import { buildChildRuntimeContract, type ChildRuntimeContractInput, createChildId } from "../contract/serialize.ts";
 import { validateChildResume } from "../contract/validate-resume.ts";
 import { callableAgentDefinitions } from "../definitions/listing.ts";
 import { AgentDefinitionCache, type LoadedAgentDefinitions, loadAgentDefinitions } from "../definitions/load.ts";
 import type { AgentDefinitionSource, ResolvedAgentDefinition } from "../definitions/schema.ts";
+import { type ApplyOutcome, applyChildDelta } from "../isolation/apply.ts";
+import { persistPatchRecovery, persistWorktreePatch, validateWorktreePatch } from "../isolation/patch-state.ts";
+import {
+	assertOwnedWorktree,
+	type ChildDelta,
+	captureWorktreeBaseline,
+	computeChildDelta,
+	createIsolatedWorktree,
+	removeIsolatedWorktree,
+	type WorktreeBaseline,
+} from "../isolation/worktree.ts";
 import { type ApprovalAnswer, ApprovalBroker, type ApprovalRequest } from "../permissions/approval.ts";
 import { childDelegationTools, deriveChildDecision } from "../permissions/derive-child.ts";
 import { evaluatePermission, type PermissionRuleSet } from "../permissions/evaluate.ts";
@@ -32,22 +51,52 @@ import { bashGrantPrefix, extractPermissionSubjects, type PermissionSubject } fr
 import { SubagentConcurrencyAdmission } from "../registry/admission.ts";
 import {
 	buildRecoveryNotice,
+	childSessionDirectory,
 	createChildSession,
 	findInterruptedToolCalls,
 	openChildSession,
 } from "../registry/child-sessions.ts";
 import { type ChildRecord, ChildRegistry, sessionJournal } from "../registry/registry.ts";
 import type { ChildTurnOutcome } from "../registry/state-machine.ts";
+import {
+	isSubagentOutputArtifactRef,
+	SUBAGENT_OUTPUT_ARTIFACT_LIMITS,
+	type SubagentOutput,
+	SubagentOutputArtifactError,
+	SubagentOutputArtifactStore,
+	type SubagentOutputRead,
+} from "../results/output-artifacts.ts";
+import { normalizeSubagentOutputSchema } from "../results/report.ts";
 import { buildSubagentTaskContract } from "../results/task-contract.ts";
+import {
+	normalizeV2Acceptance,
+	renderV2ResultInstructions,
+	type V2ChildTurnResult,
+	type V2OutputCapture,
+	V2ResultObservations,
+	v2ReportMode,
+	validateV2Result,
+} from "../results/v2-result.ts";
+import type { ChildBudgetLimits } from "../runtime/budgets.ts";
 import type { IceResolvedDelegableTool } from "../tools/adapters.ts";
 import { ICE_BUILTIN_CHILD_TOOLS } from "../tools/adapters.ts";
 import { type ParentToolInfo, resolveChildTools } from "../tools/resolve.ts";
 import { type ChildToolGuard, createV2ChildSession } from "./session-factory.ts";
 import type { SubagentsV2Settings } from "./settings.ts";
+import { ChildTurnBudget, resolveTurnBudget } from "./turn-budget.ts";
 
 export const SUBAGENT_COMPLETED_CUSTOM_TYPE = "subagent_completed";
 const RESULT_TEXT_LIMIT = 48 * 1024;
 const COMPLETION_SUMMARY_LIMIT = 4 * 1024;
+
+function durableOutputReferenceId(childId: string): string {
+	return `durable:v2:${childId}`;
+}
+
+function outputArtifactUnavailable(output: V2OutputCapture): V2OutputCapture {
+	const { artifact: _artifact, ...inline } = output;
+	return { ...inline, captureStatus: "artifact_unavailable" };
+}
 
 const SOURCE_SCOPE: Readonly<Record<AgentDefinitionSource, PermissionRuleScope>> = {
 	builtin: "builtin",
@@ -72,6 +121,9 @@ export interface V2RuntimeHost {
 	getParentMode(): "plan" | "build";
 	isSubYolo(): boolean;
 	getAdapters(): readonly IceResolvedDelegableTool[];
+	/** The host configures the verifier; child/model text cannot choose commands. */
+	verifyPatch?: (root: string, signal?: AbortSignal) => Promise<IceVerifierState>;
+	getPatchVerifier?: () => V2RuntimeHost["verifyPatch"];
 	/** Foreground approval prompt; absent when the parent has no interactive UI. */
 	promptApproval?: (request: ApprovalRequest, signal: AbortSignal) => Promise<ApprovalAnswer>;
 	createChildAgentSession?: typeof createV2ChildSession;
@@ -85,21 +137,15 @@ interface ResidentChild {
 	pendingNote?: string;
 	recoveryNotice?: string;
 	controller?: AbortController;
+	budget?: ChildTurnBudget;
+	observations?: V2ResultObservations;
 	/** True while a parent tool call is waiting on this child's turn. */
 	foreground: boolean;
 	running?: Promise<ChildTurnResult>;
 	dispose(): Promise<void>;
 }
 
-export interface ChildTurnResult {
-	id: string;
-	agent: string;
-	outcome: ChildTurnOutcome;
-	text: string;
-	truncated: boolean;
-	usage: { inputTokens: number; outputTokens: number; cost: number };
-	error?: string;
-}
+export type ChildTurnResult = V2ChildTurnResult;
 
 export class SubagentV2Error extends Error {
 	readonly code: "unknown_agent" | "preflight" | "blocked" | "busy";
@@ -109,12 +155,20 @@ export class SubagentV2Error extends Error {
 	}
 }
 
+interface TurnResultContext {
+	acceptance: readonly string[];
+	observations: V2ResultObservations;
+	final?: AssistantMessage;
+	usage: ChildTurnResult["usage"];
+}
+
 interface OwnerState {
 	sessionId: string;
 	registry: ChildRegistry<ResidentChild>;
 	admission: SubagentConcurrencyAdmission;
 	broker: ApprovalBroker;
 	waiters: Array<() => void>;
+	closed: boolean;
 }
 
 function parentToolInfos(parent: AgentSession, adapters: readonly IceResolvedDelegableTool[]): ParentToolInfo[] {
@@ -199,10 +253,18 @@ function freezeRules(sets: readonly PermissionRuleSet[]): NormalizedPermissionRu
 
 function boundedText(text: string, limit: number): { text: string; truncated: boolean } {
 	if (Buffer.byteLength(text) <= limit) return { text, truncated: false };
-	let end = limit;
+	const marker = "\n[truncated]";
+	let end = Math.max(0, limit - Buffer.byteLength(marker));
 	const bytes = Buffer.from(text);
 	while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
-	return { text: `${bytes.subarray(0, end).toString("utf8")}\n[truncated]`, truncated: true };
+	return { text: `${bytes.subarray(0, end).toString("utf8")}${marker}`, truncated: true };
+}
+
+/** Working directory of a child: its worktree (plus the parent's offset) when isolated. */
+export function childCwd(contract: ChildRuntimeContract, parentCwd: string): string {
+	const { worktreePath, cwdOffset } = contract.isolation;
+	if (contract.isolation.mode !== "worktree" || !worktreePath) return parentCwd;
+	return cwdOffset ? join(worktreePath, cwdOffset) : worktreePath;
 }
 
 const CHILD_PROMPT_SUFFIX =
@@ -210,11 +272,16 @@ const CHILD_PROMPT_SUFFIX =
 
 export class SubagentV2Runtime {
 	private readonly host: V2RuntimeHost;
+	private readonly outputArtifacts: SubagentOutputArtifactStore;
 	private readonly cache = new AgentDefinitionCache();
 	private owner: OwnerState | undefined;
+	private readonly patchOperations = new Set<string>();
 
 	constructor(host: V2RuntimeHost) {
 		this.host = host;
+		this.outputArtifacts = new SubagentOutputArtifactStore({
+			artifactRoot: join(host.agentDir, "artifacts", "subagent-output"),
+		});
 	}
 
 	// --- owner state ------------------------------------------------------
@@ -228,9 +295,37 @@ export class SubagentV2Runtime {
 	private state(): OwnerState {
 		const parent = this.parent();
 		if (this.owner?.sessionId === parent.sessionId) return this.owner;
+		if (this.owner)
+			throw new SubagentV2Error("busy", "Shut down the previous owner before replacing the parent session.");
 		const settings = this.host.getSettings();
 		const registry = new ChildRegistry<ResidentChild>(sessionJournal(parent.sessionManager), this.host.now);
 		registry.restore();
+		for (const record of registry.list(parent.sessionId)) {
+			const output = record.lastResult?.output;
+			if (!output?.artifact || !isSubagentOutputArtifactRef(output.artifact)) continue;
+			let registered = false;
+			try {
+				registered = this.outputArtifacts.registerDurable(
+					parent.sessionId,
+					output.artifact,
+					durableOutputReferenceId(record.id),
+				);
+			} catch {
+				registered = false;
+			}
+			if (!registered) {
+				const current = registry.get(parent.sessionId, record.id);
+				registry.transition(
+					parent.sessionId,
+					record.id,
+					current.generation,
+					current.state,
+					{ lastResult: { ...record.lastResult!, output: outputArtifactUnavailable(output) } },
+					true,
+				);
+			}
+		}
+		this.outputArtifacts.finalizeRestore(parent.sessionId);
 		const promptApproval = this.host.promptApproval;
 		this.owner = {
 			sessionId: parent.sessionId,
@@ -242,9 +337,11 @@ export class SubagentV2Runtime {
 				...(this.host.now ? { now: this.host.now } : {}),
 			}),
 			waiters: [],
+			closed: false,
 		};
-		this.owner.admission.onRelease(() => this.owner?.waiters.shift()?.());
-		return this.owner;
+		const owner = this.owner;
+		owner.admission.onRelease(() => owner.waiters.shift()?.());
+		return owner;
 	}
 
 	get registry(): ChildRegistry<ResidentChild> {
@@ -290,36 +387,70 @@ export class SubagentV2Runtime {
 
 	private parentDecision(parent: AgentSession, subject: PermissionSubject): PermissionDecision {
 		const mode = this.host.getParentMode();
+		const settings = this.host.getSettings();
+		if (settings.diagnostics.length) return "deny";
 		if (subject.tool === "external_directory") return mode === "plan" ? "deny" : "ask";
 		const active = parent.getActiveToolNames().includes(subject.tool);
-		return evaluatePermission({ subject, ruleSets: [], fallback: active ? "allow" : "deny", mode }).decision;
+		return evaluatePermission({
+			subject,
+			ruleSets: settings.ruleSets,
+			fallback: active ? "allow" : "deny",
+			mode,
+		}).decision;
 	}
 
 	private guardFor(contract: ChildRuntimeContract, resident: () => ResidentChild | undefined): ChildToolGuard {
 		const childRuleSets = ruleSetsFromFrozen(contract.capabilities.permissionRules);
 		const access = new Map(contract.capabilities.tools.map((tool) => [tool.name, tool.access]));
-		return async (toolName, args) => {
+		return async (toolName, args, signal) => {
+			if (signal?.aborted) throw new Error("Child tool was cancelled.");
+			resident()?.budget?.assertOrdinaryWork();
+			this.assertChildAuthority(contract);
 			const parent = this.parent();
-			const cwd = parent.sessionManager.getCwd();
+			if (parent.sessionId !== contract.ownerSessionId) throw new Error("Child owner is no longer active.");
+			const cwd = childCwd(contract, parent.sessionManager.getCwd());
+			let permissionArgs = args;
+			if (READ_ONLY_BUILTINS.has(toolName) || toolName === "edit" || toolName === "write") {
+				const canonical = resolveProspectivePath(resolve(cwd, String(args.path ?? ".")));
+				permissionArgs = { ...args, path: canonical };
+				if (toolName === "edit" || toolName === "write") {
+					const reason = validateMutationPath(canonical, cwd, cwd);
+					if (reason) throw new Error(reason);
+				}
+			}
 			const subjects = extractPermissionSubjects({
 				tool: toolName,
-				args,
+				args: permissionArgs,
 				cwd,
 				...(access.has(toolName) && !(ICE_BUILTIN_CHILD_TOOLS as readonly string[]).includes(toolName)
 					? { adapterAccess: access.get(toolName) }
 					: {}),
 			});
 			const grants = resident()?.grants ?? [];
+			const parentSubject = (subject: PermissionSubject): PermissionSubject => {
+				if (contract.isolation.mode !== "worktree" || !subject.pathMode || !subject.value) return subject;
+				const mirrored = resolve(
+					contract.isolation.repoRoot!,
+					relative(contract.isolation.worktreePath!, resolve(cwd, subject.value)),
+				);
+				return {
+					...subject,
+					value:
+						subject.tool === "external_directory"
+							? mirrored
+							: relative(parent.sessionManager.getCwd(), mirrored).split("\\").join("/"),
+				};
+			};
 			let decision: PermissionDecision = "allow";
 			for (const subject of subjects) {
-				const parentDecision = this.parentDecision(parent, subject);
+				const parentDecision = this.parentDecision(parent, parentSubject(subject));
 				let child = deriveChildDecision(subject, parentDecision, {
 					childRuleSets,
 					agentMode: contract.capabilities.agentMode,
 					subYolo: contract.capabilities.subYolo,
 					worktree: contract.capabilities.worktree,
 				}).decision;
-				if (child === "ask" && grants.length > 0 && !subject.opaque) {
+				if (parentDecision === "allow" && child === "ask" && grants.length > 0 && !subject.opaque) {
 					const granted = evaluatePermission({
 						subject,
 						ruleSets: [{ origin: { scope: "session", carrier: "grant" }, rules: { allow: grants } }],
@@ -338,18 +469,26 @@ export class SubagentV2Runtime {
 					? `bash: ${String(args.command ?? "").slice(0, 300)}`
 					: `${toolName}: ${subjects[0]?.value ?? ""}`;
 			const sessionRule = toolName === "bash" && firstBash ? `bash(${bashGrantPrefix(firstBash)}*)` : toolName;
-			const outcome = await this.state().broker.request({
-				id: `${contract.id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
-				ownerSessionId: contract.ownerSessionId,
-				childId: contract.id,
-				agent: contract.agent.name,
-				tool: toolName,
-				summary,
-				sessionRule,
-				foreground: resident()?.foreground === true,
-			});
+			const outcome = await this.state().broker.request(
+				{
+					id: `${contract.id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+					ownerSessionId: contract.ownerSessionId,
+					childId: contract.id,
+					agent: contract.agent.name,
+					tool: toolName,
+					summary,
+					sessionRule,
+					foreground: resident()?.foreground === true,
+				},
+				signal,
+			);
 			if (outcome.decision === "deny")
 				throw new Error(`Permission denied: ${toolName} was not approved (${outcome.source}).`);
+			if (signal?.aborted) throw new Error("Child tool was cancelled during approval.");
+			resident()?.budget?.assertOrdinaryWork();
+			this.assertChildAuthority(contract);
+			if (subjects.some((subject) => this.parentDecision(this.parent(), parentSubject(subject)) === "deny"))
+				throw new Error("Current parent permission denied the approved child operation.");
 			if (outcome.sessionRule) resident()?.grants.push(outcome.sessionRule);
 		};
 	}
@@ -360,7 +499,7 @@ export class SubagentV2Runtime {
 	private preflight(
 		task: AgentTaskInput,
 		settings: SubagentsV2Settings,
-	): { contract: ChildRuntimeContract; model: Model<Api> } {
+	): { input: ChildRuntimeContractInput; model: Model<Api> } {
 		const parent = this.parent();
 		const name = task.agent ?? settings.defaultAgent;
 		const definitions = this.definitions();
@@ -388,8 +527,8 @@ export class SubagentV2Runtime {
 			throw new SubagentV2Error("preflight", `Agent "${name}" is denied by ice.subagents.permissions.`);
 		const fields = definition.fields;
 		const isolation = task.isolation ?? fields.isolation ?? "none";
-		if (isolation === "worktree")
-			throw new SubagentV2Error("preflight", "Worktree isolation is not available yet in subagents V2.");
+		if (isolation === "worktree" && !this.host.isProjectTrusted())
+			throw new SubagentV2Error("preflight", "Worktree isolation requires a trusted project.");
 		const tools =
 			typeof fields.tools === "string" ? fields.tools.split(",").map((tool) => tool.trim()) : fields.tools;
 		const adapters = this.host.getAdapters();
@@ -438,10 +577,21 @@ export class SubagentV2Runtime {
 				throw new SubagentV2Error("preflight", `scope root ${root} is not a directory; put files in scope.targets`);
 			return canonical;
 		});
+		const targets = task.scope?.targets?.map((target) => {
+			const absolute = resolve(cwd, target);
+			if (lstatSync(absolute).isSymbolicLink() || !statSync(absolute).isFile())
+				throw new SubagentV2Error("preflight", `scope target ${target} must be a regular non-symlink file`);
+			const canonical = realpathSync(absolute);
+			if (!scopeRoots.some((root) => pathIsWithin(root, canonical)))
+				throw new SubagentV2Error("preflight", `scope target ${target} is outside the approved roots`);
+			return canonical;
+		});
+		const outputSchema = normalizeSubagentOutputSchema(task.outputSchema);
+		const acceptance = normalizeV2Acceptance(task.acceptance ?? []);
 		const systemPrompt = `${definition.prompt}${CHILD_PROMPT_SUFFIX}${
 			resolution.diagnostics.length > 0 ? `\n\nUnavailable tools: ${resolution.diagnostics.join("; ")}.` : ""
 		}`;
-		const contract = buildChildRuntimeContract({
+		const input: ChildRuntimeContractInput = {
 			id,
 			ownerSessionId: parent.sessionId,
 			rootSessionId: parent.sessionId,
@@ -471,33 +621,78 @@ export class SubagentV2Runtime {
 				tools: resolution.tools,
 				permissionRules: freezeRules([...settings.ruleSets, ...definitionRules]),
 				scopeRoots,
-				...(task.scope?.targets ? { targets: task.scope.targets } : {}),
+				...(targets ? { targets } : {}),
 				mcpServers: [],
 				spawns: delegation.spawnable,
 				maxDepth: settings.maxDepth,
 				subYolo: this.host.isSubYolo(),
 				agentMode: (fields.permissionMode ?? "inherit") as AgentPermissionMode,
 				parentMode: this.host.getParentMode(),
-				worktree: false,
+				parentPolicyHash: createHash("sha256").update(JSON.stringify(settings.ruleSets)).digest("hex"),
+				worktree: isolation === "worktree",
 			},
 			result: {
-				...(task.outputSchema ? { outputSchema: task.outputSchema } : {}),
-				acceptance: task.acceptance ?? [],
+				...(outputSchema ? { outputSchema: { ...outputSchema } } : {}),
+				acceptance,
 				taskContract: buildSubagentTaskContract(task.description),
 			},
 			budgets: {
-				...((task.maxTurns ?? fields.maxTurns) ? { maxTurns: (task.maxTurns ?? fields.maxTurns) as number } : {}),
-				...((task.maxTokens ?? fields.maxTokens)
-					? { maxTokens: (task.maxTokens ?? fields.maxTokens) as number }
-					: {}),
-				...((task.timeoutMs ?? fields.timeoutMs)
-					? { timeoutMs: (task.timeoutMs ?? fields.timeoutMs) as number }
-					: {}),
+				...resolveTurnBudget({
+					maxTurns: task.maxTurns ?? fields.maxTurns ?? undefined,
+					maxTokens: task.maxTokens ?? fields.maxTokens ?? undefined,
+					timeoutMs: task.timeoutMs ?? fields.timeoutMs ?? undefined,
+				}),
 				startupTimeoutMs: 600_000,
 			},
-			isolation: { mode: "none" },
+			isolation: { mode: isolation },
+		};
+		return { input, model };
+	}
+
+	/**
+	 * Capture the parent's dirty baseline, create the child's worktree, and
+	 * rewrite scope roots into it. Scope roots outside the repository are refused.
+	 */
+	private prepareWorktree(input: ChildRuntimeContractInput): ChildRuntimeContractInput {
+		const parent = this.parent();
+		const baseline = captureWorktreeBaseline(parent.sessionManager.getCwd());
+		const repoRoot = realpathSync(baseline.repoRoot);
+		const scopeRoots = input.capabilities.scopeRoots.map((root) => {
+			const rel = relative(repoRoot, root);
+			if (rel === ".." || rel.startsWith("../") || isAbsolute(rel))
+				throw new SubagentV2Error(
+					"preflight",
+					`scope root ${root} is outside the repository; worktree children stay inside it`,
+				);
+			return rel;
 		});
-		return { contract, model };
+		const worktreePath = join(
+			childSessionDirectory(parent.sessionManager.getSessionDir(), parent.sessionId),
+			"worktrees",
+			input.id,
+		);
+		createIsolatedWorktree(baseline, worktreePath);
+		mkdirSync(join(worktreePath, baseline.cwdOffset), { recursive: true });
+		for (const rel of scopeRoots) mkdirSync(join(worktreePath, rel), { recursive: true });
+		return {
+			...input,
+			capabilities: {
+				...input.capabilities,
+				scopeRoots: scopeRoots.map((rel) => (rel === "" ? worktreePath : join(worktreePath, rel))),
+				...(input.capabilities.targets
+					? { targets: input.capabilities.targets.map((target) => join(worktreePath, relative(repoRoot, target))) }
+					: {}),
+			},
+			isolation: {
+				mode: "worktree",
+				baselineId: baseline.baselineCommit,
+				baselineTree: baseline.baselineTree,
+				headCommit: baseline.headCommit,
+				repoRoot,
+				cwdOffset: baseline.cwdOffset,
+				worktreePath,
+			},
+		};
 	}
 
 	private async residentFor(
@@ -506,17 +701,30 @@ export class SubagentV2Runtime {
 		model: Model<Api>,
 	): Promise<ResidentChild> {
 		const parent = this.parent();
+		const owner = this.state();
+		if (owner.closed) throw new SubagentV2Error("blocked", "The child owner was shut down.");
 		let resident: ResidentChild | undefined;
 		const session = await (this.host.createChildAgentSession ?? createV2ChildSession)({
 			contract,
 			sessionManager,
-			cwd: parent.sessionManager.getCwd(),
+			cwd: childCwd(contract, parent.sessionManager.getCwd()),
 			agentDir: this.host.agentDir,
 			model,
 			modelRuntime: parent.modelRuntime,
 			adapters: this.host.getAdapters(),
 			guard: this.guardFor(contract, () => resident),
+			observeTool: (toolName, args) => resident?.observations?.startTool(toolName, args),
 		});
+		try {
+			if (owner.closed || this.owner !== owner)
+				throw new SubagentV2Error("blocked", "The child owner shut down during session creation.");
+			owner.registry.get(owner.sessionId, contract.id);
+			this.assertChildAuthority(contract);
+		} catch (error) {
+			await session.abort().catch(() => {});
+			session.dispose();
+			throw error;
+		}
 		resident = {
 			session,
 			contract,
@@ -533,60 +741,205 @@ export class SubagentV2Runtime {
 	/** Accept and start new children. Resolves once each is persisted and resident. */
 	async launch(tasks: readonly AgentTaskInput[]): Promise<ChildRecord[]> {
 		const settings = this.host.getSettings();
+		if (settings.diagnostics.length)
+			throw new SubagentV2Error("preflight", `Invalid parent settings: ${settings.diagnostics.join("; ")}`);
 		const parent = this.parent();
 		const state = this.state();
 		// Preflight every task before persisting any, so a bad batch launches nothing.
 		const prepared = tasks.map((task) => ({ task, ...this.preflight(task, settings) }));
-		const records: ChildRecord[] = [];
-		for (const { task, contract, model } of prepared) {
-			const created = createChildSession({
-				parentSessionDir: parent.sessionManager.getSessionDir(),
-				parentSessionId: parent.sessionId,
-				...(parent.sessionManager.getSessionFile()
-					? { parentSessionFile: parent.sessionManager.getSessionFile() }
-					: {}),
-				contract,
-				cwd: parent.sessionManager.getCwd(),
+		for (const { input } of prepared) {
+			const subject: PermissionSubject = {
+				tool: "agent",
+				value: input.agent.name,
+				pathMode: false,
+				subjectClass: "delegation",
+			};
+			if (
+				evaluatePermission({ subject, ruleSets: settings.ruleSets, fallback: "allow", mode: "inherit" })
+					.decision !== "ask"
+			)
+				continue;
+			const approval = await state.broker.request({
+				id: `${input.id}:launch`,
+				ownerSessionId: state.sessionId,
+				childId: input.id,
+				agent: input.agent.name,
+				tool: "agent",
+				summary: `delegate to ${input.agent.name}`,
+				foreground: true,
 			});
-			const record = state.registry.accept({
-				id: contract.id,
-				ownerSessionId: contract.ownerSessionId,
-				rootSessionId: contract.rootSessionId,
-				depth: contract.depth,
-				agent: contract.agent.name,
-				description: task.description,
-				contractHash: created.contractHash,
-				transcriptPath: created.transcriptPath,
-			});
-			const resident = await this.residentFor(contract, created.sessionManager, model);
-			state.registry.attach(state.sessionId, contract.id, resident);
-			records.push(record);
+			if (approval.decision !== "allow")
+				throw new SubagentV2Error(
+					"preflight",
+					`Delegation to ${input.agent.name} was not approved (${approval.source}).`,
+				);
 		}
-		return records;
+		if (
+			state.closed ||
+			this.owner !== state ||
+			parent.sessionId !== this.parent().sessionId ||
+			JSON.stringify(settings) !== JSON.stringify(this.host.getSettings())
+		)
+			throw new SubagentV2Error("blocked", "Child launch authority changed during preflight.");
+		for (const { input } of prepared) this.assertChildAuthority(buildChildRuntimeContract(input));
+		const records: ChildRecord[] = [];
+		const staged: Array<{
+			task: AgentTaskInput;
+			contract: ChildRuntimeContract;
+			created: ReturnType<typeof createChildSession>;
+			model: Model<Api>;
+		}> = [];
+		const worktrees: Array<{ repoRoot: string; path: string }> = [];
+		try {
+			for (const { task, input, model } of prepared) {
+				const isolated = input.isolation.mode === "worktree" ? this.prepareWorktree(input) : input;
+				if (isolated.isolation.worktreePath && isolated.isolation.repoRoot)
+					worktrees.push({ repoRoot: isolated.isolation.repoRoot, path: isolated.isolation.worktreePath });
+				const contract = buildChildRuntimeContract(isolated);
+				const created = createChildSession({
+					parentSessionDir: parent.sessionManager.getSessionDir(),
+					parentSessionId: parent.sessionId,
+					...(parent.sessionManager.getSessionFile()
+						? { parentSessionFile: parent.sessionManager.getSessionFile() }
+						: {}),
+					contract,
+					cwd: childCwd(contract, parent.sessionManager.getCwd()),
+				});
+				staged.push({ task, contract, created, model });
+			}
+			for (const { task, contract, created } of staged) {
+				const record = state.registry.accept({
+					id: contract.id,
+					ownerSessionId: contract.ownerSessionId,
+					rootSessionId: contract.rootSessionId,
+					depth: contract.depth,
+					agent: contract.agent.name,
+					description: task.description,
+					contractHash: created.contractHash,
+					transcriptPath: created.transcriptPath,
+					...(contract.isolation.mode === "worktree" ? { patchState: "open" as const } : {}),
+				});
+				records.push(record);
+			}
+			for (const { contract, created, model } of staged) {
+				const resident = await this.residentFor(contract, created.sessionManager, model);
+				state.registry.attach(state.sessionId, contract.id, resident);
+			}
+			return records;
+		} catch (error) {
+			const cleanupFailures: string[] = [];
+			for (const record of records) {
+				try {
+					const current = state.registry.get(state.sessionId, record.id);
+					state.registry.transition(
+						state.sessionId,
+						record.id,
+						current.generation,
+						"aborted",
+						{ turnInFlight: false },
+						true,
+					);
+					await state.registry.delete(state.sessionId, record.id);
+				} catch (cleanup) {
+					cleanupFailures.push(String(cleanup));
+				}
+			}
+			for (const worktree of worktrees) {
+				try {
+					removeIsolatedWorktree(worktree.repoRoot, worktree.path);
+				} catch (cleanup) {
+					cleanupFailures.push(String(cleanup));
+				}
+			}
+			for (const item of staged) rmSync(item.created.transcriptPath, { force: true });
+			if (cleanupFailures.length)
+				throw new SubagentV2Error(
+					"preflight",
+					`${String(error)}; cleanup needs inspection: ${cleanupFailures.join("; ")}`,
+				);
+			throw error;
+		}
 	}
 
 	private async acquire(state: OwnerState, signal?: AbortSignal): Promise<void> {
-		while (!state.admission.tryAcquire()) {
-			if (signal?.aborted) throw new Error("Cancelled while queued.");
-			await new Promise<void>((resolve) => state.waiters.push(resolve));
+		while (true) {
+			if (state.closed || signal?.aborted) throw new Error("Cancelled while queued.");
+			if (state.admission.tryAcquire()) return;
+			await new Promise<void>((resolveWait, reject) => {
+				const wake = () => {
+					signal?.removeEventListener("abort", abort);
+					resolveWait();
+				};
+				const abort = () => {
+					const index = state.waiters.indexOf(wake);
+					if (index >= 0) state.waiters.splice(index, 1);
+					signal?.removeEventListener("abort", abort);
+					reject(new Error("Cancelled while queued."));
+				};
+				state.waiters.push(wake);
+				signal?.addEventListener("abort", abort, { once: true });
+			});
 		}
 	}
 
 	/** Run one turn of a resident child. Never throws; failures become turn outcomes. */
-	runTurn(id: string, text: string, options: { foreground: boolean; background?: boolean }): Promise<ChildTurnResult> {
+	runTurn(
+		id: string,
+		text: string,
+		options: {
+			foreground: boolean;
+			background?: boolean;
+			budgets?: ChildBudgetLimits;
+			acceptance?: readonly string[];
+			accepted?: () => void;
+			signal?: AbortSignal;
+		},
+	): Promise<ChildTurnResult> {
 		const state = this.state();
+		const record = state.registry.get(state.sessionId, id);
+		if (this.patchOperations.has(id) || (record.patchState && record.patchState !== "open"))
+			return Promise.reject(new SubagentV2Error("blocked", "A patch decision prevents child execution."));
 		const resident = state.registry.resident(state.sessionId, id);
 		if (!resident) return Promise.reject(new SubagentV2Error("busy", `Child ${id} is not resident.`));
 		if (resident.running) return Promise.reject(new SubagentV2Error("busy", `Child ${id} is already running.`));
+		let limits: ChildBudgetLimits;
+		let acceptance: readonly string[];
+		try {
+			acceptance = normalizeV2Acceptance(resident.contract.result.acceptance, options.acceptance);
+			this.assertChildAuthority(resident.contract);
+			if (
+				record.lastTurnOutcome === "budget_exhausted" &&
+				!Object.values(options.budgets ?? {}).some((value) => value !== undefined)
+			)
+				throw new SubagentV2Error("blocked", "Supply an explicit permitted budget to continue an exhausted child.");
+			limits = resolveTurnBudget(resident.contract.budgets, options.budgets);
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		const observations = new V2ResultObservations(
+			childCwd(resident.contract, this.parent().sessionManager.getCwd()),
+			resident.contract.capabilities.scopeRoots,
+		);
+		const resultContext: TurnResultContext = {
+			acceptance,
+			observations,
+			usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 },
+		};
+		state.registry.transition(state.sessionId, id, record.generation, record.state, { turnInFlight: true }, true);
+		options.accepted?.();
 		const controller = new AbortController();
+		const cancel = () => controller.abort();
+		options.signal?.addEventListener("abort", cancel, { once: true });
+		if (options.signal?.aborted) cancel();
 		const run = (async (): Promise<ChildTurnResult> => {
 			const notes = [resident.recoveryNotice, resident.pendingNote].filter(Boolean);
 			resident.recoveryNotice = undefined;
 			resident.pendingNote = undefined;
-			const prompt = notes.length > 0 ? `${notes.join("\n\n")}\n\n${text}` : text;
+			const instructions = renderV2ResultInstructions(resident.contract, acceptance);
+			const prompt = redactCredentialText([...notes, text, instructions].filter(Boolean).join("\n\n"));
 			let outcome: ChildTurnOutcome = "completed";
 			let error: string | undefined;
-			const startIndex = resident.session.messages.length;
+			let unsubscribe: (() => void) | undefined;
 			try {
 				await this.acquire(state, controller.signal);
 			} catch {
@@ -595,34 +948,81 @@ export class SubagentV2Runtime {
 					resident,
 					id,
 					"cancelled",
-					startIndex,
 					options.background === true,
 					"Cancelled while queued.",
+					resultContext,
 				);
 			}
 			try {
+				if (controller.signal.aborted || state.closed) throw new Error("Cancelled before child turn.");
+				this.assertChildAuthority(resident.contract);
 				resident.foreground = options.foreground;
 				const record = state.registry.get(state.sessionId, id);
 				state.registry.transition(state.sessionId, id, record.generation, "running", { turnInFlight: true }, true);
 				controller.signal.addEventListener("abort", () => void resident.session.abort().catch(() => {}), {
 					once: true,
 				});
+				resident.budget = new ChildTurnBudget(
+					resident.session,
+					limits,
+					() => {
+						if (state.closed) throw new Error("Child owner was shut down.");
+						this.assertChildAuthority(resident.contract);
+					},
+					controller.signal,
+					this.host.now,
+				);
+				resident.observations = observations;
+				unsubscribe = resident.session.subscribe((event) => {
+					const assistant =
+						event.type === "message_end" && event.message.role === "assistant" ? event.message : undefined;
+					if (assistant) resultContext.final = assistant;
+					const usage = assistant?.usage ?? (event.type === "compaction_end" ? event.result?.usage : undefined);
+					if (!usage) return;
+					resultContext.usage.inputTokens += usage.input;
+					resultContext.usage.outputTokens += usage.output;
+					resultContext.usage.cacheReadTokens = (resultContext.usage.cacheReadTokens ?? 0) + usage.cacheRead;
+					resultContext.usage.cacheWriteTokens = (resultContext.usage.cacheWriteTokens ?? 0) + usage.cacheWrite;
+					resultContext.usage.cost += usage.cost.total;
+				});
 				await resident.session.prompt(prompt, { expandPromptTemplates: false, source: "extension" });
 				if (controller.signal.aborted) outcome = "cancelled";
-				const last = resident.session.messages.at(-1) as AssistantMessage | undefined;
+				const last = resultContext.final;
 				if (!controller.signal.aborted && last?.role === "assistant" && last.stopReason === "error") {
 					outcome = "failed";
 					error = last.errorMessage ?? "child model error";
+				}
+				if (
+					!controller.signal.aborted &&
+					v2ReportMode(resident.contract, acceptance) === "structured_report" &&
+					last?.role === "assistant" &&
+					last.stopReason !== "stop"
+				) {
+					outcome = "failed";
+					error ??= "Structured report did not end with a complete final response.";
 				}
 			} catch (caught) {
 				outcome = controller.signal.aborted ? "cancelled" : "failed";
 				error = caught instanceof Error ? caught.message : String(caught);
 			} finally {
-				state.admission.release();
-				resident.foreground = false;
+				try {
+					if (resident.budget?.exhausted() && !controller.signal.aborted && !state.closed) {
+						outcome = "budget_exhausted";
+						error = await resident.budget.wrapUp(controller.signal);
+					}
+					if (controller.signal.aborted || state.closed) outcome = "cancelled";
+				} finally {
+					unsubscribe?.();
+					resident.observations = undefined;
+					resident.budget?.dispose();
+					resident.budget = undefined;
+					state.admission.release();
+					resident.foreground = false;
+				}
 			}
-			return this.finishTurn(state, resident, id, outcome, startIndex, options.background === true, error);
+			return this.finishTurn(state, resident, id, outcome, options.background === true, error, resultContext);
 		})().finally(() => {
+			options.signal?.removeEventListener("abort", cancel);
 			resident.running = undefined;
 		});
 		resident.running = run;
@@ -630,37 +1030,101 @@ export class SubagentV2Runtime {
 		return run;
 	}
 
-	private finishTurn(
+	private captureOutput(ownerSessionId: string, childId: string, rawText: string): SubagentOutput {
+		let output: SubagentOutput;
+		try {
+			output = this.outputArtifacts.capture({ ownerSessionId, text: rawText });
+		} catch {
+			const inline = boundedText(redactCredentialText(rawText), SUBAGENT_OUTPUT_ARTIFACT_LIMITS.inlineBytes);
+			return {
+				text: inline.text,
+				textBytes: Buffer.byteLength(inline.text, "utf8"),
+				originalBytes: Buffer.byteLength(rawText, "utf8"),
+				inlineTruncated: inline.truncated,
+				captureStatus: inline.truncated ? "artifact_unavailable" : "inline_complete",
+			};
+		}
+		if (!output.artifact) return output;
+		let retained = false;
+		try {
+			retained = this.outputArtifacts.retainDurable(
+				ownerSessionId,
+				output.artifact,
+				durableOutputReferenceId(childId),
+			);
+		} catch {
+			retained = false;
+		}
+		if (retained) return output;
+		try {
+			this.outputArtifacts.release({ ownerSessionId, artifactId: output.artifact.id });
+		} catch {
+			// The persisted result remains explicit if storage cleanup is unavailable.
+		}
+		const { text, ...metadata } = output;
+		return { text, ...outputArtifactUnavailable(metadata) };
+	}
+
+	private releaseOutputArtifact(ownerSessionId: string, childId: string, output: V2OutputCapture | undefined): void {
+		if (!output?.artifact || !isSubagentOutputArtifactRef(output.artifact)) return;
+		try {
+			this.outputArtifacts.release({
+				ownerSessionId,
+				artifactId: output.artifact.id,
+				referenceId: durableOutputReferenceId(childId),
+			});
+		} catch {
+			// Result retention is authoritative; cleanup is best-effort.
+		}
+	}
+
+	private async finishTurn(
 		state: OwnerState,
 		resident: ResidentChild,
 		id: string,
 		outcome: ChildTurnOutcome,
-		startIndex: number,
 		background: boolean,
-		error?: string,
-	): ChildTurnResult {
-		const messages = resident.session.messages.slice(startIndex);
-		let inputTokens = 0;
-		let outputTokens = 0;
-		let cost = 0;
-		let finalText = "";
-		for (const message of messages) {
-			if (message.role !== "assistant") continue;
-			const assistant = message as AssistantMessage;
-			inputTokens += assistant.usage?.input ?? 0;
-			outputTokens += assistant.usage?.output ?? 0;
-			cost += assistant.usage?.cost?.total ?? 0;
-			const text = assistant.content
+		error: string | undefined,
+		resultContext: TurnResultContext,
+	): Promise<ChildTurnResult> {
+		const { inputTokens, outputTokens, cacheReadTokens = 0, cacheWriteTokens = 0, cost } = resultContext.usage;
+		const rawFinalText =
+			resultContext.final?.content
 				.filter((part): part is { type: "text"; text: string } => part.type === "text")
 				.map((part) => part.text)
-				.join("");
-			if (text.trim()) finalText = text;
+				.join("") ?? "";
+		const finalText = redactCredentialText(rawFinalText);
+		const validation = validateV2Result(
+			resident.contract,
+			resultContext.acceptance,
+			finalText,
+			outcome,
+			resultContext.observations,
+		);
+		if (outcome === "completed" && validation.reportMode === "structured_report" && !validation.verified) {
+			outcome = "failed";
+			error = validation.reason;
 		}
-		const bounded = boundedText(finalText, RESULT_TEXT_LIMIT);
 		const record = state.registry.get(state.sessionId, id);
+		const previousOutput = record.lastResult?.output;
+		const output = this.captureOutput(state.sessionId, id, rawFinalText);
+		const { text: _inlineText, ...outputMetadata } = output;
+		const result: ChildTurnResult = {
+			id,
+			agent: resident.contract.agent.name,
+			outcome,
+			text: output.text,
+			truncated: output.inlineTruncated,
+			output: outputMetadata,
+			usage: { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, cost },
+			validation,
+			...(error ? { error: redactCredentialText(error) } : {}),
+		};
 		const usage = {
 			inputTokens: record.usage.inputTokens + inputTokens,
 			outputTokens: record.usage.outputTokens + outputTokens,
+			cacheReadTokens: (record.usage.cacheReadTokens ?? 0) + cacheReadTokens,
+			cacheWriteTokens: (record.usage.cacheWriteTokens ?? 0) + cacheWriteTokens,
 			cost: record.usage.cost + cost,
 			turns: record.usage.turns + 1,
 		};
@@ -668,35 +1132,54 @@ export class SubagentV2Runtime {
 			record.state === "starting" || record.state === "running" || record.state === "stopping"
 				? "idle"
 				: record.state;
-		if (record.state === "starting") {
-			const running = state.registry.transition(state.sessionId, id, record.generation, "running");
-			state.registry.transition(
-				state.sessionId,
-				id,
-				running.generation,
-				"idle",
-				{ turnInFlight: false, lastTurnOutcome: outcome, usage },
-				true,
-			);
-		} else {
-			state.registry.transition(
-				state.sessionId,
-				id,
-				record.generation,
-				target,
-				{ turnInFlight: false, lastTurnOutcome: outcome, usage },
-				true,
-			);
+		try {
+			if (record.state === "starting") {
+				const running = state.registry.transition(state.sessionId, id, record.generation, "running");
+				state.registry.transition(
+					state.sessionId,
+					id,
+					running.generation,
+					"idle",
+					{ turnInFlight: false, lastTurnOutcome: outcome, usage, lastResult: result },
+					true,
+				);
+			} else {
+				state.registry.transition(
+					state.sessionId,
+					id,
+					record.generation,
+					target,
+					{ turnInFlight: false, lastTurnOutcome: outcome, usage, lastResult: result },
+					true,
+				);
+			}
+		} catch (caught) {
+			this.releaseOutputArtifact(state.sessionId, id, result.output);
+			throw caught;
 		}
-		const result: ChildTurnResult = {
-			id,
-			agent: resident.contract.agent.name,
-			outcome,
-			text: bounded.text,
-			truncated: bounded.truncated,
-			usage: { inputTokens, outputTokens, cost },
-			...(error ? { error } : {}),
-		};
+		this.releaseOutputArtifact(state.sessionId, id, previousOutput);
+		if (resident.contract.isolation.mode === "worktree") {
+			const { repoRoot, worktreePath } = resident.contract.isolation;
+			try {
+				const { baseline } = this.worktreeOf(id);
+				if (computeChildDelta(baseline, worktreePath!).empty) {
+					state.registry.setPatchState(state.sessionId, id, "unchanged");
+					await state.registry.park(state.sessionId, id);
+					removeIsolatedWorktree(repoRoot!, worktreePath!);
+				}
+			} catch (cleanup) {
+				result.error = redactCredentialText(`Automatic worktree cleanup needs inspection: ${String(cleanup)}`);
+				const current = state.registry.get(state.sessionId, id);
+				state.registry.transition(
+					state.sessionId,
+					id,
+					current.generation,
+					current.state,
+					{ lastResult: result },
+					true,
+				);
+			}
+		}
 		if (background) this.deliverCompletion(state, result);
 		return result;
 	}
@@ -714,6 +1197,16 @@ export class SubagentV2Runtime {
 			agent: result.agent,
 			outcome: result.outcome,
 			summary,
+			...(result.validation
+				? {
+						validation: {
+							reportMode: result.validation.reportMode,
+							verified: result.validation.verified,
+							assurance: result.validation.assurance,
+							reason: result.validation.reason,
+						},
+					}
+				: {}),
 			at: (this.host.now ?? Date.now)(),
 		});
 		this.flushCompletions();
@@ -730,9 +1223,14 @@ export class SubagentV2Runtime {
 				.sendCustomMessage(
 					{
 						customType: SUBAGENT_COMPLETED_CUSTOM_TYPE,
-						content: `Subagent ${claimed.agent} (${claimed.childId}) finished: ${claimed.outcome}.\n\n${claimed.summary}\n\nUse agent_control action=output id=${claimed.childId} for the full result.`,
+						content: `Subagent ${claimed.agent} (${claimed.childId}) finished: ${claimed.outcome}.${claimed.validation ? `\nAssurance: ${claimed.validation.assurance}; ${claimed.validation.reason}` : ""}\n\nUntrusted child report:\n${claimed.summary}\n\nUse agent_control action=output id=${claimed.childId} for the full result.`,
 						display: true,
-						details: { childId: claimed.childId, agent: claimed.agent, outcome: claimed.outcome },
+						details: {
+							childId: claimed.childId,
+							agent: claimed.agent,
+							outcome: claimed.outcome,
+							...(claimed.validation ? { validation: claimed.validation } : {}),
+						},
 					},
 					{ triggerTurn: true, deliverAs: "followUp" },
 				)
@@ -742,24 +1240,51 @@ export class SubagentV2Runtime {
 
 	// --- continuation and control ----------------------------------------
 
+	private assertChildAuthority(contract: ChildRuntimeContract): void {
+		const parent = this.parent();
+		const validation = validateChildResume(contract, {
+			ownerSessionId: parent.sessionId,
+			parentTools: parentToolInfos(parent, this.host.getAdapters()),
+			subYolo: this.host.isSubYolo(),
+			parentMode: this.host.getParentMode(),
+			modelAvailable: (provider, model) =>
+				(provider === parent.model?.provider && model === parent.model?.id) ||
+				(parent.modelRuntime.getModel(provider, model) !== undefined &&
+					parent.modelRuntime.hasConfiguredAuth(provider)),
+			tombstoned: false,
+		});
+		const reasons = validation.ok ? [] : [...validation.reasons];
+		if (this.host.getSettings().diagnostics.length) reasons.push("invalid parent settings");
+		if (contract.isolation.mode === "worktree" && !this.host.isProjectTrusted())
+			reasons.push("project trust was revoked");
+		if (
+			contract.capabilities.parentPolicyHash &&
+			contract.capabilities.parentPolicyHash !==
+				createHash("sha256").update(JSON.stringify(this.host.getSettings().ruleSets)).digest("hex")
+		)
+			reasons.push("parent permission policy changed; the frozen child cannot be silently reauthorized");
+		if (reasons.length)
+			throw new SubagentV2Error("blocked", `Child ${contract.id} cannot run: ${reasons.join("; ")}`);
+	}
+
 	/** Bring a parked/blocked child back under its frozen contract, or report why it cannot run. */
 	async revive(id: string): Promise<void> {
 		const state = this.state();
 		const parent = this.parent();
+		const patchState = state.registry.get(state.sessionId, id).patchState;
+		if (this.patchOperations.has(id) || (patchState && patchState !== "open"))
+			throw new SubagentV2Error("blocked", "A patch decision prevents child revival.");
 		const handle = await state.registry.revive(state.sessionId, id, async (record) => {
 			const opened = openChildSession(record.transcriptPath, record.contractHash);
-			const validation = validateChildResume(opened.contract, {
-				ownerSessionId: state.sessionId,
-				parentTools: parentToolInfos(parent, this.host.getAdapters()),
-				subYolo: this.host.isSubYolo(),
-				parentMode: this.host.getParentMode(),
-				modelAvailable: (provider, model) =>
-					(provider === parent.model?.provider && model === parent.model?.id) ||
-					(parent.modelRuntime.getModel(provider, model) !== undefined &&
-						parent.modelRuntime.hasConfiguredAuth(provider)),
-				tombstoned: false,
-			});
-			if (!validation.ok) return { blocked: validation.reasons };
+			const worktree = opened.contract.isolation.worktreePath;
+			if (opened.contract.isolation.mode === "worktree" && (!worktree || !existsSync(worktree)))
+				return { blocked: ["the child's worktree no longer exists"] };
+			try {
+				this.assertChildAuthority(opened.contract);
+				if (worktree) assertOwnedWorktree(opened.contract.isolation.repoRoot!, worktree);
+			} catch (error) {
+				return { blocked: [error instanceof Error ? error.message : String(error)] };
+			}
 			const model =
 				parent.model?.provider === opened.contract.model.provider &&
 				parent.model?.id === opened.contract.model.model
@@ -777,11 +1302,35 @@ export class SubagentV2Runtime {
 	}
 
 	/** Continue an existing child with a new turn (agent resume and agent_control send followup). */
-	async continueChild(id: string, text: string, options: { foreground: boolean }): Promise<ChildTurnResult> {
+	async continueChild(
+		id: string,
+		text: string,
+		options: {
+			foreground: boolean;
+			budgets?: ChildBudgetLimits;
+			acceptance?: readonly string[];
+			accepted?: () => void;
+			signal?: AbortSignal;
+		},
+	): Promise<ChildTurnResult> {
 		const state = this.state();
 		const record = state.registry.get(state.sessionId, id);
+		if (this.patchOperations.has(id)) throw new SubagentV2Error("busy", "A patch operation is in progress.");
+		if (record.patchState && record.patchState !== "open")
+			throw new SubagentV2Error(
+				"blocked",
+				`Child ${id}'s worktree patch was ${record.patchState}; start a new child.`,
+			);
+		if (
+			record.lastTurnOutcome === "budget_exhausted" &&
+			!Object.values(options.budgets ?? {}).some((value) => value !== undefined)
+		)
+			throw new SubagentV2Error("blocked", "Supply an explicit permitted budget to continue an exhausted child.");
+		const contract = this.contractOf(id).contract;
+		normalizeV2Acceptance(contract.result.acceptance, options.acceptance);
+		resolveTurnBudget(contract.budgets, options.budgets);
 		if (record.state === "parked" || record.state === "blocked") await this.revive(id);
-		return this.runTurn(id, text, { foreground: options.foreground, background: !options.foreground });
+		return this.runTurn(id, text, { ...options, background: !options.foreground });
 	}
 
 	async send(id: string, message: string, delivery: "message" | "followup" | "interrupt"): Promise<string> {
@@ -793,7 +1342,8 @@ export class SubagentV2Runtime {
 				resident.controller?.abort();
 				await resident.running.catch(() => {});
 			}
-			void this.continueChild(id, message, { foreground: false });
+			this.assertContinuationAvailable(id);
+			void this.continueChild(id, message, { foreground: false }).catch(() => {});
 			return "Interrupted the current turn and started a follow-up turn.";
 		}
 		if (record.state === "running" && resident) {
@@ -809,8 +1359,20 @@ export class SubagentV2Runtime {
 			if (target) target.pendingNote = [target.pendingNote, message].filter(Boolean).join("\n\n");
 			return "Message queued for the child's next turn.";
 		}
-		void this.continueChild(id, message, { foreground: false });
+		this.assertContinuationAvailable(id);
+		void this.continueChild(id, message, { foreground: false }).catch(() => {});
 		return "Follow-up turn started; completion will be delivered when it finishes.";
+	}
+
+	private assertContinuationAvailable(id: string): void {
+		const { record, contract } = this.contractOf(id);
+		if (this.patchOperations.has(id) || (record.patchState && record.patchState !== "open"))
+			throw new SubagentV2Error("blocked", "The patch is no longer open.");
+		if (this.registry.resident(this.ownerSessionId(), id)?.running)
+			throw new SubagentV2Error("busy", "Child already has a turn in flight.");
+		if (record.lastTurnOutcome === "budget_exhausted")
+			throw new SubagentV2Error("blocked", "Use agent resume with an explicit permitted budget after exhaustion.");
+		this.assertChildAuthority(contract);
 	}
 
 	async stop(id: string): Promise<void> {
@@ -823,20 +1385,215 @@ export class SubagentV2Runtime {
 	}
 
 	async delete(id: string): Promise<void> {
+		if (this.patchOperations.has(id)) throw new SubagentV2Error("busy", "Patch integration is in progress.");
+		const patchState = this.registry.get(this.ownerSessionId(), id).patchState;
+		if (patchState === "applying" || patchState === "rollback_conflict")
+			throw new SubagentV2Error(
+				"blocked",
+				"Inspect unresolved parent integration effects before deleting child recovery data.",
+			);
 		await this.stop(id);
 		const state = this.state();
-		await state.registry.delete(state.sessionId, id);
+		await state.registry.delete(state.sessionId, id, async (record) => {
+			try {
+				const contract = openChildSession(record.transcriptPath, record.contractHash).contract;
+				const { repoRoot, worktreePath } = contract.isolation;
+				if (repoRoot && worktreePath && existsSync(worktreePath)) removeIsolatedWorktree(repoRoot, worktreePath);
+			} finally {
+				this.releaseOutputArtifact(state.sessionId, id, record.lastResult?.output);
+			}
+		});
+	}
+
+	// --- worktree patches ---------------------------------------------------
+
+	private contractOf(id: string): { record: ChildRecord; contract: ChildRuntimeContract } {
+		const state = this.state();
+		const record = state.registry.get(state.sessionId, id);
+		return {
+			record,
+			contract:
+				state.registry.resident(state.sessionId, id)?.contract ??
+				openChildSession(record.transcriptPath, record.contractHash).contract,
+		};
+	}
+
+	private worktreeOf(id: string): { record: ChildRecord; contract: ChildRuntimeContract; baseline: WorktreeBaseline } {
+		const { record, contract } = this.contractOf(id);
+		const isolation = contract.isolation;
+		if (
+			isolation.mode !== "worktree" ||
+			!isolation.worktreePath ||
+			!isolation.repoRoot ||
+			!isolation.baselineId ||
+			!isolation.baselineTree ||
+			!isolation.headCommit
+		)
+			throw new SubagentV2Error("preflight", `Child ${id} does not run in a worktree; it has no patch.`);
+		return {
+			record,
+			contract,
+			baseline: {
+				repoRoot: isolation.repoRoot,
+				headCommit: isolation.headCommit,
+				baselineCommit: isolation.baselineId,
+				baselineTree: isolation.baselineTree,
+				cwdOffset: isolation.cwdOffset ?? "",
+			},
+		};
+	}
+
+	private assertPatchOpen(record: ChildRecord): void {
+		if (record.patchState && record.patchState !== "open")
+			throw new SubagentV2Error("blocked", `The patch of child ${record.id} was already ${record.patchState}.`);
+		if (
+			record.turnInFlight ||
+			this.patchOperations.has(record.id) ||
+			record.state === "running" ||
+			record.state === "starting" ||
+			record.state === "stopping"
+		)
+			throw new SubagentV2Error("busy", `Child ${record.id} is still running; wait or stop it first.`);
+	}
+
+	private patchDirectory(id: string): string {
+		const parent = this.parent();
+		return join(childSessionDirectory(parent.sessionManager.getSessionDir(), parent.sessionId), "patches", id);
+	}
+
+	inspectPatch(id: string): {
+		state: ChildRecord["patchState"];
+		delta?: ChildDelta;
+		artifactRef?: string;
+		recoveryRef?: string;
+	} {
+		const { record, contract, baseline } = this.worktreeOf(id);
+		if (record.patchState !== "open")
+			return {
+				state: record.patchState,
+				artifactRef: record.patchArtifact?.patchRef,
+				recoveryRef: record.patchRecoveryRef,
+			};
+		this.assertPatchOpen(record);
+		const delta = computeChildDelta(baseline, contract.isolation.worktreePath!);
+		const artifact = persistWorktreePatch(
+			this.patchDirectory(id),
+			baseline,
+			contract.isolation.worktreePath!,
+			record.contractHash,
+			delta,
+		);
+		this.registry.setPatchState(record.ownerSessionId, id, "open", artifact);
+		return { state: "open", delta, artifactRef: artifact.patchRef };
+	}
+
+	/** Inspect-first, verified integration. Pending intent is never replayed after restart. */
+	async applyPatch(
+		id: string,
+		signal?: AbortSignal,
+	): Promise<(ApplyOutcome | { status: "already"; patchState: string }) & { cleanupError?: string }> {
+		const state = this.state();
+		const { record, contract, baseline } = this.worktreeOf(id);
+		if (record.patchState === "applied" || record.patchState === "rejected" || record.patchState === "unchanged")
+			return { status: "already", patchState: record.patchState };
+		this.assertPatchOpen(record);
+		if (!record.patchArtifact) throw new SubagentV2Error("preflight", "Inspect this patch before applying it.");
+		const verifier = this.host.getPatchVerifier?.() ?? this.host.verifyPatch;
+		if (!verifier)
+			throw new SubagentV2Error("preflight", "Patch apply requires a configured parent verifier (--ice-verify).");
+		const delta = validateWorktreePatch(record.patchArtifact, this.patchDirectory(id), baseline, record.contractHash);
+		if (computeChildDelta(baseline, contract.isolation.worktreePath!).finalTree !== delta.finalTree)
+			throw new SubagentV2Error("blocked", "Child worktree changed after inspection; inspect the new patch first.");
+		const scopeRoots = contract.capabilities.scopeRoots.map((root) =>
+			resolve(baseline.repoRoot, relative(contract.isolation.worktreePath!, root)),
+		);
+		const authorize = () => {
+			if (signal?.aborted || state.closed) throw new SubagentV2Error("blocked", "Patch apply was cancelled.");
+			const parent = this.parent();
+			if (
+				parent.sessionId !== state.sessionId ||
+				this.host.getParentMode() !== "build" ||
+				!this.host.isProjectTrusted() ||
+				!parent.getActiveToolNames().includes("agent_patch")
+			)
+				throw new SubagentV2Error("blocked", "Patch apply requires the current owner's trusted build authority.");
+			if (!pathIsWithin(baseline.repoRoot, realpathSync(parent.sessionManager.getCwd())))
+				throw new SubagentV2Error("blocked", "Parent workspace no longer matches this patch.");
+			for (const { path } of delta.changedPaths) {
+				const subjects = extractPermissionSubjects({
+					tool: "write",
+					args: { path: resolve(baseline.repoRoot, path) },
+					cwd: baseline.repoRoot,
+				});
+				if (subjects.some((subject) => this.parentDecision(parent, subject) !== "allow"))
+					throw new SubagentV2Error("blocked", `Parent permission does not allow patch path ${path}.`);
+			}
+		};
+		authorize();
+		assertOwnedWorktree(baseline.repoRoot, contract.isolation.worktreePath!);
+		this.patchOperations.add(id);
+		try {
+			const outcome = await applyChildDelta(baseline, delta.finalTree, {
+				scopeRoots,
+				authorize,
+				verify: (root) => verifier(root, signal),
+				beforeWrite: (recovery) => {
+					const recoveryRef = persistPatchRecovery(this.patchDirectory(id), recovery);
+					state.registry.setPatchState(state.sessionId, id, "applying", undefined, recoveryRef);
+				},
+				commit: () => state.registry.setPatchState(state.sessionId, id, delta.empty ? "unchanged" : "applied"),
+			});
+			if (outcome.status === "rollback_conflict")
+				state.registry.setPatchState(state.sessionId, id, "rollback_conflict");
+			else if (outcome.status === "verification_failed") state.registry.setPatchState(state.sessionId, id, "open");
+			if (outcome.status === "applied" || outcome.status === "empty") {
+				try {
+					const current = state.registry.get(state.sessionId, id);
+					if (current.state === "idle") await state.registry.park(state.sessionId, id);
+					removeIsolatedWorktree(baseline.repoRoot, contract.isolation.worktreePath!);
+				} catch (error) {
+					return { ...outcome, cleanupError: String(error) };
+				}
+			}
+			return outcome;
+		} finally {
+			this.patchOperations.delete(id);
+		}
+	}
+
+	rejectPatch(id: string): { status: "rejected" | "already"; patchState: string } {
+		const state = this.state();
+		const { record, contract, baseline } = this.worktreeOf(id);
+		if (record.patchState === "applied" || record.patchState === "rejected" || record.patchState === "unchanged")
+			return { status: "already", patchState: record.patchState };
+		this.assertPatchOpen(record);
+		assertOwnedWorktree(baseline.repoRoot, contract.isolation.worktreePath!);
+		state.registry.setPatchState(state.sessionId, id, "rejected");
+		removeIsolatedWorktree(baseline.repoRoot, contract.isolation.worktreePath!);
+		return { status: "rejected", patchState: "rejected" };
 	}
 
 	async shutdown(): Promise<void> {
-		this.owner?.broker.dispose();
-		await this.owner?.registry.disposeAll();
+		const owner = this.owner;
+		if (!owner) return;
+		owner.closed = true;
+		owner.broker.dispose();
+		const runs: Promise<ChildTurnResult>[] = [];
+		for (const record of owner.registry.list(owner.sessionId)) {
+			const resident = owner.registry.resident(owner.sessionId, record.id);
+			resident?.controller?.abort();
+			if (resident?.running) runs.push(resident.running);
+		}
+		await Promise.allSettled(runs);
+		await owner.registry.disposeAll();
 		this.owner = undefined;
 	}
 
 	outputOf(id: string): ChildTurnResult | undefined {
 		const state = this.state();
 		const record = state.registry.get(state.sessionId, id);
+		if (record.lastResult) return structuredClone(record.lastResult);
+		if (record.lastTurnOutcome === "interrupted") return undefined;
 		const resident = state.registry.resident(state.sessionId, id);
 		const messages =
 			resident?.session.messages ??
@@ -849,21 +1606,44 @@ export class SubagentV2Runtime {
 				.map((part) => part.text)
 				.join("");
 			if (!text.trim()) continue;
-			const bounded = boundedText(text, RESULT_TEXT_LIMIT);
+			const bounded = boundedText(redactCredentialText(text), RESULT_TEXT_LIMIT);
 			return {
 				id,
 				agent: record.agent,
 				outcome: record.lastTurnOutcome ?? "completed",
 				text: bounded.text,
 				truncated: bounded.truncated,
+				validation: {
+					reportMode: "plain_final_turn",
+					verified: false,
+					assurance: "unverified_plain",
+					reason: "Historical transcript projection: no host-validated result snapshot; claims are unverified.",
+					paths: [],
+					requirements: [],
+				},
 				usage: {
 					inputTokens: record.usage.inputTokens,
 					outputTokens: record.usage.outputTokens,
+					cacheReadTokens: record.usage.cacheReadTokens ?? 0,
+					cacheWriteTokens: record.usage.cacheWriteTokens ?? 0,
 					cost: record.usage.cost,
 				},
 			};
 		}
 		return undefined;
+	}
+
+	readOutput(id: string, range: { offset?: number; length?: number } = {}): SubagentOutputRead {
+		const state = this.state();
+		const result = this.outputOf(id);
+		if (!result?.output?.artifact || !isSubagentOutputArtifactRef(result.output.artifact)) {
+			throw new SubagentOutputArtifactError("artifact_not_found", "Subagent output artifact was not found.");
+		}
+		return this.outputArtifacts.read({
+			ownerSessionId: state.sessionId,
+			artifactId: result.output.artifact.id,
+			...range,
+		});
 	}
 
 	respondToApproval(id: string, answer: ApprovalAnswer): boolean {

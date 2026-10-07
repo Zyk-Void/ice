@@ -8,6 +8,8 @@
  * owner behaves exactly like an unknown ID.
  */
 import type { SessionManager } from "../../core/session-manager.ts";
+import type { WorktreePatchArtifact } from "../isolation/patch-state.ts";
+import type { V2ChildTurnResult, V2ResultValidation } from "../results/v2-result.ts";
 import {
 	type ChildInstanceState,
 	type ChildTurnOutcome,
@@ -42,6 +44,8 @@ export function sessionJournal(sessionManager: SessionManager): ParentJournal {
 export interface ChildUsage {
 	inputTokens: number;
 	outputTokens: number;
+	cacheReadTokens?: number;
+	cacheWriteTokens?: number;
 	cost: number;
 	turns: number;
 }
@@ -60,8 +64,14 @@ export interface ChildRecord {
 	generation: number;
 	turnInFlight: boolean;
 	lastTurnOutcome?: ChildTurnOutcome;
+	/** Host-validated, redacted latest-turn projection; never reconstructed from an older assistant response. */
+	lastResult?: V2ChildTurnResult;
 	blockedReasons?: readonly string[];
 	usage: ChildUsage;
+	/** Interrupted `applying` is inspectable, but must never be blindly replayed. */
+	patchState?: "open" | "applying" | "applied" | "rejected" | "unchanged" | "rollback_conflict";
+	patchArtifact?: WorktreePatchArtifact;
+	patchRecoveryRef?: string;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -75,6 +85,7 @@ export interface ChildCompletion {
 	/** Bounded summary; the full answer stays in the child transcript or an artifact. */
 	summary: string;
 	artifactRef?: string;
+	validation?: Pick<V2ResultValidation, "reportMode" | "verified" | "assurance" | "reason">;
 	at: number;
 }
 
@@ -106,6 +117,7 @@ export class ChildRegistry<H extends ResidentChild = ResidentChild> {
 	private readonly completions = new Map<string, ChildCompletion>();
 	private readonly delivered = new Set<string>();
 	private readonly listeners = new Set<(event: RegistryEvent) => void>();
+	private closed = false;
 
 	constructor(journal: ParentJournal, now: () => number = Date.now) {
 		this.journal = journal;
@@ -149,6 +161,7 @@ export class ChildRegistry<H extends ResidentChild = ResidentChild> {
 	accept(
 		input: Omit<ChildRecord, "state" | "generation" | "turnInFlight" | "usage" | "createdAt" | "updatedAt">,
 	): ChildRecord {
+		if (this.closed) throw new ChildRegistryError("busy", "Registry was shut down.");
 		if (this.records.has(input.id)) throw new ChildRegistryError("illegal_transition", `Child ${input.id} exists.`);
 		const at = this.now();
 		const record: ChildRecord = {
@@ -173,7 +186,9 @@ export class ChildRegistry<H extends ResidentChild = ResidentChild> {
 		id: string,
 		expectedGeneration: number,
 		to: ChildInstanceState,
-		patch: Partial<Pick<ChildRecord, "turnInFlight" | "lastTurnOutcome" | "blockedReasons" | "usage">> = {},
+		patch: Partial<
+			Pick<ChildRecord, "turnInFlight" | "lastTurnOutcome" | "lastResult" | "blockedReasons" | "usage">
+		> = {},
 		durable = false,
 	): ChildRecord {
 		const record = this.get(ownerSessionId, id);
@@ -200,6 +215,7 @@ export class ChildRegistry<H extends ResidentChild = ResidentChild> {
 	}
 
 	attach(ownerSessionId: string, id: string, handle: H): void {
+		if (this.closed) throw new ChildRegistryError("busy", "Registry was shut down.");
 		this.get(ownerSessionId, id);
 		this.residents.set(id, handle);
 	}
@@ -234,6 +250,7 @@ export class ChildRegistry<H extends ResidentChild = ResidentChild> {
 		id: string,
 		reviver: (record: ChildRecord) => Promise<{ handle: H } | { blocked: readonly string[] }>,
 	): Promise<H | undefined> {
+		if (this.closed) return Promise.reject(new ChildRegistryError("busy", "Registry was shut down."));
 		const record = this.get(ownerSessionId, id);
 		const existing = this.revivals.get(id);
 		if (existing) return existing;
@@ -244,7 +261,15 @@ export class ChildRegistry<H extends ResidentChild = ResidentChild> {
 			return Promise.reject(new ChildRegistryError("busy", `Child ${id} is waiting on an approval.`));
 		const revival = (async () => {
 			const outcome = await reviver(record);
-			const current = this.get(ownerSessionId, id);
+			let current: ChildRecord;
+			try {
+				current = this.get(ownerSessionId, id);
+				if (this.closed || current.generation !== record.generation)
+					throw new ChildRegistryError("stale_generation", `Child ${id} changed during revival.`);
+			} catch (error) {
+				if ("handle" in outcome) await outcome.handle.dispose();
+				throw error;
+			}
 			if ("blocked" in outcome) {
 				if (current.state !== "blocked")
 					this.transition(ownerSessionId, id, current.generation, "blocked", { blockedReasons: outcome.blocked });
@@ -253,7 +278,13 @@ export class ChildRegistry<H extends ResidentChild = ResidentChild> {
 			const from =
 				current.state === "blocked" ? this.transition(ownerSessionId, id, current.generation, "parked") : current;
 			this.residents.set(id, outcome.handle);
-			this.transition(ownerSessionId, id, from.generation, "idle");
+			try {
+				this.transition(ownerSessionId, id, from.generation, "idle");
+			} catch (error) {
+				this.residents.delete(id);
+				await outcome.handle.dispose();
+				throw error;
+			}
 			return outcome.handle;
 		})().finally(() => this.revivals.delete(id));
 		this.revivals.set(id, revival);
@@ -313,6 +344,34 @@ export class ChildRegistry<H extends ResidentChild = ResidentChild> {
 		});
 	}
 
+	/** Generation changes fence lifecycle operations captured before a patch decision. */
+	setPatchState(
+		ownerSessionId: string,
+		id: string,
+		patchState: NonNullable<ChildRecord["patchState"]>,
+		patchArtifact?: WorktreePatchArtifact,
+		patchRecoveryRef?: string,
+	): ChildRecord {
+		const record = this.get(ownerSessionId, id);
+		if (record.patchState === "applied" || record.patchState === "rejected" || record.patchState === "unchanged") {
+			if (record.patchState === patchState) return record;
+			throw new ChildRegistryError("illegal_transition", "A terminal patch decision cannot be changed.");
+		}
+		const next: ChildRecord = {
+			...record,
+			patchState,
+			...(patchArtifact ? { patchArtifact } : {}),
+			...(patchRecoveryRef ? { patchRecoveryRef } : {}),
+			generation: record.generation + 1,
+			updatedAt: this.now(),
+		};
+		this.journal.append(CHILD_RECORD_ENTRY_TYPE, next);
+		this.journal.flush();
+		this.records.set(id, next);
+		this.emit({ type: "record", record: next });
+		return next;
+	}
+
 	// --- completion inbox --------------------------------------------------
 
 	/** Durably record one turn completion for later delivery. */
@@ -370,7 +429,7 @@ export class ChildRegistry<H extends ResidentChild = ResidentChild> {
 				state: next.state,
 				generation: record.generation + 1,
 				turnInFlight: false,
-				...(next.interruptedTurn ? { lastTurnOutcome: "interrupted" as const } : {}),
+				...(next.interruptedTurn ? { lastTurnOutcome: "interrupted" as const, lastResult: undefined } : {}),
 				updatedAt: this.now(),
 			};
 			this.journal.append(CHILD_RECORD_ENTRY_TYPE, updated);
@@ -382,6 +441,7 @@ export class ChildRegistry<H extends ResidentChild = ResidentChild> {
 
 	/** Dispose every resident child without changing durable state (session shutdown). */
 	async disposeAll(): Promise<void> {
+		this.closed = true;
 		const handles = [...this.residents.values()];
 		this.residents.clear();
 		await Promise.allSettled(handles.map((handle) => handle.dispose()));

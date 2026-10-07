@@ -1,6 +1,6 @@
 # ICE Subagent V2 Rewrite Plan
 
-Status: approved design; planning artifact only, nothing in this document is implemented by this edit
+Status: approved design; implementation in progress behind the V2 gate (see Progress); not a shipped V2 completion claim
 Date: 2026-10-07
 Base: integration/all-worktrees-experimental at 2d38c5ad5
 User direction: clean-break V2; Claude Code + Prime Agent logic/UI, OMP-style operational UX, Codex-style subagent control UX
@@ -21,8 +21,9 @@ Target implementation root: packages/coding-agent/src/subagents/
 | 2 | Done (not wired) | `src/subagents/definitions/{parse,discover,builtin,precedence,load,listing}.ts` + `test/subagents-v2-definitions.test.ts`. Discovery, parsing, precedence, trust, compat, built-ins, cache, and listing deltas are pure modules. Wiring (listing delta on turn start, reload watcher, settings keys) lands with the V2 tools in P6.0. An invalid higher-precedence file does not block a lower valid one (Claude Code behavior): today all 7 `~/.ice/agents` files fail on `fallbackModel`, so the built-in `explore`/`review`/`worker` would win until they are migrated |
 | 3 | Done except P3.4 (not wired) | `src/subagents/permissions/{rules,subjects,evaluate,derive-child,approval}.ts` + `test/subagents-v2-permissions.test.ts`: rule parsing and globs (bare `*` allowed), per-subcommand Bash subjects (redirections are not separators; command substitution never auto-allows), external_directory subjects, fail-safe adapter classes, deny > ask > allow evaluator with plan/review limits, child mutation ceiling with raisers, exhaustive child <= parent check (2,520 cases), gated recursion, approval broker (automated check, foreground prompt, background inbox with timeout, headless/no-channel deny, owner disconnect). Mode presets live in `evaluate.ts#modeLimit` (no separate presets.ts). P3.4 (rebasing the parent gate in ice-safe-verify onto the evaluator with a report-only period) is deferred to the wiring step so the live parent gate is not changed without a comparison run |
 | 4 | Done except P4.5 (not wired) | `src/subagents/tools/resolve.ts` (live parent-tool resolver: `*`/names/globs, disallowedTools, management/unknown/non-child-safe exclusion with diagnostics, MCP only via explicit selector, gated delegation tools), `src/subagents/contract/{serialize,validate-resume}.ts` (`ag_`/`agg_` IDs, redacted deep-frozen contract, canonical hash that survives JSON round-trips, hash-checked parse, resume blocks on revoked/changed tools, lost sub-yolo, build-to-plan switch for mutation-capable children, unavailable model, other owner, tombstone; active tools clamped to the frozen set) + `test/subagents-v2-contract-runtime.test.ts`. Contract rules now carry their origin scope; contract records agentMode/parentMode/worktree. `agent`/`agent_control`/`agent_patch` added to the management denylist. P4.5 (removing unsafeHostExec branches) happens when the V2 session factory replaces the legacy one in P5/P6. `redactCredentialText` only covers key=value and Bearer forms; widening it is a separate change |
-| 5 | Core done; P5.4/P5.5 pending (not wired) | `src/subagents/registry/{registry,child-sessions}.ts`, `src/subagents/runtime/budgets.ts` + `test/subagents-v2-registry.test.ts`. ChildRegistry: durable accept (flush failure means no launch), generation-checked transitions, owner scoping that hides other owners, detach-before-dispose parking, coalesced revival that can end `blocked` with no turn, stop-before-delete with a durable tombstone ahead of cleanup, crash restore (in-flight turn becomes `interrupted`, resident states park, tombstones stay deleted), at-most-once completion delivery (durable delivered marker before send), subscription-based `waitFor`. Child transcripts are ordinary session files under `<parent-session-dir>/subagents/<parent-session-id>/` whose first entry is the hash-verified contract; interrupted tool calls produce a recovery notice and are never replayed. Optional maxTurns/maxTokens/timeoutMs budgets with one wrap-up turn. P5.4 (retire the legacy live/job/observatory/batch stores) and P5.5 (bind FIFO admission to registry turns) happen with the V2 runner in P6, since they replace live runtime paths |
-| 6 | First runnable slice behind the gate | `src/subagents/v2/{settings,session-factory,runtime,extension}.ts`, gate in `ice.ts` (`ICE_SUBAGENTS_V2=1` or global `ice.subagents.v2: true`; legacy and V2 tool sets never load together), V2 keys accepted by the legacy settings parser. Tests: `test/subagents-v2-extension.test.ts`, `test/suite/subagents-v2-runtime.test.ts` (real child AgentSessions through the faux provider: frozen-contract foreground run with durable transcript, child write denied with no approval channel, allowed by interactive approval or authorized sub-yolo, plan parent blocks sub-yolo, background completion delivered once, restart then revive under the frozen contract, revoked parent tool blocks, bad batch launches nothing). Implements P4.5 (one factory, no sub-yolo tool branch), P5.5 (FIFO admission per turn), P6.0-P6.6 for `agent` and `agent_control`. Deferred: `agent_patch` + worktree isolation (P7), batch synthesis/review routing and typed outputSchema/assurance through `agent` (P6.7), Ctrl+B detach (P6.8), in-turn budget enforcement (only limits are frozen today), parent pi-mcp tools for children (only registered delegable adapters today), P3.4 parent gate rebase, Hub (P8). V2 needs a persistent parent session (`--no-session` launches fail with the durable-journal error) |
+| 5 | Core wired through P6; legacy convergence/cascade pending | `src/subagents/registry/{registry,child-sessions}.ts`, `src/subagents/runtime/budgets.ts` + `test/subagents-v2-registry.test.ts`. ChildRegistry: durable accept (flush failure means no launch), generation-checked transitions, owner scoping that hides other owners, detach-before-dispose parking, coalesced revival that can end `blocked` with no turn, stop-before-delete with a durable tombstone ahead of cleanup, crash restore (in-flight turn becomes `interrupted`, resident states park, tombstones stay deleted), at-most-once completion delivery (durable delivered marker before send), subscription-based `waitFor`. Child transcripts are ordinary session files under `<parent-session-dir>/subagents/<parent-session-id>/` whose first entry is the hash-verified contract; interrupted tool calls produce a recovery notice and are never replayed. Optional maxTurns/maxTokens/timeoutMs budgets are enforced in the gated runner per admitted task, with one tool-free wrap-up request capped at 1,024 output tokens / 30 seconds. Exhaustion persists across restart and requires explicit ceiling-safe renewal; unlimited tasks retain native retry/compaction defaults. Budgeted tasks suppress automatic retries/compaction to avoid requests outside their task envelope. P5.5 FIFO admission is wired in the gated P6 runner. P5.4 legacy store retirement and P5.8 parent cascade cleanup remain pending |
+| 6 | First runnable slice behind the gate | `src/subagents/v2/{settings,session-factory,runtime,extension}.ts`, gate in `ice.ts` (`ICE_SUBAGENTS_V2=1` or global `ice.subagents.v2: true`; legacy and V2 tool sets never load together), V2 keys accepted by the legacy settings parser. Tests: `test/subagents-v2-extension.test.ts`, `test/suite/subagents-v2-runtime.test.ts` (real child AgentSessions through the faux provider: frozen-contract foreground run with durable transcript, child write denied with no approval channel, allowed by interactive approval or authorized sub-yolo, plan parent blocks sub-yolo, background completion delivered once, restart then revive under the frozen contract, revoked parent tool blocks, bad batch launches nothing). Implements P4.5 (one V2 factory, no sub-yolo tool branch), P5.5 (FIFO admission per turn), P6.0-P6.6 for `agent` and `agent_control`; `agent_patch` is now wired by P7. Queued continuations are not reported settled; delegation ask fails closed; approvals and late factories revalidate authority/owner closure. Typed `outputSchema`/acceptance and `agent=review` reports now use the shared local parser and actual-dispatch file observations; latest redacted validation snapshots persist in the registry. Required claim/path failures prevent completion. String-criterion semantics remain unverified and assurance is capped at `evidence_checked`; plain answers remain `unverified_plain`. Native assistant events preserve final-response/usage attribution across context replacement. Foreground multi-task `agent` now appends bounded deterministic counts/coverage/evidence-overlap/conservative-disagreement synthesis from validated V2 snapshots; review uses `agent=review` rather than a separate model tool. Background tasks return child IDs and independent completions; no durable aggregate batch handle/synthesis is retained. Deferred: observed-command/reviewer/higher assurance and full output-artifact retrieval parity (remaining P6.7), Ctrl+B detach (P6.8), parent pi-mcp tools for children (only registered delegable adapters today), P3.4 parent gate rebase, Hub (P8). Explicit budgets, cache-inclusive usage, cancellation-safe approval waits and request preflight, and truthful background acceptance/rejection are wired and covered by faux regressions. V2 needs a persistent parent session (`--no-session` launches fail with the durable-journal error) |
+| 7 | Core runnable and verified behind the gate; partial overall | `src/subagents/isolation/{worktree,apply,patch-state}.ts` + `agent_patch` runtime/extension wiring. Bounded raw staged/unstaged/untracked/binary snapshots use temporary indexes; no filters/hooks/real-index writes. Delta excludes parent WIP; three-way integration preserves staging, requires a configured verifier, checks postimages, and rolls back only unchanged owned postimages. Hash-pinned raw patch artifacts survive restart/GC through ownership-keyed shared refs. Durable applying intent includes private recovery preimages; interrupted effects are never replayed. Changed worktrees stay pending; unchanged/applied/rejected worktrees receive durable terminal states before ownership-checked cleanup. OS writers remain an optimistic-concurrency boundary, not a sandbox/atomic filesystem transaction. Explicitly unsupported: nested repositories/submodules, patch symlinks, file/directory replacements, custom merge drivers, child worktrees inside the parent. Remaining: legacy writer retirement (P7.8/P10), complete P7.1 migration parity, persisted conflict artifacts, configurable baseline caps within hard ceilings, and parent-session cascade cleanup (P5.8). Focused deterministic evidence: V2, parent guard, and legacy W5 tests; no live-provider/UI certification claim. |
 
 ### Revision 2 (review pass)
 
@@ -1299,7 +1300,21 @@ When an explicit budget is reached:
 3. persist turn outcome budget_exhausted;
 4. keep the child durable and resumable only if a later explicit task supplies a new permitted budget.
 
-Budget counters and parent session usage include child usage, but usage data is observational rather than authority.
+Implemented gated semantics: each explicit task receives the frozen limits, or an explicit renewal that may narrow but never raise/remove a frozen ceiling. After `budget_exhausted`, `agent resume` must supply at least one permitted budget field; `agent_control send` cannot implicitly renew it. Omitted renewal fields inherit frozen ceilings. Queue time does not consume task time. Elapsed-time defaults use a monotonic clock; long deadlines are re-armed within native timer limits. Cancellation beats exhaustion and never starts wrap-up. Budgeted tasks temporarily suppress automatic retry/compaction requests; unbudgeted tasks retain native defaults. Wrap-up is at most one request, no tools, 1,024 output tokens, and a 30-second cancellation deadline. All settings/hooks/tools are restored before later tasks.
+
+Token enforcement uses reported input, output, cache-read, and cache-write usage; the output request cap is narrowed to the remaining reported token allowance. Input cost and usage only become known after a response, so in-flight generation can overshoot. Runtime results/status persist cache counts separately and include them in total token display. Wrap-up usage remains observable but is outside the exhausted ordinary-work allowance. Missing or inaccurate provider usage cannot establish a hard billing cap. Abort remains cooperative for already-running provider/tool operations; permissions and budgets are not isolation. Budget observations never grant authority.
+
+### 13.4a Gated typed results (partial P6.7)
+
+- `outputSchema`, nonempty `acceptance`, and `agent=review` force the existing bounded JSON report protocol. Other tasks remain plain, explicitly `unverified_plain`.
+- New-task schemas use the existing restricted local subset and are normalized before any sibling acceptance. A resumed task cannot replace its frozen schema.
+- Every acceptance string is mandatory. Host IDs are `criterion-1` onward, with first-claim-wins parsing. A satisfied claim requires nonempty successfully observed file evidence. Missing/partial/blocked/failed/not_attempted claims or unobserved evidence fail the report gate; a valid payload cannot override them.
+- Resume additions are task-local: they append to, never remove, the frozen launch criteria, and are included with their text in the latest snapshot. Later tasks inherit the launch criteria, not earlier task-local additions. No cumulative acceptance-policy expansion is claimed.
+- Evidence paths and finding citations must be existing canonical in-scope files actually accessed by successful direct `read`/file-targeted `grep`/`edit`/`write` dispatch during this task. Observation starts after approval; read metadata must stay stable during dispatch and observed file metadata is checked again before validation. Directory search/listing, Bash prose, adapters, siblings, and prior tasks cannot mint citations. Up to 1,024 distinct observed paths are retained; exceeding the observation cap cannot grant verification. Filesystem metadata checks remain optimistic, not independent containment/content attestation.
+- `validation.verified` describes report-shape/observed-evidence/required-claim consistency, not semantic task correctness. String criteria include `semanticVerified: false`; they cannot establish `criteria_verified`, executed tests, or reviewer verdicts. Current structured assurance is capped at `evidence_checked`. Findings are optional (omission equals `[]`) and remain untrusted claims, including for `review`.
+- Only the actual final assistant response is validated. Empty/truncated/non-completed responses cannot promote an earlier tool-use report. Native `message_end` observations keep last response plus usage totals without indexing mutable compacted context or retaining a second transcript.
+- A bounded redacted latest-result snapshot is journaled with the settled registry outcome, survives park/restart/worktree cleanup, and carries validation into foreground output and at-most-once background completion. Interrupted recovery invalidates the previous snapshot as current output. Historical transcript fallback is explicitly unverified/redacted.
+- Reports over the existing 24 KiB parser gate fail structured validation; the separate inline projection remains 48 KiB. Failures preserve the original native transcript. Aggregate model-visible text is capped at 64 KiB. Large final answers use the existing owner-scoped, redacted output-artifact store; `agent_control action=output` exposes bounded byte ranges and durable per-child retention, released when a newer result replaces it or the child is deleted. Declared-command assurance, semantic verification/reviewer gates, and durable background batch grouping/aggregate synthesis remain pending. Deterministic foreground multi-task synthesis and review-through-agent are implemented; this is not full P6.7 or V2 completion.
 
 ### 13.5 Retry
 
@@ -1403,7 +1418,7 @@ Before mutating the parent:
 
 ## 15. Agent Hub and interactive UX
 
-The target UI intentionally feels closer to Prime + OMP, with Codex-like explicit lifecycle actions.
+The target UI intentionally feels closer to Prime + OMP, with Codex-style direct keyboard navigation and explicit lifecycle actions.
 
 ### 15.1 Main-session summary
 
@@ -1415,7 +1430,22 @@ Show one compact child summary near the normal interactive shell:
 - parked/blocked;
 - pending completion/approval count.
 
-Opening it enters /agents. Use configurable keybindings; do not hardcode raw chords in behavior code.
+Opening it enters /agents.
+
+Codex-style empty-composer navigation is a locked default UX, not an optional afterthought:
+
+- a **single plain `←` press** opens the `/agents` Hub from the parent chat, and from a focused local child chat, when agent navigation is available;
+- the shortcut fires only on a real key press while the composer is focused, input is enabled, the composer is empty, no paste burst is active, no popup/modal/transient input surface owns the key, slash/command navigation is available, and no Vim operator is pending;
+- if there is draft text, an attachment/paste operation, a popup, or another input surface, `←` keeps its normal editor/navigation meaning and must never open the Hub;
+- only claim the physical `←` key when the active editor/Vim keymap still maps `←` to move-left. If the user remaps physical Left away from move-left, do not hijack it and hide the agent-navigation footer hint;
+- show a contextual `← agents` footer hint only while the shortcut is actually available;
+- `/agents` remains the explicit command fallback and the underlying `app.agents.hub` action remains remappable, but the default single-Left empty-composer behavior above is part of the shipped UX;
+- `Alt+←` moves to the previous parent/child view and `Alt+→` moves to the next, wrapping in **stable first-seen spawn order** rather than ID sort order;
+- the parent/main session participates in that traversal so the user can cycle main -> child 1 -> child 2 -> main without reopening the Hub;
+- the footer/status area shows the currently watched agent identity so direct cycling never leaves the user unsure which transcript owns the editor;
+- after resume/cold-load, refresh/backfill persisted descendants into navigation state before the first picker open or previous/next traversal, so restored children are not temporarily missing.
+
+Codex evidence: `tui/src/bottom_pane/chat_composer/agents_navigation.rs:13-32`, `chat_composer.rs:3767-3786`, `agents_navigation_tests.rs:43-87,119-143`, `footer_state.rs:108-112`, `multi_agents.rs:106-121`, and `app/agent_navigation.rs:1-20`.
 
 ### 15.2 /agents Hub
 
@@ -1482,7 +1512,7 @@ When focused:
 - running + Enter -> safe steer/message semantics;
 - idle + Enter -> follow-up turn;
 - parked + Enter -> authority validation, revive, follow-up;
-- back returns to parent without aborting the child.
+- the explicit back/Esc action returns to the parent without aborting the child; plain `←` is reserved for opening the Agent Hub when the empty-composer shortcut is eligible.
 
 Preserve the existing rule that parent follow-up cannot race with user takeover ownership.
 
@@ -1954,9 +1984,9 @@ Safe parallelism after foundations:
   - Acceptance: resume warms parked child; stop retains; delete tombstones and destroys according to policy.
   - Verify: lifecycle tests.
 
-- [ ] **P6.7 Port batch synthesis/review flows through agent rather than dedicated model tools.**
-  - Acceptance: review is agent=review; no separate review_batch semantics required by runtime.
-  - Verify: existing batch synthesis + typed contract tests.
+- [x] **P6.7 Port foreground batch synthesis/review flows through agent rather than dedicated model tools.**
+  - Acceptance: review is agent=review; foreground multi-task calls include bounded deterministic status/coverage/evidence-overlap/conservative-disagreement metadata from validated V2 snapshots; no separate review_batch semantics required by runtime.
+  - Verify: existing batch synthesis + typed contract tests and V2 extension integration regression. Background tasks return child IDs and independent completions; durable aggregate batch grouping is deferred.
 
 - [ ] **P6.8 Preserve Ctrl+B foreground-to-background detach.**
   - Acceptance: parent wait detaches; child ID/session/turn continue unchanged.
@@ -1996,7 +2026,7 @@ Safe parallelism after foundations:
   - Acceptance: worker/general agents use the same child factory with isolation parameter.
   - Verify: no createNativeWriterSession/WRITER_SYSTEM_PROMPT runtime references remain.
 
-### Phase 8 - Prime/OMP-style Agent Hub
+### Phase 8 - Prime/OMP-style Agent Hub with Codex navigation
 
 - [ ] **P8.1 Define one UI snapshot type from ChildRegistry and reconcile persisted/live data without creating lifecycle authority.**
   - Acceptance: stable identity through park/revive/restart.
@@ -2029,6 +2059,11 @@ Safe parallelism after foundations:
 - [ ] **P8.8 Add Agent Manager new/edit/list with strict validation and source locks.**
   - Acceptance: only user/trusted-project native definitions are writable.
   - Verify: temp HOME/project UI/service tests.
+
+- [ ] **P8.9 Implement Codex-style empty-composer Agent Hub navigation and direct agent cycling.**
+  - Evidence: `Agent_harness_references/codex/codex-rs/tui/src/bottom_pane/chat_composer/agents_navigation.rs:13-32`, `chat_composer.rs:3767-3786`, `agents_navigation_tests.rs:43-87,119-143`, `footer_state.rs:108-112`, `multi_agents.rs:106-121`, `app/agent_navigation.rs:1-20`.
+  - Acceptance: single plain `←` opens `/agents` only when the composer is empty/focused/eligible; draft text, attachments, paste bursts, popups, transient input surfaces, and Vim operator-pending state keep normal Left behavior; a physical-Left editor/Vim remap disables both the shortcut and its footer hint; `Alt+←`/`Alt+→` cycle main and children in stable first-seen spawn order with wrapping and an active-agent label; resumed persisted children are backfilled before the first navigation action.
+  - Verify: focused composer tests equivalent to Codex `left_navigates_only_from_an_empty_prompt`, `left_respects_attachments_pastes_and_other_input_surfaces`, and `left_respects_editor_and_vim_history_remaps`; traversal tests for main/child wrap order, closed/deleted rows, park/revive stability, and cold-resume backfill.
 
 ### Phase 9 - Events, hooks, CLI, SDK, RPC, docs
 
@@ -2119,7 +2154,7 @@ Safe parallelism after foundations:
 | Isolation baseline | clean, staged, unstaged, untracked, binary, oversized, nested repo |
 | Patch delta | parent WIP excluded; child-only changed paths |
 | Patch apply | unchanged parent, concurrent unrelated edit, same-file non-overlap, conflict, verifier failure, rollback |
-| UI | roster updates, stable selection, tree/flat, responsive inspector, child focus, reply, inbox |
+| UI | roster updates, stable selection, tree/flat, responsive inspector, child focus, reply, inbox, single-`←` empty-composer Hub open, guarded Left behavior, footer hint/remap handling, `Alt+←`/`Alt+→` stable agent cycling, cold-resume navigation backfill |
 | Ownership | cross-parent IDs, stale IDs, tombstones, parent deletion cascade |
 | RPC/headless | no approval client deny, approval round trip, disconnect fail closed |
 | Legacy removal | old tools absent, old IDs absent from model API, old settings reject explicitly |
@@ -2272,6 +2307,7 @@ V2 is complete only when all of the following are true:
 33. Without `--sub-yolo` or a user/managed child allow rule, children cannot run Bash or edit the parent workspace unattended; project-scope sources cannot raise child mutation authority.
 34. The model's agent list is complete again after compaction, branch navigation, and resume.
 35. The `ice.subagents.v2` gate and every legacy tool are gone.
+36. A single plain `←` from an eligible empty composer opens `/agents`; otherwise Left retains normal editor behavior, remaps are respected, the hint appears only when valid, and `Alt+←`/`Alt+→` cycle main/children in stable spawn order.
 
 ---
 
@@ -2337,6 +2373,12 @@ V2 is complete only when all of the following are true:
 - Agent_harness_references/codex/codex-rs/core/src/tools/handlers/multi_agents/close_agent.rs:31-102 - explicit close.
 - Agent_harness_references/codex/codex-rs/core/src/agent/child_config.rs:123-193 - live parent-derived resume/permission config.
 - Agent_harness_references/codex/codex-rs/core/src/agent/role.rs:50-127 - typed role overlays.
+- Agent_harness_references/codex/codex-rs/tui/src/bottom_pane/chat_composer/agents_navigation.rs:13-32 - exact eligibility gate for the empty-composer Left shortcut.
+- Agent_harness_references/codex/codex-rs/tui/src/bottom_pane/chat_composer.rs:3767-3786 - single plain Left emits OpenAgentsOverview when eligible.
+- Agent_harness_references/codex/codex-rs/tui/src/bottom_pane/chat_composer/agents_navigation_tests.rs:43-87,119-143 - Left only opens agents from an empty eligible composer and respects attachments/pastes/remapped editor or Vim keys.
+- Agent_harness_references/codex/codex-rs/tui/src/bottom_pane/chat_composer/footer_state.rs:108-112 - contextual Left agent-navigation hint is shown only while eligible.
+- Agent_harness_references/codex/codex-rs/tui/src/multi_agents.rs:106-121 - canonical Alt+Left/Alt+Right previous/next-agent shortcuts.
+- Agent_harness_references/codex/codex-rs/tui/src/app/agent_navigation.rs:1-20 - stable first-seen spawn-order traversal and active-agent labeling responsibilities.
 
 ---
 
