@@ -35,8 +35,8 @@ export const AgentTaskSchema = Type.Object(
 		description: Type.String({ minLength: 1, maxLength: AGENT_TOOL_LIMITS.maxDescriptionChars }),
 		prompt: Type.String({ minLength: 1, maxLength: AGENT_TOOL_LIMITS.maxPromptBytes }),
 		model: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
-		thinking: Type.Optional(Type.Union(AGENT_THINKING_LEVELS.map((level) => Type.Literal(level)))),
-		isolation: Type.Optional(Type.Union(AGENT_ISOLATION_MODES.map((mode) => Type.Literal(mode)))),
+		thinking: Type.Optional(Type.Enum(AGENT_THINKING_LEVELS)),
+		isolation: Type.Optional(Type.Enum(AGENT_ISOLATION_MODES)),
 		scope: Type.Optional(
 			Type.Object(
 				{
@@ -62,7 +62,7 @@ export const AgentTaskSchema = Type.Object(
 				Type.Object(
 					{
 						id: Type.String({ minLength: 1, maxLength: 64 }),
-						kind: Type.Union(AGENT_CONTEXT_ITEM_KINDS.map((kind) => Type.Literal(kind))),
+						kind: Type.Enum(AGENT_CONTEXT_ITEM_KINDS),
 						content: Type.String({ minLength: 1, maxLength: AGENT_TOOL_LIMITS.maxContextItemBytes }),
 					},
 					{ additionalProperties: false },

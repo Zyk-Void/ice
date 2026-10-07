@@ -18,6 +18,7 @@ Target implementation root: packages/coding-agent/src/subagents/
 | 1.4 | Partial | Observatory and transcript components moved to `subagents/ui/`. `ice-agent-view-bridge.ts` and `subagent-view-switcher.ts` stay as interactive-mode integration points until P8 |
 | 1.5 | Done | `ice-subagents.ts` is a 79-line re-export barrel. Satellite modules moved under `subagents/` too. Largest remaining files: `legacy-extension.ts` (3.4k lines, the tool registration closure) and `runtime/runner.ts` (2.5k lines, one class) |
 | 1 tests | Done | `test/ice-subagents.test.ts` split into 12 themed files + `test/ice-subagents-harness.ts`; 253 cases token-identical; split log in the ledger |
+| 2 | Done (not wired) | `src/subagents/definitions/{parse,discover,builtin,precedence,load,listing}.ts` + `test/subagents-v2-definitions.test.ts`. Discovery, parsing, precedence, trust, compat, built-ins, cache, and listing deltas are pure modules. Wiring (listing delta on turn start, reload watcher, settings keys) lands with the V2 tools in P6.0. An invalid higher-precedence file does not block a lower valid one (Claude Code behavior): today all 7 `~/.ice/agents` files fail on `fallbackModel`, so the built-in `explore`/`review`/`worker` would win until they are migrated |
 
 ### Revision 2 (review pass)
 

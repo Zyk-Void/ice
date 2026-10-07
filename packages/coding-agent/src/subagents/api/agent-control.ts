@@ -33,11 +33,11 @@ const childId = Type.String({ pattern: CHILD_ID_PATTERN_SOURCE });
 
 export const AgentControlParametersSchema = Type.Object(
 	{
-		action: Type.Union(AGENT_CONTROL_ACTIONS.map((action) => Type.Literal(action))),
+		action: Type.Enum(AGENT_CONTROL_ACTIONS),
 		id: Type.Optional(childId),
 		ids: Type.Optional(Type.Array(childId, { minItems: 1, maxItems: AGENT_CONTROL_LIMITS.maxIds })),
 		message: Type.Optional(Type.String({ minLength: 1, maxLength: AGENT_CONTROL_LIMITS.maxMessageBytes })),
-		delivery: Type.Optional(Type.Union(AGENT_SEND_DELIVERIES.map((delivery) => Type.Literal(delivery)))),
+		delivery: Type.Optional(Type.Enum(AGENT_SEND_DELIVERIES)),
 		timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: AGENT_CONTROL_LIMITS.maxWaitMs })),
 	},
 	{ additionalProperties: false },

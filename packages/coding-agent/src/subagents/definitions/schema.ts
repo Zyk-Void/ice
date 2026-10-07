@@ -72,8 +72,8 @@ const agentDefinitionFields = {
 			Type.Array(modelReference, { minItems: 1, maxItems: AGENT_DEFINITION_LIMITS.maxModelCandidates }),
 		]),
 	),
-	thinking: Type.Optional(Type.Union(AGENT_THINKING_LEVELS.map((level) => Type.Literal(level)))),
-	permissionMode: Type.Optional(Type.Union(AGENT_PERMISSION_MODES.map((mode) => Type.Literal(mode)))),
+	thinking: Type.Optional(Type.Enum(AGENT_THINKING_LEVELS)),
+	permissionMode: Type.Optional(Type.Enum(AGENT_PERMISSION_MODES)),
 	permissions: Type.Optional(
 		Type.Object(
 			{ allow: Type.Optional(ruleList()), ask: Type.Optional(ruleList()), deny: Type.Optional(ruleList()) },
@@ -84,7 +84,7 @@ const agentDefinitionFields = {
 	maxTokens: Type.Optional(positiveIntOrNull),
 	timeoutMs: Type.Optional(positiveIntOrNull),
 	background: Type.Optional(Type.Boolean()),
-	isolation: Type.Optional(Type.Union(AGENT_ISOLATION_MODES.map((mode) => Type.Literal(mode)))),
+	isolation: Type.Optional(Type.Enum(AGENT_ISOLATION_MODES)),
 	contextFiles: Type.Optional(Type.Boolean()),
 	skills: Type.Optional(stringList()),
 	prompts: Type.Optional(stringList()),
@@ -96,7 +96,7 @@ const agentDefinitionFields = {
 		Type.String({ minLength: 1, maxLength: AGENT_DEFINITION_LIMITS.maxInitialPromptChars }),
 	),
 	spawns: Type.Optional(stringList(AGENT_NAME_PATTERN)),
-	color: Type.Optional(Type.Union(SUBAGENT_PROFILE_COLORS.map((color) => Type.Literal(color)))),
+	color: Type.Optional(Type.Enum(SUBAGENT_PROFILE_COLORS)),
 	hidden: Type.Optional(Type.Boolean()),
 	tags: Type.Optional(
 		Type.Array(Type.String({ minLength: 1, maxLength: AGENT_DEFINITION_LIMITS.maxTagChars }), {
@@ -164,4 +164,6 @@ export interface ResolvedAgentDefinition {
 	/** SHA-256 of the exact source bytes (file) or canonical JSON (settings/flag/SDK/builtin). */
 	sourceHash: string;
 	diagnostics: readonly string[];
+	/** Loaded but not callable as declared (for example an unmapped compat model alias); never advertised. */
+	limited: boolean;
 }

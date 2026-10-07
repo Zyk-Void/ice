@@ -14,7 +14,7 @@ export type AgentPatchAction = (typeof AGENT_PATCH_ACTIONS)[number];
 export const AgentPatchParametersSchema = Type.Object(
 	{
 		id: Type.String({ pattern: CHILD_ID_PATTERN_SOURCE }),
-		action: Type.Union(AGENT_PATCH_ACTIONS.map((action) => Type.Literal(action))),
+		action: Type.Enum(AGENT_PATCH_ACTIONS),
 	},
 	{ additionalProperties: false },
 );
