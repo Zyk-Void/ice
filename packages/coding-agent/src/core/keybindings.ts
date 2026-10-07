@@ -32,6 +32,10 @@ export interface AppKeybindings {
 	"app.subagents.next": true;
 	"app.subagents.previous": true;
 	"app.subagents.takeControl": true;
+	"app.agents.stop": true;
+	"app.agents.delete": true;
+	"app.agents.approve": true;
+	"app.agents.deny": true;
 	"app.thinking.toggle": true;
 	"app.session.toggleNamedFilter": true;
 	"app.editor.external": true;
@@ -114,6 +118,10 @@ export const KEYBINDINGS = {
 	"app.subagents.next": { defaultKeys: "alt+right", description: "Show next subagent view" },
 	"app.subagents.previous": { defaultKeys: "shift+alt+left", description: "Show previous subagent view" },
 	"app.subagents.takeControl": { defaultKeys: "ctrl+shift+enter", description: "Take control of live subagent" },
+	"app.agents.stop": { defaultKeys: "s", description: "Agent Hub: stop the selected subagent's current turn" },
+	"app.agents.delete": { defaultKeys: "shift+d", description: "Agent Hub: delete the selected stopped subagent" },
+	"app.agents.approve": { defaultKeys: "y", description: "Agent Hub: approve the pending subagent request" },
+	"app.agents.deny": { defaultKeys: "n", description: "Agent Hub: deny the pending subagent request" },
 
 	"app.thinking.toggle": {
 		defaultKeys: "ctrl+t",

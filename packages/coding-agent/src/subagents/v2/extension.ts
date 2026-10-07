@@ -7,9 +7,21 @@
  * message before each agent run.
  */
 
-import { getAgentDir } from "../../config.ts";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../core/extensions/index.ts";
+import { join } from "node:path";
+import { CONFIG_DIR_NAME, getAgentDir } from "../../config.ts";
+import type { AgentSession } from "../../core/agent-session.ts";
+import type {
+	ExtensionAPI,
+	ExtensionCommandContext,
+	ExtensionContext,
+	ToolDefinition,
+} from "../../core/extensions/index.ts";
 import { truncateHead } from "../../core/tools/truncate.ts";
+import type {
+	IceAgentViewLiveSession,
+	IceAgentViewLiveSessionControl,
+	IceAgentViewLiveSessionSource,
+} from "../../ice-agent-view-bridge.ts";
 import { parseVerifierArgv, runVerifier } from "../../ice-safe-verify.ts";
 import { redactCredentialText } from "../../utils/redact.ts";
 import { type AgentToolParameters, AgentToolParametersSchema } from "../api/agent.ts";
@@ -28,8 +40,11 @@ import type { ApprovalAnswer } from "../permissions/approval.ts";
 import { renderSubagentAssuranceSection } from "../results/assurance.ts";
 import { renderBatchSynthesisSection, summarizeV2BatchSynthesis } from "../results/batch-synthesis.ts";
 import { isSubagentOutputArtifactRef } from "../results/output-artifacts.ts";
+import { createSubagentLiveSessionControl } from "../runtime/live-session.ts";
 import { getIceDelegableTools } from "../tools/adapters.ts";
 import { SUBAGENT_PRESENTATION_LIMIT_BYTES } from "../types.ts";
+import { AgentHubView, type HubSource } from "../ui/hub.ts";
+import { createAgentDefinitionFile, formatAgentDefinitions } from "./agent-manager.ts";
 import { SubagentV2Runtime } from "./runtime.ts";
 import type { ChildTurnResult } from "./runtime-support.ts";
 import { resolveSubagentsV2Settings } from "./settings.ts";
@@ -116,6 +131,11 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			env: process.env.ICE_SUBAGENTS_V2,
 		});
 	};
+	const hubListeners = new Set<() => void>();
+	const notifyHub = () => {
+		for (const listener of hubListeners) listener();
+	};
+	let lastApprovalCount = 0;
 	const runtime = new SubagentV2Runtime({
 		getParentSession: () => options.agentViewBridge?.getParentSession(),
 		agentDir,
@@ -135,6 +155,20 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		getPatchVerifier: () => {
 			const argv = parseVerifierArgv(ice.getFlag("ice-verify"));
 			return argv ? (root, signal) => runVerifier(argv, root, { signal }) : undefined;
+		},
+		// Background asks wait for the Agent Hub inbox only in an interactive TUI.
+		hasApprovalInbox: () => latestCtx?.mode === "tui" && latestCtx.hasUI === true,
+		onApprovalsChanged: (pending) => {
+			const background = pending.filter((approval) => !approval.request.foreground);
+			if (background.length > lastApprovalCount && latestCtx?.hasUI) {
+				const newest = background.at(-1)!.request;
+				latestCtx.ui.notify(
+					`Subagent ${newest.agent} is waiting for approval: ${newest.summary}. Open /agents to answer.`,
+					"warning",
+				);
+			}
+			lastApprovalCount = background.length;
+			notifyHub();
 		},
 		promptApproval: async (request, signal) => {
 			const ctx = latestCtx;
@@ -157,9 +191,63 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		},
 	});
 
+	// Live V2 children appear in the normal interactive child view (focus, mirror, take control, cycling).
+	const controls = new Map<string, { session: AgentSession; control: IceAgentViewLiveSessionControl }>();
+	const liveSource: IceAgentViewLiveSessionSource = {
+		list: () => {
+			let owner: string;
+			try {
+				owner = runtime.ownerSessionId();
+			} catch {
+				return [];
+			}
+			const live: IceAgentViewLiveSession[] = [];
+			for (const record of runtime.registry.list(owner)) {
+				const resident = runtime.registry.resident(owner, record.id);
+				if (!resident) continue;
+				let entry = controls.get(record.id);
+				if (entry?.session !== resident.session) {
+					const base = createSubagentLiveSessionControl(resident.session, notifyHub);
+					entry = {
+						session: resident.session,
+						control: {
+							...base,
+							stopRuntime: () => runtime.stop(record.id),
+							followUp: async (text: string) => {
+								await runtime.send(record.id, text, "followup");
+							},
+						},
+					};
+					controls.set(record.id, entry);
+				}
+				live.push({
+					runId: record.id,
+					role: record.agent,
+					taskId: record.description,
+					session: resident.session,
+					control: entry.control,
+				});
+			}
+			return live;
+		},
+		subscribe: (listener) => {
+			hubListeners.add(listener);
+			return () => hubListeners.delete(listener);
+		},
+	};
+	let unsubscribeRegistry: (() => void) | undefined;
+
 	ice.on("session_start", async (_event, ctx) => {
 		latestCtx = ctx;
 		runtime.invalidateDefinitions();
+		unsubscribeRegistry?.();
+		unsubscribeRegistry = undefined;
+		try {
+			unsubscribeRegistry = runtime.registry.subscribe(notifyHub);
+		} catch {
+			// No parent session yet; connected on the next session start.
+		}
+		options.agentViewBridge?.connectLiveSessions(liveSource);
 	});
 	ice.on("before_agent_start", async (_event, ctx) => {
 		latestCtx = ctx;
@@ -187,6 +275,8 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		}
 	});
 	ice.on("session_shutdown", async () => {
+		unsubscribeRegistry?.();
+		controls.clear();
 		await runtime.shutdown();
 	});
 
@@ -390,23 +480,8 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 						for (const id of needId()) await runtime.delete(id);
 						return text(`Deleted ${ids.join(", ")}.`);
 					}
-					case "agents": {
-						const definitions = runtime.definitions();
-						const lines = [...definitions.active.values()].map(
-							(definition) =>
-								`${definition.name} [${definition.source}${definition.limited ? ", limited" : ""}${definition.fields.hidden ? ", hidden" : ""}]: ${definition.description}${definition.diagnostics.length ? ` (${definition.diagnostics.join("; ")})` : ""}`,
-						);
-						for (const entry of definitions.shadowed)
-							lines.push(
-								`${entry.definition.name} [${entry.definition.source}] shadowed by ${entry.shadowedBy.source}`,
-							);
-						for (const definition of definitions.disabled) lines.push(`${definition.name} [disabled]`);
-						for (const issue of definitions.issues)
-							lines.push(
-								`${issue.name ?? "(unnamed)"} [${issue.availability}] ${issue.sourcePath ?? ""}: ${issue.diagnostics.join("; ")}`,
-							);
-						return text(lines.join("\n"));
-					}
+					case "agents":
+						return text(formatAgentDefinitions(runtime));
 				}
 			} catch (error) {
 				return text(
@@ -495,6 +570,69 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			}
 		},
 	};
+
+	const hubSource: HubSource = {
+		rows: () => runtime.hubRows(),
+		approvals: () => runtime.pendingApprovals(),
+		details: (id) => runtime.describeChild(id),
+		subscribe: (listener) => {
+			hubListeners.add(listener);
+			return () => hubListeners.delete(listener);
+		},
+		focus: (id) => options.agentViewBridge?.requestDisplay(id) ?? false,
+		stop: (id) => runtime.stop(id),
+		delete: (id) => runtime.delete(id),
+		respond: (approvalId, answer) => runtime.respondToApproval(approvalId, answer),
+	};
+	if (typeof ice.registerCommand === "function") {
+		ice.registerCommand("agents", {
+			description:
+				"Agent Hub: subagents, approvals, and actions. /agents list shows definitions; /agents new <name> [--project] creates one",
+			handler: async (args: string, ctx: ExtensionCommandContext) => {
+				latestCtx = ctx;
+				const [verb, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+				if (verb === "list") {
+					ctx.ui.notify(formatAgentDefinitions(runtime), "info");
+					return;
+				}
+				if (verb === "new") {
+					const project = rest.includes("--project");
+					const name = rest.find((part) => !part.startsWith("--"));
+					try {
+						const path = createAgentDefinitionFile({
+							name: name ?? "",
+							directory: project
+								? join(ctx.cwd, CONFIG_DIR_NAME, "agents")
+								: getSubagentGlobalAgentsDir(options.agentDir),
+							projectTrusted: !project || ctx.isProjectTrusted(),
+						});
+						runtime.invalidateDefinitions();
+						ctx.ui.notify(
+							`Created ${path}. Edit its description, tools, and prompt; /agents list validates it.`,
+							"info",
+						);
+					} catch (error) {
+						ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+					}
+					return;
+				}
+				if (ctx.mode !== "tui" || !ctx.hasUI) {
+					ctx.ui.notify(formatAgentDefinitions(runtime), "info");
+					return;
+				}
+				try {
+					runtime.ownerSessionId();
+				} catch (error) {
+					ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
+					return;
+				}
+				await ctx.ui.custom<void>(
+					(tui, theme, keybindings, done) => new AgentHubView(tui, theme, keybindings, hubSource, () => done()),
+					{ overlay: true },
+				);
+			},
+		});
+	}
 
 	ice.registerTool(agentTool as unknown as ToolDefinition);
 	ice.registerTool(controlTool as unknown as ToolDefinition);

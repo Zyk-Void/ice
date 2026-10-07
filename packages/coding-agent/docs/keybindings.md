@@ -147,6 +147,10 @@ This routing remains configurable through the ordinary action bindings. For exam
 | `app.notices.show` | `f2` | Show warnings, update notices, and captured extension output |
 | `app.shortcuts.show` | `?` | Show the keyboard shortcut overview; only when the editor is empty, otherwise `?` is typed |
 | `app.tasks.background` | `ctrl+b` | Move a running bash command or subagent wait to the background; falls through to the editor (cursor left) when nothing can be backgrounded |
+| `app.agents.stop` | `s` | Agent Hub (`/agents`, subagents V2): stop the selected subagent's current turn |
+| `app.agents.delete` | `shift+d` | Agent Hub: delete the selected stopped subagent |
+| `app.agents.approve` | `y` | Agent Hub: approve the selected pending subagent request |
+| `app.agents.deny` | `n` | Agent Hub: deny the selected pending subagent request |
 | `app.message.copy` | `ctrl+x` | Copy the last assistant message, or the selected message in `/tree` |
 | `app.message.followUp` | `alt+enter` | Queue follow-up message |
 | `app.message.dequeue` | `alt+up` | Restore queued messages to editor |

@@ -33,7 +33,7 @@ import {
 	removeIsolatedWorktree,
 	type WorktreeBaseline,
 } from "../isolation/worktree.ts";
-import { type ApprovalAnswer, ApprovalBroker } from "../permissions/approval.ts";
+import { type ApprovalAnswer, ApprovalBroker, type PendingApproval } from "../permissions/approval.ts";
 import { childDelegationTools, deriveChildDecision } from "../permissions/derive-child.ts";
 import { evaluatePermission, type PermissionRuleSet } from "../permissions/evaluate.ts";
 import { type AgentPermissionMode, mostRestrictiveDecision, type PermissionDecision } from "../permissions/rules.ts";
@@ -69,6 +69,7 @@ import {
 import type { ChildBudgetLimits } from "../runtime/budgets.ts";
 import { ICE_BUILTIN_CHILD_TOOLS } from "../tools/adapters.ts";
 import { resolveChildTools } from "../tools/resolve.ts";
+import type { HubRow } from "../ui/hub.ts";
 import {
 	boundedText,
 	CHILD_PROMPT_SUFFIX,
@@ -160,6 +161,8 @@ export class SubagentV2Runtime {
 			admission: new SubagentConcurrencyAdmission(settings.maxConcurrent),
 			broker: new ApprovalBroker({
 				...(promptApproval ? { interactive: promptApproval } : {}),
+				...(this.host.hasApprovalInbox ? { hasInbox: this.host.hasApprovalInbox } : {}),
+				...(this.host.onApprovalsChanged ? { onChange: this.host.onApprovalsChanged } : {}),
 				askTimeoutMs: settings.askTimeoutMs,
 				...(this.host.now ? { now: this.host.now } : {}),
 			}),
@@ -1473,5 +1476,58 @@ export class SubagentV2Runtime {
 
 	respondToApproval(id: string, answer: ApprovalAnswer): boolean {
 		return this.state().broker.respond(id, answer);
+	}
+
+	/** Agent Hub roster projection; the registry stays the only lifecycle owner. */
+	hubRows(): HubRow[] {
+		const state = this.state();
+		return state.registry.list(state.sessionId).map((record) => ({
+			id: record.id,
+			agent: record.agent,
+			description: record.description,
+			state: record.state,
+			...(record.lastTurnOutcome ? { lastTurnOutcome: record.lastTurnOutcome } : {}),
+			turns: record.usage.turns,
+			tokens: record.usage.inputTokens + record.usage.outputTokens,
+			cost: record.usage.cost,
+			...(record.patchState ? { patchState: record.patchState } : {}),
+			...(record.blockedReasons?.length ? { blockedReasons: record.blockedReasons } : {}),
+		}));
+	}
+
+	/** Agent Hub inspector lines for one child, from its frozen contract and latest result. */
+	describeChild(id: string): string[] {
+		const { record, contract } = this.contractOf(id);
+		const { capabilities, model, isolation, budgets } = contract;
+		const budget = [
+			budgets.maxTurns ? `${budgets.maxTurns} turns` : "",
+			budgets.maxTokens ? `${budgets.maxTokens} tokens` : "",
+			budgets.timeoutMs ? `${Math.round(budgets.timeoutMs / 1000)}s` : "",
+		].filter(Boolean);
+		const lines = [
+			`Task: ${record.description}`,
+			`Agent: ${contract.agent.name} (${contract.agent.source})`,
+			`Model: ${model.provider}/${model.model} · thinking ${model.thinking}`,
+			`Tools: ${capabilities.tools.map((tool) => tool.name).join(", ") || "none"}`,
+			`Permissions: ${capabilities.agentMode}${capabilities.subYolo ? " · sub-yolo" : ""} · parent ${capabilities.parentMode}`,
+			`Scope: ${capabilities.scopeRoots.join(", ")}`,
+			`Isolation: ${isolation.mode}${record.patchState ? ` · patch ${record.patchState}` : ""}`,
+			`Budget: ${budget.join(" · ") || "none"}`,
+			`Usage: ${record.usage.turns} turns · ${record.usage.inputTokens + record.usage.outputTokens} tokens · ${record.usage.cost.toFixed(4)}`,
+		];
+		const result = record.lastResult;
+		if (result) {
+			lines.push("", `Last turn: ${result.outcome}${result.validation ? ` · ${result.validation.assurance}` : ""}`);
+			const preview = (result.error ?? result.text)
+				.split("\n")
+				.filter((line) => line.trim())
+				.slice(0, 8);
+			lines.push(...preview);
+		}
+		return lines;
+	}
+
+	pendingApprovals(): readonly PendingApproval[] {
+		return this.state().broker.pending;
 	}
 }

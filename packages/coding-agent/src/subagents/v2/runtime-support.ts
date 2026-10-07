@@ -6,7 +6,7 @@ import type { IceVerifierState } from "../../ice-safe-verify.ts";
 import type { ChildRuntimeContract, NormalizedPermissionRule } from "../contract/child-runtime-contract.ts";
 import type { AgentDefinitionSource } from "../definitions/schema.ts";
 import { removeIsolatedWorktree, worktreeGit, worktreeSnapshotRef } from "../isolation/worktree.ts";
-import type { ApprovalAnswer, ApprovalBroker, ApprovalRequest } from "../permissions/approval.ts";
+import type { ApprovalAnswer, ApprovalBroker, ApprovalRequest, PendingApproval } from "../permissions/approval.ts";
 import type { PermissionRuleSet } from "../permissions/evaluate.ts";
 import type { PermissionRuleScope } from "../permissions/rules.ts";
 import type { SubagentConcurrencyAdmission } from "../registry/admission.ts";
@@ -61,6 +61,10 @@ export interface V2RuntimeHost {
 	getPatchVerifier?: () => V2RuntimeHost["verifyPatch"];
 	/** Foreground approval prompt; absent when the parent has no interactive UI. */
 	promptApproval?: (request: ApprovalRequest, signal: AbortSignal) => Promise<ApprovalAnswer>;
+	/** True while an approval inbox (Agent Hub) is attached; background asks then wait instead of denying. */
+	hasApprovalInbox?: () => boolean;
+	/** Called whenever the set of pending approvals changes. */
+	onApprovalsChanged?: (pending: readonly PendingApproval[]) => void;
 	createChildAgentSession?: typeof createV2ChildSession;
 	now?: () => number;
 }

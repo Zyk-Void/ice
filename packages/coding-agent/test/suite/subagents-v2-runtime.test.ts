@@ -829,6 +829,32 @@ describe("subagent V2 runtime", () => {
 		await restored.shutdown();
 	});
 
+	it("queues a background child's approval in the Hub inbox until it is answered", async () => {
+		const { harness, host } = await setup();
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("write", { path: "inbox.txt", content: "ok" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("written"),
+		]);
+		let runtime!: SubagentV2Runtime;
+		const seen: string[] = [];
+		runtime = new SubagentV2Runtime(
+			host({
+				hasApprovalInbox: () => true,
+				onApprovalsChanged: (pending) => {
+					for (const approval of pending) {
+						seen.push(approval.request.summary);
+						queueMicrotask(() => runtime.respondToApproval(approval.request.id, "allow-once"));
+					}
+				},
+			}),
+		);
+		const result = await runOne(runtime, "general", "Write inbox.txt", true);
+		expect(result.outcome).toBe("completed");
+		expect(seen).toEqual(["write: inbox.txt"]);
+		expect(readFileSync(join(harness.tempDir, "inbox.txt"), "utf8")).toBe("ok");
+		expect(runtime.pendingApprovals()).toEqual([]);
+	});
+
 	it("finishes worktree cleanup that a crash interrupted after a terminal patch decision", async () => {
 		const { harness, parent, sessionManager, host } = await setup({ repository: true });
 		harness.setResponses([fauxAssistantMessage("done")]);
