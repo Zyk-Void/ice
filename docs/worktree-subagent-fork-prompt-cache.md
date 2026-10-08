@@ -1,5 +1,7 @@
 # Fork subagent prompt-cache affinity
 
+> **Historical implementation snapshot.** This note describes prompt-cache work in an earlier subagent worktree and is not a statement of the current V2 child contract. See the [Subagents V2 guide](../packages/coding-agent/docs/subagents-v2.md); source and branch-status claims below are historical evidence.
+
 ## Status and provenance
 
 This document describes the fork prompt-cache implementation visible in the

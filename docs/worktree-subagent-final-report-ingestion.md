@@ -1,5 +1,7 @@
 # Subagent final-report ingestion
 
+> **Historical implementation snapshot.** This note describes the former V1 `delegate*` report path, not current V2 result behavior. See the [Subagents V2 guide](../packages/coding-agent/docs/subagents-v2.md) and [result reference](../packages/coding-agent/docs/subagents-v2-reference.md); treat source and verification claims below as historical evidence.
+
 ## Scope and status
 
 This document describes the final-answer/final-report ingestion implementation visible in this worktree. It is documentation of the current source tree, not a claim that every behavior has been exercised in this environment.

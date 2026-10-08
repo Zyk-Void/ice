@@ -1,5 +1,7 @@
 # ICE profile expressiveness
 
+> **Historical implementation snapshot.** This note describes the V1 profile contract and files that V2 replaced. It is not current subagent configuration documentation; see the [V2 guide](../packages/coding-agent/docs/subagents-v2.md) and [definition reference](../packages/coding-agent/docs/subagents-v2-reference.md). Source/status claims below are retained as historical evidence.
+
 This document describes the profile, resource, tool, settings, model, sampling, and
 parent-adapter behavior visible in this worktree. It is an implementation description,
 not a proposal. The primary implementation is `packages/coding-agent/src/ice-subagents.ts`;

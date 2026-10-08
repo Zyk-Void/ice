@@ -36,9 +36,7 @@ For Slack/chat automation and workflows see [earendil-works/pi-chat](https://git
 
 ## Permissions & Containerization
 
-Ice does not include a built-in permission system for restricting filesystem, process, network, or credential access. By default, it runs with the permissions of the user and process that launched it.
-
-If you need stronger boundaries, containerize or sandbox Ice. See [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md) for three patterns:
+The ICE `ice` launcher includes policy controls such as guarded plan/build modes and Subagents V2 allow/ask/deny decisions. These controls do not sandbox filesystem, process, network, or credential access: tools and child processes still run with the permissions of the user who launched ICE. For an independent security boundary, containerize or sandbox ICE. See the [Subagents V2 guide](packages/coding-agent/docs/subagents-v2.md), [security documentation](packages/coding-agent/docs/security.md), and [containerization guide](packages/coding-agent/docs/containerization.md) for details and three isolation patterns:
 
 - **Gondolin extension**: keep `ice` and provider auth on the host while routing built-in tools and `!` commands into a local Linux micro-VM.
 - **Plain Docker**: run the whole `ice` process in a local container for simple isolation.

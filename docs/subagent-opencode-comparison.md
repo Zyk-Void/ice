@@ -1,5 +1,7 @@
 # ICE vs OpenCode Subagents: Detailed Comparison and Audit Findings
 
+> **Historical V1 comparison (2026-08-11).** This report compares the legacy subagent implementation and file paths from before the V2 rewrite. It is not a current comparison of ICE Subagents V2 against OpenCode. Treat ratings and capability statements as historical evidence only; see the [current V2 guide](../packages/coding-agent/docs/subagents-v2.md) and [architecture](../packages/coding-agent/docs/subagents-v2-architecture.md).
+
 Date: 2026-08-11
 
 ## Scope

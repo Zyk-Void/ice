@@ -1,5 +1,7 @@
 # Removal of aggregate subagent token budgets
 
+> **Historical implementation snapshot.** This note describes V1 aggregate-budget removal and does not define current V2 per-task budgets. See the [current V2 guide](../packages/coding-agent/docs/subagents-v2.md) and [budget reference](../packages/coding-agent/docs/subagents-v2-reference.md).
+
 ## Scope and status
 
 This note documents the aggregate-token-budget removal visible in the checked-out

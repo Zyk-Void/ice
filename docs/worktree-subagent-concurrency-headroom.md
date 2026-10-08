@@ -1,5 +1,7 @@
 # Subagent concurrency headroom
 
+> **Historical implementation snapshot.** This note describes an earlier isolated worktree and legacy subagent scheduler, not current V2 behavior or limits. See the [Subagents V2 guide](../packages/coding-agent/docs/subagents-v2.md) and [reference](../packages/coding-agent/docs/subagents-v2-reference.md); treat branch, status, and source references below as historical evidence.
+
 ## Status and scope
 
 This document describes the concurrency implementation visible in this worktree. It does not infer behavior from a branch name or commit history.

@@ -1,5 +1,7 @@
 # Native subagent child compaction
 
+> **Historical implementation snapshot.** This note describes an earlier isolated worktree and legacy subagent path, not current V2 behavior. See the [Subagents V2 guide](../packages/coding-agent/docs/subagents-v2.md) and [architecture](../packages/coding-agent/docs/subagents-v2-architecture.md); treat branch, status, and source references below as historical evidence.
+
 This document describes the child-compaction implementation visible in the
 `subagent-child-compaction` worktree. It is intentionally scoped to native
 subagent children; it does not describe a second compaction engine or a

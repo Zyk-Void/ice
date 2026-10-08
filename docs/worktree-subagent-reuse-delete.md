@@ -1,5 +1,7 @@
 # ICE subagent reuse and delete
 
+> **Historical implementation snapshot.** This note documents the legacy `NativeSubagentRunner` / `manage_subagent` lifecycle, replaced by V2's `agent` and `agent_control` APIs. See the [current V2 guide](../packages/coding-agent/docs/subagents-v2.md) and [architecture](../packages/coding-agent/docs/subagents-v2-architecture.md).
+
 This document describes the foreground native subagent lifecycle implemented in the checked-out `packages/coding-agent` tree. It covers the retained-session registry used by `NativeSubagentRunner`, the `manage_subagent` facade, and the historical transcript projection. It does not describe durable background jobs or the separate isolated writer workflow.
 
 ## Purpose

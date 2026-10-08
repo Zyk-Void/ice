@@ -1,5 +1,7 @@
 # Timeout multiplexing for ICE subagents
 
+> **Historical implementation snapshot.** This note describes the V1 timeout supervisor and `delegate*` APIs, not current V2 lifecycle/budget behavior. See the [current V2 guide](../packages/coding-agent/docs/subagents-v2.md) and [budget reference](../packages/coding-agent/docs/subagents-v2-reference.md).
+
 ## Scope and status
 
 This document describes the timeout-supervision and managed-child behavior visible in the `subagent-timeout-multiplexing` worktree. It is documentation of the inspected implementation, not a proposal to add another scheduler or agent loop.

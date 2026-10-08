@@ -1,5 +1,7 @@
 # Subagent footer observability
 
+> **Historical implementation snapshot.** This note describes an earlier worktree's child-view/footer implementation, not current V2 UI behavior. See the [Subagents V2 guide](../packages/coding-agent/docs/subagents-v2.md) and [architecture](../packages/coding-agent/docs/subagents-v2-architecture.md); source and worktree-status claims below are historical evidence.
+
 ## Status and provenance
 
 This document describes the implementation visible in the assigned worktree at inspection time. The source and test files listed below were present in the worktree; their individual commit state was not observable with the available file tools.
