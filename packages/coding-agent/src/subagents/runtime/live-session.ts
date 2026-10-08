@@ -36,9 +36,9 @@ import type {
 	SubagentExecutionContract,
 	SubagentThinkingLevel,
 } from "../types.ts";
-import type { SubagentCheckInState } from "./checkin.ts";
 import { SubagentError } from "./helpers.ts";
 import { truncateSubagentOutput } from "./prompt.ts";
+import type { SubagentCheckInState } from "./view-state.ts";
 
 export interface PendingSubagentHookObservation {
 	readonly promise: Promise<void>;

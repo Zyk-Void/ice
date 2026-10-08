@@ -18,7 +18,7 @@ import type { Api, AssistantMessage, Model } from "@zykairotis/ice-ai/compat";
 import { getAgentDir } from "../../config.ts";
 import { parseFrontmatter } from "../../utils/frontmatter.ts";
 import { redactCredentialText } from "../../utils/redact.ts";
-import { hashSource } from "../definitions/legacy-profiles.ts";
+import { hashSource } from "../definitions/paths.ts";
 import { SUBAGENT_HANDOFF_MARKER } from "../results/report.ts";
 import { renderSubagentTaskContractSection } from "../results/task-contract.ts";
 import { canonicalPath, isPathWithin } from "../tools/paths.ts";

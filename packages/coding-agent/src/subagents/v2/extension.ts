@@ -29,13 +29,13 @@ import { type AgentToolParameters, AgentToolParametersSchema } from "../api/agen
 import type { AgentControlParameters } from "../api/agent-control.ts";
 import { AgentControlParametersSchema } from "../api/agent-control.ts";
 import { type AgentPatchParameters, AgentPatchParametersSchema } from "../api/agent-patch.ts";
-import { getSubagentGlobalAgentsDir } from "../definitions/legacy-profiles.ts";
 import {
 	AGENT_LISTING_CUSTOM_TYPE,
 	type AgentListingState,
 	computeAgentListingDelta,
 	renderAgentListingMessage,
 } from "../definitions/listing.ts";
+import { getSubagentGlobalAgentsDir } from "../definitions/paths.ts";
 import {
 	appendSubagentHookJournal,
 	authorizeUnsafeSubagentHostExecution,

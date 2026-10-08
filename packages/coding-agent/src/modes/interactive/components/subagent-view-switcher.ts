@@ -1,7 +1,10 @@
 import { applyChromeBorder, type Component, type TUI, truncateToWidth, visibleWidth } from "@zykairotis/ice-tui";
 import type { IceAgentViewBridge, IceAgentViewDescriptor } from "../../../ice-agent-view-bridge.ts";
-import type { SubagentCheckInState } from "../../../subagents/runtime/checkin.ts";
-import type { SubagentRuntimeAttention, SubagentToolActivityOutcome } from "../../../subagents/runtime/supervisor.ts";
+import type {
+	SubagentCheckInState,
+	SubagentRuntimeAttention,
+	SubagentToolActivityOutcome,
+} from "../../../subagents/runtime/view-state.ts";
 import { createDefaultAppearance } from "../appearance/appearance-defaults.ts";
 import { resolveAppearanceColorFn } from "../appearance/appearance-resolve.ts";
 import type { SubagentChromeAppearance } from "../appearance/appearance-types.ts";

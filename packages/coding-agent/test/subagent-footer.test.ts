@@ -10,7 +10,7 @@ import {
 	createSubagentLiveSessionControl,
 	SubagentLiveSessionRegistry,
 } from "../src/subagents/runtime/live-session.ts";
-import type { SubagentRuntimeAttention } from "../src/subagents/runtime/supervisor.ts";
+import type { SubagentRuntimeAttention } from "../src/subagents/runtime/view-state.ts";
 
 function session(sessionId: string, isStreaming = false): AgentSession {
 	return {

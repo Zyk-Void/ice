@@ -10,9 +10,9 @@
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { SettingsManager } from "../../core/settings-manager.ts";
-import { getSubagentGlobalAgentsDir } from "../definitions/legacy-profiles.ts";
 import { type LoadedAgentDefinitions, loadAgentDefinitions } from "../definitions/load.ts";
 import { parseNativeAgentMarkdown } from "../definitions/parse.ts";
+import { getSubagentGlobalAgentsDir } from "../definitions/paths.ts";
 import { formatAgentDefinitions } from "./agent-manager.ts";
 import { formatPruneResult, pruneOrphanedSubagents } from "./prune.ts";
 import { resolveSubagentsV2Settings, type SubagentsV2Settings } from "./settings.ts";

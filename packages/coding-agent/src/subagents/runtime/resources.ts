@@ -2,11 +2,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../config.ts";
-import {
-	findNearestDirectory,
-	hashSource,
-	type SubagentResourceResolutionOptions,
-} from "../definitions/legacy-profiles.ts";
+import { findNearestDirectory, hashSource, type SubagentResourceResolutionOptions } from "../definitions/paths.ts";
 import { canonicalPath, isPathWithin } from "../tools/paths.ts";
 import type {
 	ResolvedSubagentResources,

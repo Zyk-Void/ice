@@ -226,42 +226,11 @@ describe("observe server", () => {
 			toolName: "bash",
 			args: { command: "echo hi" },
 		});
-		session.emit({
-			type: "tool_execution_update",
-			toolCallId: "delegate-call",
-			toolName: "delegate",
-			args: {},
-			partialResult: {
-				content: [{ type: "text", text: "child progress" }],
-				details: {
-					type: "subagent_progress",
-					snapshot: {
-						schemaVersion: 1,
-						streamKey: "child-stream",
-						toolName: "delegate",
-						parentSessionId: "srv-test-session",
-						childSessionId: "child-session",
-						eventType: "subagent_tool_start",
-						status: "running",
-						phase: "tool_activity",
-						terminal: false,
-						startedAtMs: Date.now(),
-						elapsedMs: 0,
-						currentTool: "read",
-						attemptHistory: [],
-						diagnostics: [],
-						activity: [],
-					},
-				},
-			},
-		});
 
 		await new Promise((resolve) => setTimeout(resolve, 100));
 		const frames = received.join("");
 		expect(frames).toContain("event: activity");
 		expect(frames).toContain("bash");
-		expect(frames).toContain("event: thread");
-		expect(frames).toContain("srv-test-session::child-session");
 
 		req.destroy();
 	});

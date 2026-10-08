@@ -1,7 +1,10 @@
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import type { AgentSession } from "./core/agent-session.ts";
-import type { SubagentCheckInState } from "./subagents/runtime/checkin.ts";
-import type { SubagentRetryState, SubagentRuntimeAttention } from "./subagents/runtime/supervisor.ts";
+import type {
+	SubagentCheckInState,
+	SubagentRetryState,
+	SubagentRuntimeAttention,
+} from "./subagents/runtime/view-state.ts";
 import { redactCredentialText } from "./utils/redact.ts";
 
 export type IceAgentViewKind = "parent" | "subagent" | "historical-subagent";

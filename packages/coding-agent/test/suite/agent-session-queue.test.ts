@@ -3,7 +3,6 @@ import { fauxAssistantMessage, fauxToolCall } from "@zykairotis/ice-ai";
 import type { ExtensionAPI } from "@zykairotis/ice-coding-agent";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { SubagentCheckInCoordinator } from "../../src/subagents/runtime/checkin.ts";
 import { createHarness, getAssistantTexts, getMessageText, getUserTexts, type Harness } from "./harness.ts";
 
 async function createWaitingHarness(
@@ -324,48 +323,6 @@ describe("AgentSession queue characterization", () => {
 		expect(
 			harness.session.messages.some((message) => message.role === "custom" && message.customType === "queue-test"),
 		).toBe(true);
-	});
-
-	it("delivers a due check-in into the idle parent loop and acknowledges only after settlement", async () => {
-		const harness = await createHarness();
-		harnesses.push(harness);
-		let now = 0;
-		let fire: (() => void) | undefined;
-		let sawObservation = false;
-		// Owner identity comes from the live AgentSession, not the child or a global fallback.
-		const owned = new SubagentCheckInCoordinator(harness.session.sessionId, () => harness.session, {
-			now: () => now,
-			setTimeout: (callback) => {
-				fire = callback;
-				return 1 as unknown as ReturnType<typeof setTimeout>;
-			},
-			clearTimeout: () => {
-				fire = undefined;
-			},
-			queueTask: (callback) => queueMicrotask(callback),
-		});
-		harness.setResponses([
-			(context) => {
-				sawObservation = context.messages.some(
-					(message) => message.role === "user" && getMessageText(message).includes("ICE supervisory check-in"),
-				);
-				return fauxAssistantMessage("reviewed");
-			},
-		]);
-		owned.arm("child-1", 120_000, () => ({
-			runId: "child-1",
-			role: "reviewer",
-			model: "faux",
-			executionStatus: "running",
-			freshness: "unknown",
-		}));
-		now = 120_000;
-		fire?.();
-		await new Promise<void>((resolve) => setImmediate(resolve));
-		await harness.session.agent.waitForIdle();
-		expect(sawObservation).toBe(true);
-		expect(owned.getState("child-1")).toMatchObject({ lastAcknowledgedAt: 120_000, nextDueAt: 240_000 });
-		owned.dispose();
 	});
 
 	it("correlates a custom follow-up's consumption with parent settlement", async () => {

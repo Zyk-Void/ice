@@ -15,17 +15,17 @@ import type {
 	SubagentTaskContractKind,
 	SubagentTaskContractVerificationInput,
 } from "./results/task-contract.ts";
-import type { SubagentCheckInState } from "./runtime/checkin.ts";
 import type { SubagentContextManifest } from "./runtime/context-bootstrap.ts";
 import type { SubagentHookRuntime } from "./runtime/live-session.ts";
 import type { SubagentPreflightRequirement, SubagentPreflightRequirementInput } from "./runtime/preflight.ts";
 import type { IceModelCandidateSkip, IceSubagentRouteSnapshot } from "./runtime/routing.ts";
 import type {
+	SubagentCheckInState,
 	SubagentManagementChildState,
 	SubagentRetryState,
 	SubagentRuntimeAttention,
 	SubagentToolActivityDigest,
-} from "./runtime/supervisor.ts";
+} from "./runtime/view-state.ts";
 import type { IceHookDispatchRecord } from "./settings.ts";
 import type { IceResolvedDelegableTool } from "./tools/adapters.ts";
 

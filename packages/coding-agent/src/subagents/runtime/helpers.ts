@@ -19,7 +19,7 @@ import {
 	type SubagentContextPacketInput,
 	type SubagentFailureCode,
 } from "../types.ts";
-import type { SubagentToolActivityDigest } from "./supervisor.ts";
+import type { SubagentToolActivityDigest } from "./view-state.ts";
 
 export function modelLabel(model: Model<Api> | undefined): string | undefined {
 	return model ? `${model.provider}/${model.id}` : undefined;

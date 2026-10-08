@@ -15,7 +15,7 @@ import {
 	validateIceStartupArgs,
 } from "./ice-safe-verify.ts";
 import { main } from "./main.ts";
-import { getSubagentGlobalAgentsDir } from "./subagents/definitions/legacy-profiles.ts";
+import { getSubagentGlobalAgentsDir } from "./subagents/definitions/paths.ts";
 import { getIceSubagentHookHandlers } from "./subagents/settings.ts";
 import { normalizeUnsafeSubagentStartupArgs, registerIceSubagentMcpAdapter } from "./subagents/types.ts";
 import { runAgentsCli } from "./subagents/v2/cli.ts";

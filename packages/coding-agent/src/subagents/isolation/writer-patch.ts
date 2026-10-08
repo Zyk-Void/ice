@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getAgentDir } from "../../config.ts";
-import { hashSource } from "../definitions/legacy-profiles.ts";
+import { hashSource } from "../definitions/paths.ts";
 import { isRecord } from "../results/report.ts";
 import { SubagentError } from "../runtime/helpers.ts";
 import { canonicalPath, isPathWithin } from "../tools/paths.ts";
