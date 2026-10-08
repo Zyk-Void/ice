@@ -143,7 +143,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 	const settingsFor = (ctx: ExtensionContext | undefined) => {
 		// The footer can initialize the owner before session_start provides an extension context.
 		const manager = ctx?.settingsManager ?? options.agentViewBridge?.getParentSession()?.settingsManager;
-		const trusted = ctx?.isProjectTrusted?.() ?? false;
+		const trusted = ctx?.isProjectTrusted?.() ?? manager?.isProjectTrusted() ?? false;
 		return resolveSubagentsV2Settings({
 			global: (manager?.getGlobalSettings() as { ice?: { subagents?: unknown } } | undefined)?.ice?.subagents,
 			project: (manager?.getProjectSettings() as { ice?: { subagents?: unknown } } | undefined)?.ice?.subagents,

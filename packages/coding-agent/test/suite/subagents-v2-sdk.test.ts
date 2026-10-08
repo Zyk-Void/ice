@@ -11,6 +11,27 @@ afterEach(() => {
 });
 
 describe("subagents V2 SDK wiring", () => {
+	it.each([true, false])(
+		"honors the existing project trust decision during early initialization (trusted=%s)",
+		async (trusted) => {
+			const subagents = createIceSubagents({ agentDir: join("/nonexistent", "agent") });
+			const harness = await createHarness({
+				extensionFactories: [subagents.extension],
+				persistSession: true,
+				settings: { ice: { subagents: { maxConcurrent: 3 } } },
+			});
+			harnesses.push(harness);
+			vi.spyOn(harness.session.settingsManager, "getProjectSettings").mockReturnValue({
+				ice: { subagents: { maxConcurrent: 1 } },
+			});
+			vi.spyOn(harness.session.settingsManager, "isProjectTrusted").mockReturnValue(trusted);
+			subagents.attach(harness.session);
+			expect(subagents.overview()?.capacity.max).toBe(trusted ? 1 : 3);
+			await harness.session.bindExtensions({ mode: "tui" });
+			expect(subagents.overview()?.capacity.max).toBe(trusted ? 1 : 3);
+		},
+	);
+
 	it("uses the parent's concurrency setting when the overview initializes before session_start", async () => {
 		const subagents = createIceSubagents({ agentDir: join("/nonexistent", "agent") });
 		const harness = await createHarness({

@@ -228,7 +228,7 @@
 ### Fixed
 
 - Fixed truncated completion hints skipping report bytes after an error prefix and failing range reads for reports retained inline; completion sibling lists remain bounded at any concurrency setting.
-- Fixed early Agent Hub and footer initialization ignoring the parent's subagent concurrency setting.
+- Fixed early Agent Hub and footer initialization ignoring the parent's subagent concurrency setting, including trusted project limits that lower the global value.
 - Fixed running subagents showing `0 tok` until their turn ended, queued subagents showing `starting`, and the footer hiding idle subagents (`agents 0/4 · 2 idle`).
 - Fixed `agent_control wait` keeping the user from reaching the main agent: it now ends as soon as the user queues a message or presses `ctrl+b`.
 - Fixed subagents that finish on their last allowed request (`maxTurns`/`maxTokens`) being reported `budget_exhausted` and sent an extra wrap-up request past the budget. A turn is now exhausted only when the budget stopped work the child still wanted to do.
