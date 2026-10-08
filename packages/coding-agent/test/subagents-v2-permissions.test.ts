@@ -211,14 +211,20 @@ describe("subagent V2 child permission derivation", () => {
 		expect(deriveChildDecision(edit, "ask", { ...base, subYolo: true }).decision).toBe("ask");
 	});
 
-	it("caps external directories at ask unless managed policy allows", () => {
+	it("caps external directories at ask unless managed policy or --sub-yolo allows", () => {
 		const outside: PermissionSubject = {
 			tool: "external_directory",
 			value: "/tmp/x",
 			pathMode: true,
 			subjectClass: "external-directory",
 		};
-		expect(deriveChildDecision(outside, "allow", { ...base, subYolo: true }).decision).toBe("ask");
+		expect(deriveChildDecision(outside, "allow", base).decision).toBe("ask");
+		expect(deriveChildDecision(outside, "allow", { ...base, subYolo: true })).toEqual({
+			decision: "allow",
+			raisedBy: "sub-yolo",
+		});
+		// --sub-yolo never lifts a child above its parent.
+		expect(deriveChildDecision(outside, "ask", { ...base, subYolo: true }).decision).toBe("ask");
 		expect(
 			deriveChildDecision(outside, "allow", {
 				...base,

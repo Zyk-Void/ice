@@ -1,5 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@zykairotis/ice-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -865,6 +875,69 @@ describe("subagent V2 runtime", () => {
 		expect(readFileSync(join(yolo.harness.tempDir, "b.txt"), "utf8")).toBe("b");
 	});
 
+	it("lets a sub-yolo child read outside its scope and the parent directory without approval", async () => {
+		const outside = mkdtempSync(join(tmpdir(), "ice-v2-outside-"));
+		try {
+			writeFileSync(join(outside, "far.txt"), "far\n");
+			const run = async (subYolo: boolean) => {
+				const { harness, host } = await setup();
+				mkdirSync(join(harness.tempDir, "sub"));
+				writeFileSync(join(harness.tempDir, "near.txt"), "near\n");
+				harness.setResponses([
+					fauxAssistantMessage([fauxToolCall("ls", { path: "." }), fauxToolCall("ls", { path: outside })], {
+						stopReason: "toolUse",
+					}),
+					fauxAssistantMessage("done"),
+				]);
+				const asked: string[] = [];
+				const runtime = new SubagentV2Runtime(
+					host({
+						isSubYolo: () => subYolo,
+						promptApproval: async (request) => {
+							asked.push(request.summary);
+							return "deny";
+						},
+					}),
+				);
+				const [record] = await runtime.launch([{ ...task("general", "List"), scope: { roots: ["sub"] } }]);
+				await runtime.runTurn(record!.id, "List", { foreground: true, background: false });
+				return { asked, transcript: transcriptOf(runtime, record!.id) };
+			};
+			const yolo = await run(true);
+			expect(yolo.asked).toEqual([]);
+			expect(yolo.transcript).toContain("near.txt");
+			expect(yolo.transcript).toContain("far.txt");
+			expect(yolo.transcript).not.toContain("outside the approved subagent scope");
+
+			const scoped = await run(false);
+			expect(scoped.asked).toEqual([`ls: ${realpathSync(outside)}`]);
+			expect(scoped.transcript).toContain("Path is outside the approved subagent scope: .");
+			expect(scoped.transcript).not.toContain("far.txt");
+		} finally {
+			rmSync(outside, { recursive: true, force: true });
+		}
+	});
+
+	it("names the child that asks for approval", async () => {
+		const { harness, host } = await setup();
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("write", { path: "a.txt", content: "a" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+		const names: Array<string | undefined> = [];
+		const runtime = new SubagentV2Runtime(
+			host({
+				promptApproval: async (request) => {
+					names.push(request.name);
+					return "deny";
+				},
+			}),
+		);
+		const [record] = await runtime.launch([{ ...task("general", "Write"), name: "scribe" }]);
+		await runtime.runTurn(record!.id, "Write", { foreground: true, background: false });
+		expect(names).toEqual(["scribe"]);
+	});
+
 	it("refuses invalid permission settings before creating any child", async () => {
 		const { host, sessionManager } = await setup();
 		const factory = vi.fn(createV2ChildSession);
@@ -1659,11 +1732,16 @@ describe("subagent V2 runtime", () => {
 		const restarted = new SubagentV2Runtime(host());
 		try {
 			expect(restarted.overview().children).toMatchObject([{ name: "scout", state: "parked" }]);
+			expect(restarted.hasPendingInterruption()).toBe(true);
 			restarted.flushCompletions();
 			expect(parent.sent).toHaveLength(1);
-			expect(String(parent.sent[0]!.content)).toContain(
-				`Subagent explore "scout" (${record!.id}) finished: interrupted.`,
-			);
+			const content = String(parent.sent[0]!.content);
+			expect(content).toContain(`Subagent explore "scout" (${record!.id}) finished: interrupted.`);
+			// No final answer exists to read; the notice points at resuming the child instead.
+			expect(content).toContain("stopped mid-task when ice closed");
+			expect(content).toContain(`an agent task with resume="scout"`);
+			expect(content).not.toContain("Full result: agent_control action=output");
+			await vi.waitFor(() => expect(restarted.hasPendingInterruption()).toBe(false));
 			restarted.flushCompletions();
 			expect(parent.sent).toHaveLength(1);
 			const continued = await restarted.continueChild(restarted.resolveChildRef("scout"), "go on", {

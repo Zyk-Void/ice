@@ -79,9 +79,16 @@ export function buildV2ChildToolDefinitions(
 	const { contract, cwd } = options;
 	const frozen = new Set(contract.capabilities.tools.map((tool) => tool.name));
 	const definitions: ToolDefinition[] = [];
-	// Selected skill files are readable even outside the task scope; scope still bounds everything else.
+	// Selected skill files are readable even outside the task scope; scope still bounds everything else,
+	// except under --sub-yolo, where the permission guard alone decides (Git metadata and symlinks stay denied).
 	const skillRoots = (contract.prompt.resources?.skills ?? []).map((resource) => dirname(resource.canonicalPath));
-	const scoped = createScopedWriterToolDefinitions(cwd, contract.capabilities.scopeRoots, false, skillRoots, frozen);
+	const scoped = createScopedWriterToolDefinitions(
+		cwd,
+		contract.capabilities.scopeRoots,
+		contract.capabilities.subYolo,
+		skillRoots,
+		frozen,
+	);
 	for (const definition of scoped) if (frozen.has(definition.name)) definitions.push(definition);
 	if (frozen.has("bash")) {
 		definitions.push(

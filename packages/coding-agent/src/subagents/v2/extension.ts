@@ -315,7 +315,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			if (background.length > lastApprovalCount && latestCtx?.hasUI) {
 				const newest = background.at(-1)!.request;
 				latestCtx.ui.notify(
-					`Subagent ${newest.agent} is waiting for approval: ${newest.summary}. Open /agents to answer.`,
+					`Subagent ${newest.name ?? newest.agent} (${newest.agent}) is waiting for approval: ${newest.summary}. Open /agents to answer.`,
 					"warning",
 				);
 			}
@@ -335,7 +335,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 				["Deny", "deny"],
 			];
 			const picked = await ctx.ui.select(
-				`Subagent ${request.agent} wants to run ${request.summary}`,
+				`Subagent ${request.name ?? request.agent} (${request.agent}) wants to run ${request.summary}`,
 				choices.map(([label]) => label),
 				{ signal },
 			);
@@ -457,10 +457,11 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		}
 		options.agentViewBridge?.connectLiveSessions(liveSource);
 		// Results that finished while this session was closed show up right away, without starting a turn;
-		// the model reads them with the next prompt.
+		// the model reads them with the next prompt. Children that closing ice interrupted are different:
+		// interactively, the main agent gets a turn to decide whether to resume them.
 		if (event.reason === "startup" || event.reason === "resume") {
 			try {
-				runtime.flushCompletions({ triggerTurn: false });
+				runtime.flushCompletions({ triggerTurn: ctx.hasUI && runtime.hasPendingInterruption() });
 			} catch {
 				// No parent session yet.
 			}

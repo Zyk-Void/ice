@@ -533,6 +533,8 @@ export interface IceSubagentOverviewApproval {
 	readonly id: string;
 	readonly childId: string;
 	readonly agent: string;
+	/** The child's name, shown in place of its ID. */
+	readonly name?: string;
 	readonly tool: string;
 	/** Redacted, bounded operation summary. */
 	readonly summary: string;

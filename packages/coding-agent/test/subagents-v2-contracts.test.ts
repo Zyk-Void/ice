@@ -109,7 +109,7 @@ describe("subagent V2 permission contract", () => {
 		}
 		expect(bySubject.get("bash")?.raisableBy).not.toContain("worktree-isolation");
 		expect(bySubject.get("external-directory")?.maxDecision).toBe("ask");
-		expect(bySubject.get("external-directory")?.raisableBy).toEqual(["managed-allow"]);
+		expect(bySubject.get("external-directory")?.raisableBy).toEqual(["sub-yolo", "managed-allow"]);
 	});
 });
 

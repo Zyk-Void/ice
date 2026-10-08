@@ -80,6 +80,7 @@ import { ICE_BUILTIN_CHILD_TOOLS } from "../tools/adapters.ts";
 import { resolveChildTools } from "../tools/resolve.ts";
 import { pickChildName } from "./child-names.ts";
 import {
+	approvalSummary,
 	backfillSubagentUsage,
 	boundedText,
 	CHILD_PROMPT_SUFFIX,
@@ -298,7 +299,9 @@ export class SubagentV2Runtime {
 		const mode = this.host.getParentMode();
 		const settings = this.host.getSettings();
 		if (settings.diagnostics.length) return "deny";
-		if (subject.tool === "external_directory") return mode === "plan" ? "deny" : "ask";
+		// --sub-yolo grants host authority: children may reach outside the parent's directory.
+		if (subject.tool === "external_directory")
+			return mode === "plan" ? "deny" : this.host.isSubYolo() ? "allow" : "ask";
 		const activeTools = parent.getActiveToolNames();
 		// A bridged MCP tool carries the parent authority of its `mcp` proxy tool, never more.
 		const bridgedMcp =
@@ -397,17 +400,19 @@ export class SubagentV2Runtime {
 			if (decision === "allow") return;
 			if (decision === "deny") throw new Error(`Permission denied: ${toolName} is not allowed for this subagent.`);
 			const firstBash = subjects.find((subject) => subject.tool === "bash")?.value;
-			const summary =
-				toolName === "bash"
-					? `bash: ${String(args.command ?? "").slice(0, 300)}`
-					: `${toolName}: ${subjects[0]?.value ?? ""}`;
+			const summary = approvalSummary(
+				toolName,
+				toolName === "bash" ? String(args.command ?? "") : (subjects[0]?.value ?? ""),
+			);
 			const sessionRule = toolName === "bash" && firstBash ? `bash(${bashGrantPrefix(firstBash)}*)` : toolName;
+			const name = this.childName(this.state(), contract.id);
 			const outcome = await this.state().broker.request(
 				{
 					id: `${contract.id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
 					ownerSessionId: contract.ownerSessionId,
 					childId: contract.id,
 					agent: contract.agent.name,
+					...(name ? { name } : {}),
 					tool: toolName,
 					summary,
 					sessionRule,
@@ -738,7 +743,7 @@ export class SubagentV2Runtime {
 		});
 		// Preflight every task before persisting any, so a bad batch launches nothing.
 		const prepared = named.map((task) => ({ task, ...this.preflight(task, settings) }));
-		for (const { input } of prepared) {
+		for (const { task, input } of prepared) {
 			const subject: PermissionSubject = {
 				tool: "agent",
 				value: input.agent.name,
@@ -755,6 +760,7 @@ export class SubagentV2Runtime {
 				ownerSessionId: state.sessionId,
 				childId: input.id,
 				agent: input.agent.name,
+				...(task.name ? { name: task.name } : {}),
 				tool: "agent",
 				summary: `delegate to ${input.agent.name}`,
 				foreground: true,
@@ -1385,10 +1391,10 @@ export class SubagentV2Runtime {
 		if (batch.length === 0) return;
 		const deliveryIds = batch.map((completion) => completion.deliveryId);
 		for (const id of deliveryIds) state.sending.add(id);
-		const sections = batch.map(
-			(completion) =>
-				`Subagent ${completion.agent}${this.childName(state, completion.childId)} (${completion.childId}) finished: ${completion.outcome}.${completion.validation ? `\nAssurance: ${completion.validation.assurance}; ${completion.validation.reason}` : ""}\n\nUntrusted child report:\n${completion.summary}\n\n${this.completionTrailer(state, completion.childId)}`,
-		);
+		const sections = batch.map((completion) => {
+			const name = this.childName(state, completion.childId);
+			return `Subagent ${completion.agent}${name ? ` "${name}"` : ""} (${completion.childId}) finished: ${completion.outcome}.${completion.validation ? `\nAssurance: ${completion.validation.assurance}; ${completion.validation.reason}` : ""}\n\nUntrusted child report:\n${completion.summary}\n\n${this.completionTrailer(state, completion.childId, completion.outcome)}`;
+		});
 		const [first] = batch;
 		void parent
 			.sendCustomMessage(
@@ -1433,6 +1439,14 @@ export class SubagentV2Runtime {
 		if (!triggerTurn) this.flushCompletions(options);
 	}
 
+	/** True when a child interrupted by a closed session still has an undelivered completion. */
+	hasPendingInterruption(): boolean {
+		const state = this.state();
+		return state.registry
+			.pendingCompletions(state.sessionId)
+			.some((completion) => completion.outcome === "interrupted");
+	}
+
 	/** Subagents of the session this one was forked from: named here so the parent knows they did not carry over. */
 	inheritedChildren(): Array<{ id: string; name?: string; agent: string }> {
 		const state = this.state();
@@ -1472,18 +1486,17 @@ export class SubagentV2Runtime {
 		for (const id of ids) if (typeof id === "string") state.registry.claimDelivery(state.sessionId, id);
 	}
 
-	/** ` "name"` for a named child, else empty. */
-	private childName(state: OwnerState, childId: string): string {
+	/** The child's name, if it has one and still exists. */
+	private childName(state: OwnerState, childId: string): string | undefined {
 		try {
-			const name = state.registry.get(state.sessionId, childId).name;
-			return name ? ` "${name}"` : "";
+			return state.registry.get(state.sessionId, childId).name;
 		} catch {
-			return ""; // Deleted meanwhile.
+			return undefined; // Deleted meanwhile.
 		}
 	}
 
 	/** Next actions for a finished child, and which of its siblings are still working. */
-	private completionTrailer(state: OwnerState, childId: string): string {
+	private completionTrailer(state: OwnerState, childId: string, outcome?: ChildTurnOutcome): string {
 		const working = state.registry
 			.list(state.sessionId)
 			.filter((record) => record.id !== childId && state.registry.resident(state.sessionId, record.id)?.running)
@@ -1493,6 +1506,13 @@ export class SubagentV2Runtime {
 				? `${working.length} other subagent${working.length === 1 ? " is" : "s are"} still running (${working.slice(0, 8).join(", ")}${working.length > 8 ? `, and ${working.length - 8} more; agent_control action=list shows all` : ""}); their results arrive as separate messages.`
 				: "No other subagents are running.";
 		const ref = state.registry.get(state.sessionId, childId).name ?? childId;
+		// An interrupted turn has no final answer to read; its progress lives in the child's own context.
+		if (outcome === "interrupted")
+			return [
+				"Its task is unfinished: it stopped mid-task when ice closed, and its partial work is kept in its own context.",
+				`Next: unless its result is no longer needed, resume it so it continues where it stopped: an agent task with resume="${ref}", a description, and a prompt such as "Continue where you stopped." (no agent field). Otherwise delete it with agent_control action=delete id=${ref}. Tell the user which you chose.`,
+				siblings,
+			].join("\n");
 		return [
 			`Full result: agent_control action=output id=${ref}.`,
 			`Next: continue it with resume=${ref} if its context helps, or delete it with agent_control action=delete id=${ref} when you no longer need it.`,
@@ -2020,6 +2040,7 @@ export class SubagentV2Runtime {
 				id: request.id,
 				childId: request.childId,
 				agent: request.agent,
+				...(request.name ? { name: request.name } : {}),
 				tool: request.tool,
 				summary: request.summary,
 				...(request.sessionRule ? { sessionRule: request.sessionRule } : {}),

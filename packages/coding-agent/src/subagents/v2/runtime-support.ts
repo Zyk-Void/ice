@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Api, AssistantMessage, Model } from "@zykairotis/ice-ai/compat";
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { IceVerifierState } from "../../ice-safe-verify.ts";
+import { redactCredentialText } from "../../utils/redact.ts";
 import type { AgentTaskInput } from "../api/agent.ts";
 import type { ChildRuntimeContract, NormalizedPermissionRule } from "../contract/child-runtime-contract.ts";
 import type { AgentDefinitionSource } from "../definitions/schema.ts";
@@ -273,6 +274,18 @@ export function freezeRules(sets: readonly PermissionRuleSet[]): NormalizedPermi
 		for (const decision of ["deny", "ask", "allow"] as const)
 			for (const rule of set.rules[decision] ?? []) out.push({ rule, decision, scope: set.origin.scope });
 	return out;
+}
+
+/**
+ * The approval request's `summary`: one redacted line of at most 300 characters. Approval UIs show it in a
+ * single row (line breaks become ` ↵ `), and commands may carry credentials.
+ */
+export function approvalSummary(toolName: string, subject: string): string {
+	const line = redactCredentialText(subject)
+		.replace(/\s*[\r\n]+\s*/g, " ↵ ")
+		.replace(/\s+/g, " ")
+		.trim();
+	return `${toolName}: ${line.slice(0, 300)}`;
 }
 
 export function boundedText(text: string, limit: number): { text: string; truncated: boolean } {

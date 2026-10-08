@@ -21,6 +21,8 @@ export interface ApprovalRequest {
 	ownerSessionId: string;
 	childId: string;
 	agent: string;
+	/** The child's name, shown in place of its ID. */
+	name?: string;
 	tool: string;
 	/** Redacted, bounded operation summary shown to the user. */
 	summary: string;

@@ -100,7 +100,7 @@ export const CHILD_MUTATION_CEILING: readonly ChildMutationCeilingEntry[] = Obje
 		subjectClass: "external-directory",
 		childDefault: "parent",
 		maxDecision: "ask",
-		raisableBy: Object.freeze(["managed-allow"] as const),
+		raisableBy: Object.freeze(["sub-yolo", "managed-allow"] as const),
 	}),
 ] satisfies ChildMutationCeilingEntry[]);
 

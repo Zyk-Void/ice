@@ -622,3 +622,45 @@ describe("subagent V2 settings", () => {
 		]);
 	});
 });
+
+describe("subagent V2 session reopen", () => {
+	function startHandler() {
+		const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<void>>();
+		const api = {
+			registerTool: () => {},
+			registerFlag: () => {},
+			on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<void>) => handlers.set(event, handler),
+			getFlag: () => undefined,
+			events: { emit: () => {} },
+		} as unknown as ExtensionAPI;
+		iceSubagentsV2(api);
+		return handlers.get("session_start")!;
+	}
+
+	async function reopen(reason: string, hasUI: boolean, interrupted: boolean) {
+		const flush = vi.spyOn(SubagentV2Runtime.prototype, "flushCompletions").mockImplementation(() => {});
+		const pending = vi.spyOn(SubagentV2Runtime.prototype, "hasPendingInterruption").mockReturnValue(interrupted);
+		try {
+			await startHandler()({ type: "session_start", reason }, { hasUI } as ExtensionContext);
+			return flush.mock.calls.map(([options]) => options);
+		} finally {
+			flush.mockRestore();
+			pending.mockRestore();
+		}
+	}
+
+	it("gives the main agent a turn when an interactive reopen finds children interrupted by closing ice", async () => {
+		expect(await reopen("startup", true, true)).toEqual([{ triggerTurn: true }]);
+		expect(await reopen("resume", true, true)).toEqual([{ triggerTurn: true }]);
+	});
+
+	it("only shows completions without a turn when nothing was interrupted or no UI can show the turn", async () => {
+		expect(await reopen("startup", true, false)).toEqual([{ triggerTurn: false }]);
+		expect(await reopen("resume", false, true)).toEqual([{ triggerTurn: false }]);
+	});
+
+	it("does not flush on a new or forked session", async () => {
+		expect(await reopen("new", true, true)).toEqual([]);
+		expect(await reopen("fork", true, true)).toEqual([]);
+	});
+});
