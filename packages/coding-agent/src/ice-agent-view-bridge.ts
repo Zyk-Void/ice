@@ -498,9 +498,70 @@ export interface IceBlockingWaitSource {
 	backgroundCount(): number;
 }
 
+/** One child in the subagent overview; the runtime registry stays the lifecycle owner. */
+export interface IceSubagentOverviewChild {
+	readonly id: string;
+	readonly agent: string;
+	readonly description: string;
+	/** Registry instance state: starting, running, idle, parked, blocked, stopped, deleted. */
+	readonly state: string;
+	readonly lastTurnOutcome?: string;
+	readonly depth: number;
+	/** True while a turn is executing. */
+	readonly running: boolean;
+	/** True when no parent tool call is waiting on the running turn. */
+	readonly background: boolean;
+	/** True while the child session is in memory and can be shown live. */
+	readonly resident: boolean;
+	readonly turns: number;
+	readonly tokens: number;
+	readonly cost: number;
+	readonly patchState?: string;
+	readonly blockedReasons?: readonly string[];
+}
+
+export type IceSubagentApprovalAnswer = "allow-once" | "allow-session" | "deny";
+
+export interface IceSubagentOverviewApproval {
+	readonly id: string;
+	readonly childId: string;
+	readonly agent: string;
+	readonly tool: string;
+	/** Redacted, bounded operation summary. */
+	readonly summary: string;
+	/** Rule an `allow-session` answer would grant; absent when only one-off approval is offered. */
+	readonly sessionRule?: string;
+	readonly foreground: boolean;
+	readonly queuedAt: number;
+	readonly deadline: number;
+}
+
+/** Bounded, owner-scoped subagent state shared by the footer, the Agent Hub, and RPC clients. */
+export interface IceSubagentOverview {
+	/** False when `ice.subagents.enabled` blocks new launches. */
+	readonly enabled: boolean;
+	/** Children the parent may run at once: running turns, turns queued for a slot, and the ceiling. */
+	readonly capacity: { readonly running: number; readonly queued: number; readonly max: number };
+	/** How many levels of children may delegate further. */
+	readonly maxDepth: number;
+	readonly children: readonly IceSubagentOverviewChild[];
+	readonly approvals: readonly IceSubagentOverviewApproval[];
+	/** Invalid settings that block new launches. */
+	readonly diagnostics: readonly string[];
+}
+
+/** Read and answer subagent state; implemented by the subagent runtime. */
+export interface IceSubagentControlSource {
+	/** Undefined until a parent session is available. */
+	overview(): IceSubagentOverview | undefined;
+	/** Answer a pending approval; false when it is no longer pending. */
+	respondToApproval(approvalId: string, answer: IceSubagentApprovalAnswer): boolean;
+}
+
 export class IceAgentViewBridge {
 	private parentSession: AgentSession | undefined;
 	private blockingWaits: IceBlockingWaitSource | undefined;
+	private controlSource: IceSubagentControlSource | undefined;
 	private liveSource: IceAgentViewLiveSessionSource | undefined;
 	private unsubscribeLiveSource: (() => void) | undefined;
 	private readonly historical = new Map<string, IceAgentViewDescriptor>();
@@ -540,6 +601,24 @@ export class IceAgentViewBridge {
 
 	backgroundSubagentCount(): number {
 		return this.blockingWaits?.backgroundCount() ?? 0;
+	}
+
+	/** Change notifications arrive through the live-session source subscription (`subscribe`). */
+	setSubagentControlSource(source: IceSubagentControlSource | undefined): void {
+		this.controlSource = source;
+		this.publish();
+	}
+
+	getSubagentOverview(): IceSubagentOverview | undefined {
+		try {
+			return this.controlSource?.overview();
+		} catch {
+			return undefined;
+		}
+	}
+
+	respondToSubagentApproval(approvalId: string, answer: IceSubagentApprovalAnswer): boolean {
+		return this.controlSource?.respondToApproval(approvalId, answer) ?? false;
 	}
 
 	connectLiveSessions(source: IceAgentViewLiveSessionSource): void {

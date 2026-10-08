@@ -16,6 +16,7 @@ import { resolveAppearanceColorFn } from "../appearance/appearance-resolve.ts";
 import type { SubagentChromeAppearance } from "../appearance/appearance-types.ts";
 import { applyTextPresentation } from "../appearance/text-presentation.ts";
 import type { Theme } from "../theme/theme.ts";
+import { keyText } from "./keybinding-hints.ts";
 
 const DEFAULT_AGENT_CHROME = createDefaultAppearance().subagentChrome;
 const MAX_VISIBLE_ROWS = 4;
@@ -51,6 +52,8 @@ export interface SubagentFooterEntry {
 export interface SubagentFooterSnapshot {
 	readonly children: readonly SubagentFooterEntry[];
 	readonly liveCount: number;
+	/** Live children whose session is currently streaming; the rest of liveCount is idle. */
+	readonly workingCount: number;
 	readonly retainedCount: number;
 	readonly attentionCount: number;
 	readonly mainAgentDisplayed: boolean;
@@ -84,7 +87,7 @@ function formatFooterActivity(activity: SubagentFooterActivity): string {
 
 function formatFooterTiming(attention: SubagentFooterAttention): string | undefined {
 	const elapsedSeconds = Math.floor(attention.activeElapsedMs / 1000);
-	return `${elapsedSeconds}s elapsed · check-ins active`;
+	return `${elapsedSeconds}s elapsed`;
 }
 
 function footerAttention(view: IceAgentViewDescriptor): SubagentFooterAttention | undefined {
@@ -173,6 +176,9 @@ export function createSubagentFooterSnapshot(
 			}),
 	);
 	const liveCount = children.filter((view) => view.live).length;
+	const workingCount = views.filter(
+		(view) => view.kind === "subagent" && view.live && view.status === "working",
+	).length;
 	const mainAgentDisplayed = views.some((view) => view.id === displayedId && view.kind === "parent");
 	const selectedChild =
 		children.find((view) => view.id === displayedId) ??
@@ -180,6 +186,7 @@ export function createSubagentFooterSnapshot(
 	return Object.freeze({
 		children,
 		liveCount,
+		workingCount,
 		retainedCount: children.filter((view) => view.retentionState === "reusable").length,
 		attentionCount: children.filter((view) => view.needsAttention).length,
 		mainAgentDisplayed,
@@ -207,6 +214,16 @@ export function formatAgentSwitcherLabel(view: IceAgentViewDescriptor): string {
 	return [view.role ?? view.label, identity ? `· ${identity}` : undefined].filter(Boolean).join(" ");
 }
 
+/** "1 working · 2 idle"; "none live" when no child session is resident. */
+function liveCounts(snapshot: SubagentFooterSnapshot): string[] {
+	const idle = snapshot.liveCount - snapshot.workingCount;
+	const parts = [
+		...(snapshot.workingCount > 0 ? [`${snapshot.workingCount} working`] : []),
+		...(idle > 0 ? [`${idle} idle`] : []),
+	];
+	return parts.length > 0 ? parts : ["none live"];
+}
+
 function padVisible(text: string, width: number): string {
 	const truncated = truncateToWidth(text, Math.max(0, width), "…");
 	return truncated + " ".repeat(Math.max(0, width - visibleWidth(truncated)));
@@ -229,6 +246,7 @@ export class SubagentFooterSwitcher implements Component {
 	private footerSnapshot: SubagentFooterSnapshot = Object.freeze({
 		children: Object.freeze([]),
 		liveCount: 0,
+		workingCount: 0,
 		retainedCount: 0,
 		attentionCount: 0,
 		mainAgentDisplayed: false,
@@ -390,7 +408,7 @@ export class SubagentFooterSwitcher implements Component {
 		const selected = snapshot.selectedChild;
 		const selectedPosition = selected ? `${snapshot.selectedChildIndex}/${snapshot.children.length}` : undefined;
 		const counts = [
-			`${snapshot.liveCount} active`,
+			...liveCounts(snapshot),
 			snapshot.retainedCount > 0 ? `${snapshot.retainedCount} retained` : undefined,
 			snapshot.attentionCount > 0 ? `${snapshot.attentionCount} needs attention` : undefined,
 		]
@@ -401,11 +419,11 @@ export class SubagentFooterSwitcher implements Component {
 			: selected
 				? ` · [${selectedPosition} ${selected.label}] ${selected.status}`
 				: "";
-		const summary = `Agents ${counts}${selectedSummary} · /agents`;
+		const summary = `Agents ${counts}${selectedSummary} · ${keyText("app.subagents.previous")}/${keyText("app.subagents.next")} switch · ${keyText("app.agents.hub")} manage`;
 		const countOnly = [
 			`Agents ${snapshot.children.length}`,
 			snapshot.attentionCount > 0 ? `!${snapshot.attentionCount} attention` : undefined,
-			`${snapshot.liveCount} active`,
+			...liveCounts(snapshot),
 			snapshot.retainedCount > 0 ? `${snapshot.retainedCount} retained` : undefined,
 		]
 			.filter((part): part is string => part !== undefined)
@@ -486,7 +504,7 @@ export class SubagentFooterSwitcher implements Component {
 			(this.isCustomized() && this.appearance
 				? (text: string) => applyTextPresentation(this.appearance!.muted, text)
 				: (text: string) => this.theme.fg("dim", text))(
-				padVisible(`  ↑↓/←→ browse · Enter open · Esc close · /agents split details${hidden}${actionHint}`, width),
+				padVisible(`  ↑↓ browse · Enter open · Esc close · /agents manage${hidden}${actionHint}`, width),
 			),
 		);
 		return lines;
@@ -508,9 +526,9 @@ export class SubagentFooterSwitcher implements Component {
 			this.isCustomized() && this.appearance
 				? applyTextPresentation(
 						this.appearance.muted,
-						padVisible(`        ↑↓/←→ browse · Enter open · Esc close`, width),
+						padVisible(`        ↑↓ browse · Enter open · Esc close`, width),
 					)
-				: this.theme.fg("dim", padVisible(`        ↑↓/←→ browse · Enter open · Esc close`, width)),
+				: this.theme.fg("dim", padVisible(`        ↑↓ browse · Enter open · Esc close`, width)),
 		];
 	}
 }

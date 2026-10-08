@@ -32,6 +32,7 @@ export interface AppKeybindings {
 	"app.subagents.next": true;
 	"app.subagents.previous": true;
 	"app.subagents.takeControl": true;
+	"app.agents.hub": true;
 	"app.agents.stop": true;
 	"app.agents.delete": true;
 	"app.agents.approve": true;
@@ -113,11 +114,21 @@ export const KEYBINDINGS = {
 	"app.subagents.attach": { defaultKeys: "right", description: "Attach to live subagent" },
 	"app.subagents.expand": { defaultKeys: "space", description: "Expand subagent details" },
 	"app.subagents.inspect": { defaultKeys: "ctrl+enter", description: "Inspect durable subagent job" },
-	"app.subagents.open": { defaultKeys: "ctrl+shift+a", description: "Open subagent chooser" },
-	"app.subagents.parent": { defaultKeys: "alt+left", description: "Return to parent session" },
-	"app.subagents.next": { defaultKeys: "alt+right", description: "Show next subagent view" },
-	"app.subagents.previous": { defaultKeys: "shift+alt+left", description: "Show previous subagent view" },
+	"app.subagents.open": { defaultKeys: "ctrl+shift+a", description: "Open the Agent Hub" },
+	"app.subagents.parent": { defaultKeys: "shift+alt+left", description: "Return to the main agent view" },
+	"app.subagents.next": {
+		defaultKeys: "alt+right",
+		description: "Show the next agent view (only while subagents exist and the editor is empty)",
+	},
+	"app.subagents.previous": {
+		defaultKeys: "alt+left",
+		description: "Show the previous agent view (only while subagents exist and the editor is empty)",
+	},
 	"app.subagents.takeControl": { defaultKeys: "ctrl+shift+enter", description: "Take control of live subagent" },
+	"app.agents.hub": {
+		defaultKeys: "left",
+		description: "Open the Agent Hub from an empty editor while subagents exist; closes it inside the Hub",
+	},
 	"app.agents.stop": { defaultKeys: "s", description: "Agent Hub: stop the selected subagent's current turn" },
 	"app.agents.delete": { defaultKeys: "shift+d", description: "Agent Hub: delete the selected stopped subagent" },
 	"app.agents.approve": { defaultKeys: "y", description: "Agent Hub: approve the pending subagent request" },

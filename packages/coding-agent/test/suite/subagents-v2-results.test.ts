@@ -521,8 +521,9 @@ describe("V2 task-local typed results", () => {
 		const { harness, runtime } = await setup();
 		harness.setResponses([read(), fauxAssistantMessage(report(), { stopReason: "length" })]);
 		expect(await run(runtime)).toMatchObject({ outcome: "failed", validation: { verified: false } });
-		harness.setResponses([read(), fauxAssistantMessage(report()), fauxAssistantMessage(report())]);
-		expect(await run(runtime, { ...task, maxTurns: 2 })).toMatchObject({
+		// The budget refuses the read, so the valid-looking report comes from the tool-free wrap-up.
+		harness.setResponses([read(), fauxAssistantMessage(report())]);
+		expect(await run(runtime, { ...task, maxTurns: 1 })).toMatchObject({
 			outcome: "budget_exhausted",
 			validation: { verified: false, assurance: "unverified_plain" },
 		});

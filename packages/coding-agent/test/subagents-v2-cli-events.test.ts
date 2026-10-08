@@ -8,6 +8,7 @@ import type { ChildRecord } from "../src/subagents/registry/registry.ts";
 import { runAgentsCli } from "../src/subagents/v2/cli.ts";
 import { lifecycleEvents } from "../src/subagents/v2/events.ts";
 import { withContextPacket } from "../src/subagents/v2/runtime-support.ts";
+import { resolveSubagentsV2Settings } from "../src/subagents/v2/settings.ts";
 
 const temps: string[] = [];
 afterEach(() => {
@@ -49,9 +50,30 @@ describe("ice agents CLI", () => {
 	});
 
 	it("validates every discovered definition and fails on invalid ones", () => {
-		const result = runAgentsCli(["validate"], { cwd: "/", agentDir: "/", load: loaded });
+		const settings = () => resolveSubagentsV2Settings({ projectTrusted: false });
+		const result = runAgentsCli(["validate"], { cwd: "/", agentDir: "/", load: loaded, settings });
 		expect(result).toMatchObject({ exitCode: 1 });
 		expect(result.stdout).toContain('/u/bad.md: unknown key "x"');
+	});
+
+	it("validates subagent settings: invalid keys fail, legacy keys only warn", () => {
+		const valid = () => ({ ...loaded(), issues: [] });
+		const legacy = runAgentsCli(["validate"], {
+			cwd: "/",
+			agentDir: "/",
+			load: valid,
+			settings: () => resolveSubagentsV2Settings({ global: { concurrency: { max: 2 } }, projectTrusted: false }),
+		});
+		expect(legacy.exitCode).toBe(0);
+		expect(legacy.stdout).toContain("settings: warning: ice.subagents.concurrency (global)");
+		const invalid = runAgentsCli(["validate"], {
+			cwd: "/",
+			agentDir: "/",
+			load: valid,
+			settings: () => resolveSubagentsV2Settings({ global: { maxDepth: 9 }, projectTrusted: false }),
+		});
+		expect(invalid.exitCode).toBe(1);
+		expect(invalid.stdout).toContain("settings: invalid: ice.subagents (global) /maxDepth");
 	});
 
 	it("validates explicit files with precise migration diagnostics", () => {

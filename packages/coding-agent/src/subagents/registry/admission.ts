@@ -1,17 +1,10 @@
 /**
- * ICE subagent concurrency policy: one canonical resolver for active child
- * concurrency across synchronous batches and asynchronous jobs, plus a shared
- * admission coordinator used by both execution paths.
+ * ICE subagent concurrency admission: the hard ceiling and the FIFO permit
+ * coordinator behind `ice.subagents.maxConcurrent`.
  *
- * Design authority: agent_docs/implementation/subagent-concurrency-headroom-plan.md.
  * Ice remains the sole authoritative reasoning/tool loop; this module owns only
- * bounded resource admission. Defaults and the hard ceiling are conservative and
- * must be justified by local benchmarks (see
- * packages/coding-agent/test/ice-subagent-concurrency.bench.test.ts).
+ * bounded resource admission.
  */
-
-import { redactCredentialText } from "../../utils/redact.ts";
-import type { IceSettingSource, ParsedIceSubagentSettings } from "../settings.ts";
 
 export const SUBAGENT_CONCURRENCY_LIMITS = {
 	min: 1,
@@ -20,91 +13,6 @@ export const SUBAGENT_CONCURRENCY_LIMITS = {
 	/** Absolute hard ceiling; neither settings nor calls can exceed it. */
 	hardCap: 24,
 } as const;
-
-export interface SubagentConcurrencySettings {
-	default?: number;
-	max?: number;
-}
-
-export interface ResolvedSubagentConcurrencyPolicy {
-	/** Default active children for batch/job execution. */
-	defaultConcurrency: number;
-	/** Effective hard ceiling shared by batch and background-job admission. */
-	maxConcurrency: number;
-	sources: { default: IceSettingSource; max: IceSettingSource };
-	diagnostics: readonly string[];
-}
-
-function frozenDiagnostics(values: string[]): readonly string[] {
-	return Object.freeze(values.map((value) => redactCredentialText(value).slice(0, 512)));
-}
-
-/**
- * Resolve the canonical concurrency policy. Global settings may raise the
- * default/ceiling up to the bundled hard cap; trusted project settings may only
- * narrow (lower) values, never raise them; untrusted project settings are
- * ignored with a diagnostic.
- */
-export function resolveSubagentConcurrencyPolicy(input: {
-	global?: ParsedIceSubagentSettings;
-	project?: ParsedIceSubagentSettings;
-	projectTrusted?: boolean;
-}): ResolvedSubagentConcurrencyPolicy {
-	const diagnostics: string[] = [];
-	const global = input.global;
-	const projectTrusted = input.projectTrusted ?? true;
-	const project = projectTrusted ? input.project : undefined;
-	if (input.project && !projectTrusted && input.project.concurrency !== undefined) {
-		diagnostics.push("project ice.subagents.concurrency ignored without project trust");
-	}
-
-	let max: number = SUBAGENT_CONCURRENCY_LIMITS.hardCap;
-	let maxSource: IceSettingSource = "bundled";
-	if (global?.concurrency?.max !== undefined) {
-		max = global.concurrency.max;
-		maxSource = "global";
-	}
-	if (project?.concurrency?.max !== undefined) {
-		if (project.concurrency.max < max) {
-			max = project.concurrency.max;
-			maxSource = "project";
-		} else if (project.concurrency.max > max) {
-			diagnostics.push(
-				`project concurrency max cannot raise the global cap; clamped to ${max} (requested ${project.concurrency.max})`,
-			);
-		}
-	}
-
-	let defaultConcurrency: number = SUBAGENT_CONCURRENCY_LIMITS.bundledDefault;
-	let defaultSource: IceSettingSource = "bundled";
-	if (global?.concurrency?.default !== undefined) {
-		defaultConcurrency = global.concurrency.default;
-		defaultSource = "global";
-	}
-	if (project?.concurrency?.default !== undefined) {
-		if (project.concurrency.default < defaultConcurrency) {
-			defaultConcurrency = project.concurrency.default;
-			defaultSource = "project";
-		} else if (project.concurrency.default > defaultConcurrency) {
-			diagnostics.push(
-				`project concurrency default cannot raise the global default; clamped to ${defaultConcurrency} (requested ${project.concurrency.default})`,
-			);
-		}
-	}
-
-	if (defaultConcurrency > max) {
-		diagnostics.push(`concurrency default clamped to enforced cap ${max} (requested ${defaultConcurrency})`);
-		defaultConcurrency = max;
-		defaultSource = "enforced";
-	}
-
-	return {
-		defaultConcurrency,
-		maxConcurrency: max,
-		sources: { default: defaultSource, max: maxSource },
-		diagnostics: frozenDiagnostics(diagnostics),
-	};
-}
 
 /**
  * Shared permit accounting across synchronous batches and asynchronous jobs.

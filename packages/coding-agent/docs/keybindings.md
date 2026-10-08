@@ -147,6 +147,11 @@ This routing remains configurable through the ordinary action bindings. For exam
 | `app.notices.show` | `f2` | Show warnings, update notices, and captured extension output |
 | `app.shortcuts.show` | `?` | Show the keyboard shortcut overview; only when the editor is empty, otherwise `?` is typed |
 | `app.tasks.background` | `ctrl+b` | Move a running bash command or subagent wait to the background; falls through to the editor (cursor left) when nothing can be backgrounded |
+| `app.subagents.open` | `ctrl+shift+a` | Open the Agent Hub (same as `/agents`) |
+| `app.agents.hub` | `left` | Open the Agent Hub when the editor is empty and subagents exist; closes the Hub from inside it. Otherwise moves the cursor |
+| `app.subagents.previous` | `alt+left` | Show the previous agent view (main agent and live subagents) when the editor is empty and subagents are live; otherwise moves the cursor a word left |
+| `app.subagents.next` | `alt+right` | Show the next agent view under the same conditions; otherwise moves the cursor a word right |
+| `app.subagents.parent` | `shift+alt+left` | Return to the main agent view while subagents are live |
 | `app.agents.stop` | `s` | Agent Hub (`/agents`, subagents V2): stop the selected subagent's current turn |
 | `app.agents.delete` | `shift+d` | Agent Hub: delete the selected stopped subagent |
 | `app.agents.approve` | `y` | Agent Hub: approve the selected pending subagent request |

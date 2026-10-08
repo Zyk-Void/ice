@@ -1,9 +1,11 @@
 /**
  * Subagent V2 settings (Plan/subagent-rewrite.md section 8).
  *
- * Reads the V2 keys of `ice.subagents` from the global and trusted-project
+ * The single schema for `ice.subagents`, read from the global and trusted-project
  * scopes. Permission rules keep their scope so project rules can only narrow
- * child mutation authority. Invalid values fail closed with a diagnostic.
+ * child mutation authority. Invalid values and unknown keys fail closed with a
+ * diagnostic; keys of the removed legacy subagent system are accepted, ignored,
+ * and reported as non-blocking deprecations.
  */
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
@@ -16,7 +18,20 @@ const ruleList = Type.Array(
 	{ maxItems: PERMISSION_RULE_LIMITS.maxRulesPerList },
 );
 
+/** Keys of the removed legacy subagent system: accepted and ignored so existing settings stay valid. */
+const DEPRECATED_KEYS = new Set([
+	"defaults",
+	"allowedRoles",
+	"roleDefaults",
+	"restrictions",
+	"modelSelection",
+	"concurrency",
+	"routeTiers",
+]);
+
 const V2KeysSchema = Type.Object({
+	/** `false` blocks new child launches; existing children stay manageable. */
+	enabled: Type.Optional(Type.Boolean()),
 	/** Former rollout switch; accepted and ignored so existing settings stay valid. */
 	v2: Type.Optional(Type.Boolean()),
 	defaultAgent: Type.Optional(Type.String({ pattern: "^[a-z0-9][a-z0-9-]{0,63}$" })),
@@ -44,6 +59,8 @@ const V2KeysSchema = Type.Object({
 type V2Keys = Static<typeof V2KeysSchema>;
 
 export interface SubagentsV2Settings {
+	/** False when either scope disables delegation; a project cannot re-enable it. */
+	enabled: boolean;
 	defaultAgent: string;
 	maxDepth: number;
 	maxConcurrent: number;
@@ -53,16 +70,30 @@ export interface SubagentsV2Settings {
 	agents: { user?: unknown; project?: unknown };
 	disabledAgents: string[];
 	compat: { claudeAgents: boolean; modelAliases: Record<string, string> };
+	/** Invalid settings; any entry blocks new launches. */
 	diagnostics: string[];
+	/** Ignored legacy keys; informational only. */
+	deprecations: Array<{ scope: "global" | "project"; key: string; message: string }>;
 }
 
-function pick(raw: unknown): { keys: V2Keys; diagnostics: string[] } {
-	if (!raw || typeof raw !== "object") return { keys: {}, diagnostics: [] };
+function pick(raw: unknown): { keys: V2Keys; diagnostics: string[]; deprecated: string[] } {
+	if (raw === undefined || raw === null) return { keys: {}, diagnostics: [], deprecated: [] };
+	if (typeof raw !== "object" || Array.isArray(raw))
+		return { keys: {}, diagnostics: ["expected an object"], deprecated: [] };
 	const source = raw as Record<string, unknown>;
 	const keys: Record<string, unknown> = {};
-	for (const key of Object.keys(V2KeysSchema.properties)) if (source[key] !== undefined) keys[key] = source[key];
-	const errors = [...Value.Errors(V2KeysSchema, keys)].map((error) => `${error.instancePath}: ${error.message}`);
-	return errors.length > 0 ? { keys: {}, diagnostics: errors } : { keys: keys as V2Keys, diagnostics: [] };
+	const errors: string[] = [];
+	const deprecated: string[] = [];
+	for (const [key, value] of Object.entries(source)) {
+		if (value === undefined) continue;
+		if (Object.hasOwn(V2KeysSchema.properties, key)) keys[key] = value;
+		else if (DEPRECATED_KEYS.has(key)) deprecated.push(key);
+		else errors.push(`/${key}: unknown key`);
+	}
+	errors.push(...[...Value.Errors(V2KeysSchema, keys)].map((error) => `${error.instancePath}: ${error.message}`));
+	return errors.length > 0
+		? { keys: {}, diagnostics: errors, deprecated }
+		: { keys: keys as V2Keys, diagnostics: [], deprecated };
 }
 
 export function resolveSubagentsV2Settings(input: {
@@ -71,7 +102,7 @@ export function resolveSubagentsV2Settings(input: {
 	projectTrusted: boolean;
 }): SubagentsV2Settings {
 	const global = pick(input.global);
-	const project = input.projectTrusted ? pick(input.project) : { keys: {} as V2Keys, diagnostics: [] };
+	const project = input.projectTrusted ? pick(input.project) : { keys: {} as V2Keys, diagnostics: [], deprecated: [] };
 	const g = global.keys;
 	const p = project.keys;
 	const ruleSets: PermissionRuleSet[] = [];
@@ -81,6 +112,7 @@ export function resolveSubagentsV2Settings(input: {
 	const narrowest = (key: "maxDepth" | "maxConcurrent", fallback: number) =>
 		Math.min(g[key] ?? fallback, p[key] ?? Number.POSITIVE_INFINITY);
 	return {
+		enabled: g.enabled !== false && p.enabled !== false,
 		defaultAgent: p.defaultAgent ?? g.defaultAgent ?? "general",
 		maxDepth: narrowest("maxDepth", 0),
 		maxConcurrent: narrowest("maxConcurrent", 4),
@@ -96,5 +128,12 @@ export function resolveSubagentsV2Settings(input: {
 			...global.diagnostics.map((message) => `ice.subagents (global) ${message}`),
 			...project.diagnostics.map((message) => `ice.subagents (project) ${message}`),
 		],
+		deprecations: (["global", "project"] as const).flatMap((scope) =>
+			(scope === "global" ? global : project).deprecated.map((key) => ({
+				scope,
+				key: `ice.subagents.${key}`,
+				message: `ice.subagents.${key} (${scope}) belongs to the removed legacy subagent system and is ignored`,
+			})),
+		),
 	};
 }

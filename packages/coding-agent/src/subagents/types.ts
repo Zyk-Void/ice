@@ -6,11 +6,7 @@ import type { TSchema } from "typebox";
 import type { ModelRuntime } from "../core/model-runtime.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import type { SubagentProfileColor } from "../ice-agent-view-bridge.ts";
-import {
-	type ResolvedSubagentConcurrencyPolicy,
-	SUBAGENT_CONCURRENCY_LIMITS,
-	type SubagentConcurrencyAdmission,
-} from "./registry/admission.ts";
+import { SUBAGENT_CONCURRENCY_LIMITS, type SubagentConcurrencyAdmission } from "./registry/admission.ts";
 import type { SubagentAssuranceLevel } from "./results/assurance.ts";
 import type { SubagentOutput } from "./results/output-artifacts.ts";
 import type {
@@ -30,7 +26,7 @@ import type {
 	SubagentRuntimeAttention,
 	SubagentToolActivityDigest,
 } from "./runtime/supervisor.ts";
-import type { IceHookDispatchRecord, IceResolvedSubagentContract } from "./settings.ts";
+import type { IceHookDispatchRecord } from "./settings.ts";
 import type { IceResolvedDelegableTool } from "./tools/adapters.ts";
 import type { ObservatoryPhase } from "./ui/observatory.ts";
 
@@ -885,8 +881,6 @@ export interface NormalizedSubagentRequest
 	requestedTools: readonly string[] | undefined;
 	/** W06: deny-first tool restrictions from trusted settings layers. */
 	deniedTools: readonly string[];
-	/** Resolved settings and provenance frozen before launch admission. */
-	iceContract: IceResolvedSubagentContract;
 	contextPacket: SubagentContextPacket;
 	forkContext: SubagentForkContext;
 	resources: ResolvedSubagentResources;
@@ -1330,8 +1324,6 @@ export interface SubagentBatchRunOptions {
 	/** Called exactly once after each child's terminal result or launch failure. */
 	onChildTerminal?: (task: ResolvedSubagentBatchTask, result?: SubagentResult) => void;
 	concurrency?: number;
-	/** Canonical resolved concurrency policy; defaults to bundled batch limits. */
-	concurrencyPolicy?: ResolvedSubagentConcurrencyPolicy;
 	/** Shared admission coordinator across batch and background-job execution. */
 	admission?: SubagentConcurrencyAdmission;
 	modelRuntime?: ModelRuntime;

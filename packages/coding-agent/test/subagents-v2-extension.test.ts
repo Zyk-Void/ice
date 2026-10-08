@@ -592,4 +592,31 @@ describe("subagent V2 settings", () => {
 		expect(invalid.ruleSets).toEqual([]);
 		expect(invalid.diagnostics.length).toBeGreaterThan(0);
 	});
+
+	it("disables delegation when either trusted scope turns it off", () => {
+		expect(resolveSubagentsV2Settings({ projectTrusted: false }).enabled).toBe(true);
+		expect(
+			resolveSubagentsV2Settings({ global: { enabled: false }, project: { enabled: true }, projectTrusted: true })
+				.enabled,
+		).toBe(false);
+		expect(resolveSubagentsV2Settings({ project: { enabled: false }, projectTrusted: true }).enabled).toBe(false);
+		expect(resolveSubagentsV2Settings({ project: { enabled: false }, projectTrusted: false }).enabled).toBe(true);
+	});
+
+	it("rejects unknown keys but only reports legacy keys as deprecated", () => {
+		const unknown = resolveSubagentsV2Settings({ global: { maxConcurent: 2 }, projectTrusted: false });
+		expect(unknown.diagnostics).toEqual(["ice.subagents (global) /maxConcurent: unknown key"]);
+		const legacy = resolveSubagentsV2Settings({
+			global: { maxConcurrent: 2, concurrency: { max: 8 }, routeTiers: {} },
+			project: { allowedRoles: ["explore"] },
+			projectTrusted: true,
+		});
+		expect(legacy.diagnostics).toEqual([]);
+		expect(legacy.maxConcurrent).toBe(2);
+		expect(legacy.deprecations.map(({ scope, key }) => `${scope}:${key}`)).toEqual([
+			"global:ice.subagents.concurrency",
+			"global:ice.subagents.routeTiers",
+			"project:ice.subagents.allowedRoles",
+		]);
+	});
 });

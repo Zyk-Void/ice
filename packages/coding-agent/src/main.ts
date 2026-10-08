@@ -922,7 +922,7 @@ export async function main(args: string[], options?: MainOptions) {
 	try {
 		if (appMode === "rpc") {
 			printTimings();
-			await runRpcMode(runtime);
+			await runRpcMode(runtime, { agentViewBridge: options?.agentViewBridge });
 		} else if (appMode === "interactive") {
 			const interactiveMode = new InteractiveMode(runtime, {
 				agentViewBridge: options?.agentViewBridge,

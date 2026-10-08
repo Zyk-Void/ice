@@ -11,6 +11,7 @@ import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { IceSubagentApprovalAnswer, IceSubagentOverview } from "../../ice-agent-view-bridge.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type { RpcCommandInvocationResult, RpcCommandSchemaResult, RpcCommandSource } from "./rpc-command-schema.ts";
@@ -284,6 +285,18 @@ export class RpcClient {
 		}
 		const response = await this.send({ type: "set_setting", ...update });
 		return this.getData(response);
+	}
+
+	/** Subagent overview; null when the host has no subagent runtime or no parent session yet. */
+	async getSubagents(): Promise<IceSubagentOverview | null> {
+		const response = await this.send({ type: "get_subagents" });
+		return this.getData(response);
+	}
+
+	/** Answer a pending subagent approval; false when it is no longer pending. */
+	async respondToSubagentApproval(approvalId: string, answer: IceSubagentApprovalAnswer): Promise<boolean> {
+		const response = await this.send({ type: "respond_subagent_approval", approvalId, answer });
+		return this.getData<{ accepted: boolean }>(response).accepted;
 	}
 
 	/**

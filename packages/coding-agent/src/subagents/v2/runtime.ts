@@ -14,6 +14,7 @@ import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, statSync } from
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { Api, AssistantMessage, Model } from "@zykairotis/ice-ai/compat";
 import type { AgentSession } from "../../core/agent-session.ts";
+import type { IceSubagentOverview, IceSubagentOverviewChild } from "../../ice-agent-view-bridge.ts";
 import { pathIsWithin, resolveProspectivePath, validateMutationPath } from "../../ice-safe-verify.ts";
 import { redactCredentialText } from "../../utils/redact.ts";
 import type { AgentTaskInput } from "../api/agent.ts";
@@ -77,7 +78,6 @@ import {
 import { resolveSubagentResources, revalidateSubagentResources } from "../runtime/resources.ts";
 import { ICE_BUILTIN_CHILD_TOOLS } from "../tools/adapters.ts";
 import { resolveChildTools } from "../tools/resolve.ts";
-import type { HubRow } from "../ui/hub.ts";
 import {
 	boundedText,
 	CHILD_PROMPT_SUFFIX,
@@ -645,6 +645,8 @@ export class SubagentV2Runtime {
 		const settings = this.host.getSettings();
 		if (settings.diagnostics.length)
 			throw new SubagentV2Error("preflight", `Invalid parent settings: ${settings.diagnostics.join("; ")}`);
+		if (!settings.enabled && tasks.length > 0)
+			throw new SubagentV2Error("preflight", "Subagents are disabled by ice.subagents.enabled.");
 		const parent = this.parent();
 		const state = this.state();
 		// Preflight every task before persisting any, so a bad batch launches nothing.
@@ -942,7 +944,7 @@ export class SubagentV2Runtime {
 				error = caught instanceof Error ? caught.message : String(caught);
 			} finally {
 				try {
-					if (resident.budget?.exhausted() && !controller.signal.aborted && !state.closed) {
+					if (resident.budget?.interrupted() && !controller.signal.aborted && !state.closed) {
 						outcome = "budget_exhausted";
 						error = await resident.budget.wrapUp(controller.signal);
 					}
@@ -1661,21 +1663,47 @@ export class SubagentV2Runtime {
 		return this.state().broker.respond(id, answer);
 	}
 
-	/** Agent Hub roster projection; the registry stays the only lifecycle owner. */
-	hubRows(): HubRow[] {
+	/** Footer, Agent Hub, and RPC projection; the registry stays the only lifecycle owner. */
+	overview(): IceSubagentOverview {
 		const state = this.state();
-		return state.registry.list(state.sessionId).map((record) => ({
-			id: record.id,
-			agent: record.agent,
-			description: record.description,
-			state: record.state,
-			...(record.lastTurnOutcome ? { lastTurnOutcome: record.lastTurnOutcome } : {}),
-			turns: record.usage.turns,
-			tokens: record.usage.inputTokens + record.usage.outputTokens,
-			cost: record.usage.cost,
-			...(record.patchState ? { patchState: record.patchState } : {}),
-			...(record.blockedReasons?.length ? { blockedReasons: record.blockedReasons } : {}),
-		}));
+		const settings = this.host.getSettings();
+		const children = state.registry.list(state.sessionId).map((record): IceSubagentOverviewChild => {
+			const resident = state.registry.resident(state.sessionId, record.id);
+			return {
+				id: record.id,
+				agent: record.agent,
+				description: record.description,
+				state: record.state,
+				...(record.lastTurnOutcome ? { lastTurnOutcome: record.lastTurnOutcome } : {}),
+				depth: record.depth,
+				running: resident?.running !== undefined,
+				background: resident?.running !== undefined && !resident.foreground,
+				resident: resident !== undefined,
+				turns: record.usage.turns,
+				tokens: record.usage.inputTokens + record.usage.outputTokens,
+				cost: record.usage.cost,
+				...(record.patchState ? { patchState: record.patchState } : {}),
+				...(record.blockedReasons?.length ? { blockedReasons: record.blockedReasons } : {}),
+			};
+		});
+		return {
+			enabled: settings.enabled && settings.diagnostics.length === 0,
+			capacity: { running: state.admission.active, queued: state.waiters.length, max: state.admission.capacity },
+			maxDepth: settings.maxDepth,
+			children,
+			approvals: state.broker.pending.map(({ request, queuedAt, deadline }) => ({
+				id: request.id,
+				childId: request.childId,
+				agent: request.agent,
+				tool: request.tool,
+				summary: request.summary,
+				...(request.sessionRule ? { sessionRule: request.sessionRule } : {}),
+				foreground: request.foreground,
+				queuedAt,
+				deadline,
+			})),
+			diagnostics: settings.diagnostics,
+		};
 	}
 
 	/** Agent Hub inspector lines for one child, from its frozen contract and latest result. */

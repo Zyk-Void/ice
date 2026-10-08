@@ -7,6 +7,8 @@
 ### Added
 
 - Added subagents V2, which replaces the legacy delegation tools with `agent`, `agent_control`, and `agent_patch`: Claude Code-style agent files discovered from `.ice/agents` up to the git root plus `~/.ice/agents` and settings, built-in `general`/`explore`/`plan`/`review`/`worker` agents, an allow/ask/deny permission model in which a child never exceeds its parent and repository rules can only narrow, durable child sessions that survive restarts, worktree isolation that starts from uncommitted work with conflict-safe patch apply, an Agent Hub (`/agents`) with an approval inbox, `ice agents list|validate`, the `--agents` JSON flag, lifecycle events on `ice:subagent`, and the existing `ice.hooks` subagent hooks (launch, tool, and accept decisions plus lifecycle observations). See `docs/subagents-v2.md`.
+- Added RPC subagent support: `get_subagents` returns the subagent overview (capacity, queue, children, pending approvals), `subagents_update` events push changes, and `respond_subagent_approval` answers background approvals, which now wait for an RPC answer instead of being denied at once. `RpcClient` exposes `getSubagents()` and `respondToSubagentApproval()`.
+- Added a subagent footer segment showing running/maximum subagents (`agents 1/4`), queued turns, pending approvals, and `agents off` when delegation is disabled.
 - Added distinct compact tool markers: a pending arrow, a completion checkmark, and a failure cross, with ASCII equivalents for compatible terminals.
 - Added persistent model favorites: Shift+F in `/model` toggles the highlighted model, shows a `[fav]` marker, and pins favorites first in all/scoped and searched lists without changing Ctrl+P cycling. The shortcut is configurable through `app.model.toggleFavorite`.
 - Added a built-in subagent MCP bridge: `ice` registers the parent's pi-mcp-adapter servers through `registerIceSubagentMcpAdapter`, classifying tools from the user's `approveTools` lists (gated tools are mutations, the rest read-only) and dispatching through the parent's `mcp` proxy tool, so children reuse its connections and approval gate.
@@ -44,6 +46,7 @@
 
 - Replaced the legacy subagent tools (`delegate`, `delegate_async`, `delegate_batch`, `review_batch`, `delegate_write`, `manage_subagent`, and the job, batch, output, and writer-patch tools) with subagents V2 (`agent`, `agent_control`, `agent_patch`). The `ice.subagents.v2` setting and `ICE_SUBAGENTS_V2` are no longer needed. Legacy agent files that use `fallbackModel`, `thinkingLevel`, `mcpTools`, or other removed keys are reported with the V2 replacement by `ice agents validate`. The live subagent quality benchmark (`npm run quality:live`) was removed with the legacy runner.
 - Renamed the product to ICE. The only supported executable is `ice`.
+- `ice.subagents` now has one schema, the subagents V2 one. RPC settings replace `ice.subagents.defaults.thinking`, `defaults.startupTimeoutMs`, `allowedRoles`, and `concurrency.default`/`max` with `defaultAgent`, `maxConcurrent`, `maxDepth`, `askTimeoutMs`, and `disabledAgents`. `ice.subagents.enabled: false` now blocks new V2 launches. Unknown `ice.subagents` keys fail closed; keys of the removed legacy system are ignored and reported as `ice_deprecated_setting` RPC diagnostics and `ice agents validate` warnings.
 - Moved configuration to `.ice` and agent state to `~/.ice/agent`. `.pi` is not a discovery root. Existing state must be migrated explicitly.
 - Renamed every environment variable to the `ICE_*` prefix. `PI_*` / `PIV_*` values are not read.
 - Dropped historical `pi`/`piv` command aliases, extension import aliases, `Piv*` SDK names, `piv` settings/RPC keys, session custom types, Cognee path fallback, and TUI/theme compatibility symbols.
@@ -194,6 +197,7 @@
 
 ### Changed
 
+- Changed edit diffs to a gutter layout (line number and `+`/`-` sign) with full-width tinted rows for added and removed lines and a stronger tint on changed words. Tints derive from each theme's `toolDiffAdded`/`toolDiffRemoved` hue; themes with non-hex diff colors and customized diff appearances keep colored text.
 - Realigned subagent bounds with reference harnesses: final-answer inline projections are 48 KiB (from 8 KiB), per-artifact storage is 4 MiB (from 512 KiB), parent-facing result presentation is capped at 64 KiB (from 16 KiB), context packet/fork/handoff budgets are 256 KiB (from 64 KiB) with 32 KiB items, selected resources are 128 KiB per file and 512 KiB aggregate, bundled child concurrency is 8 with a hard ceiling of 24 (from 4/8, justified by the no-network concurrency benchmark), and the durable FIFO queue holds 16 queued jobs (from 8).
 - Durable output retention failure no longer flips a completed job to `verification_failed`: the terminal status is preserved, the output projection degrades to `artifact_unavailable`, and an `output_artifact_unavailable` diagnostic records the failure; artifact availability stays distinct from verification.
 - Renamed the misleading `batch_budget_exhausted` failure code to `batch_admission_exhausted` (it now only reports active managed-batch/writer ledger limits), and moved the combined handoff-context overrun to `invalid_request`.
@@ -215,6 +219,10 @@
 
 ### Fixed
 
+- Fixed subagents that finish on their last allowed request (`maxTurns`/`maxTokens`) being reported `budget_exhausted` and sent an extra wrap-up request past the budget. A turn is now exhausted only when the budget stopped work the child still wanted to do.
+- Fixed the agent strip counting idle children as "active"; it now shows `N working · N idle`. Opening a parked child from the Agent Hub now resumes it instead of asking you to resume it first.
+- Fixed `/agents` and `/subagents` in interactive mode opening the old view switcher instead of the Agent Hub, which also kept `/agents list` and `/agents new` from running. `ctrl+shift+a` and `/tasks` with no background bash now open the Hub too; the Hub renders in place of the editor instead of as an overlay over the transcript.
+- Fixed `alt+left`/`alt+right` always switching agent views and so never moving the cursor by word. They now step to the previous/next agent view only when subagents are live and the editor is empty; `shift+alt+left` returns to the main agent, and `left` on an empty editor opens the Agent Hub (and closes it from inside).
 - Fixed edge-to-edge compact tool rows on ultrawide terminals by capping collapsed rows at 100 columns; expanded shell titles wrap the complete command.
 - Fixed color-only footer appearance customization switching the compact status line to a multi-row layout.
 - Fixed compact tool headings (`Exploring`, `Explored`, `Ran`, `Running`, and edit verbs) ignoring the theme's tool-title color.

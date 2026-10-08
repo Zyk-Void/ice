@@ -2,6 +2,7 @@ import { visibleWidth } from "@zykairotis/ice-tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
+import type { IceSubagentOverview } from "../src/ice-agent-view-bridge.ts";
 import { createDefaultAppearance } from "../src/modes/interactive/appearance/appearance-defaults.ts";
 import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
 import { setSymbolPreset } from "../src/modes/interactive/theme/symbols.ts";
@@ -269,6 +270,40 @@ describe("FooterComponent width handling", () => {
 		appearance.separator = " | ";
 		footer.setAppearance(appearance);
 		expect(footer.render(160)).toHaveLength(2);
+	});
+
+	it("shows subagent capacity, queue, approvals, and a disabled state", () => {
+		const footer = new FooterComponent(createSession({ sessionName: "" }), createFooterData(1));
+		footer.setStyle("compact");
+		const overview = {
+			enabled: true,
+			capacity: { running: 2, queued: 1, max: 4 },
+			maxDepth: 0,
+			children: [],
+			approvals: [] as IceSubagentOverview["approvals"],
+			diagnostics: [],
+		};
+		footer.setSubagentSource(() => overview);
+		expect(stripAnsi(footer.render(160)[0]!)).toContain("agents 2/4 1 queued");
+		overview.approvals = [
+			{
+				id: "r1",
+				childId: "ag_a",
+				agent: "worker",
+				tool: "bash",
+				summary: "bash: npm test",
+				foreground: false,
+				queuedAt: 0,
+				deadline: 1,
+			},
+		];
+		// Pending approvals stay visible on a narrow terminal.
+		expect(stripAnsi(footer.render(60)[0]!)).toContain("1 approval");
+		footer.setSubagentSource(() => ({ ...overview, enabled: false, approvals: [] }));
+		expect(stripAnsi(footer.render(160)[0]!)).toContain("agents off");
+		for (const width of [40, 80, 160]) {
+			for (const line of footer.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+		}
 	});
 
 	it("omits the badge when there are no notices", () => {

@@ -98,15 +98,19 @@ export type PackageSource =
 			themes?: string[];
 	  };
 
+/** Stored shape of `ice.subagents`; subagents/v2/settings.ts validates it. */
 export interface IceSubagentSettingsValue {
 	enabled?: boolean;
-	defaults?: Record<string, unknown>;
-	allowedRoles?: string[];
-	roleDefaults?: Record<string, Record<string, unknown>>;
-	restrictions?: Record<string, unknown>;
-	modelSelection?: { mode?: string };
-	concurrency?: { default?: number; max?: number };
-	routeTiers?: { mechanical?: string; judgment?: string };
+	defaultAgent?: string;
+	maxDepth?: number;
+	maxConcurrent?: number;
+	askTimeoutMs?: number;
+	permissions?: { allow?: string[]; ask?: string[]; deny?: string[] };
+	agents?: Record<string, unknown>;
+	disabledAgents?: string[];
+	compat?: { claudeAgents?: boolean; modelAliases?: Record<string, string> };
+	/** Deprecated keys of the removed legacy subagent system are preserved but ignored. */
+	[legacyKey: string]: unknown;
 }
 
 export interface IceHooksSettingsValue {

@@ -1,71 +1,24 @@
 /**
- * ICE subagent control settings (W03–W06) and parent-owned lifecycle hooks
- * (W25–W37): namespaced `ice.subagents` / `ice.hooks` configuration, a pure
- * deterministic resolver with deny-first restriction composition, and an
- * in-process awaited hook dispatcher owned by the parent adapter.
+ * The `ice` settings namespace: parent-owned subagent lifecycle hooks
+ * (`ice.hooks`, W25-W37) and strict validation of the whole namespace.
+ * `ice.subagents` is owned by subagents/v2/settings.ts; this module only
+ * delegates its validation there so one schema governs it.
  *
  * Design authority: agent_docs/implementation/subagent-control-settings-hooks-plan.md
- * sections 5 (configuration contract), 6 (invocation contract) and 7 (lifecycle
- * hooks). This module owns parsing/resolution only; file persistence stays in
- * SettingsManager (W04). Ice remains the sole authoritative reasoning/tool loop:
- * hooks observe or gate launches through parent-owned handlers, never through a
- * second agent loop, provider SDK, or child extension loading.
+ * section 7 (lifecycle hooks). This module owns parsing/resolution only; file
+ * persistence stays in SettingsManager. Ice remains the sole authoritative
+ * reasoning/tool loop: hooks observe or gate launches through parent-owned
+ * handlers, never through a second agent loop, provider SDK, or child extension loading.
  */
 
 import { createHash, randomUUID } from "node:crypto";
 import { redactCredentialText } from "../utils/redact.ts";
 import { type IceCommandHookPolicy, parseIceCommandHookPolicy } from "./hooks/command-hooks.ts";
-import { SUBAGENT_CONCURRENCY_LIMITS, type SubagentConcurrencySettings } from "./registry/admission.ts";
-import type { SubagentRequestedToolName, SubagentThinkingLevel } from "./types.ts";
+import { resolveSubagentsV2Settings } from "./v2/settings.ts";
 
 // ---------------------------------------------------------------------------
-// W03 — configuration schema
+// Configuration schema
 // ---------------------------------------------------------------------------
-
-/** Operational preference fields shared by defaults, role defaults, and calls. */
-export interface IceSubagentPreferenceFields {
-	thinking?: SubagentThinkingLevel;
-	checkInIntervalMs?: number;
-	startupTimeoutMs?: number;
-	temperature?: number;
-	topP?: number;
-}
-
-export interface IceSubagentSettingsInput {
-	enabled?: boolean;
-	defaults?: IceSubagentPreferenceFields;
-	allowedRoles?: string[];
-	roleDefaults?: Record<string, IceSubagentPreferenceFields>;
-	/** Reserved enforcement namespace; unknown keys fail closed. */
-	restrictions?: {
-		maxStartupTimeoutMs?: number;
-		denyRoles?: string[];
-		denyTools?: string[];
-	};
-	modelSelection?: { mode?: string };
-	/** Bounded active-child concurrency for batches and background jobs. */
-	concurrency?: SubagentConcurrencySettings;
-	/** Host-owned quality-tier route aliases resolved through the exact route policy. */
-	routeTiers?: SubagentRouteTierSettings;
-	/** Subagent V2 keys (Plan/subagent-rewrite.md section 8); validated by subagents/v2/settings.ts. */
-	v2?: unknown;
-	defaultAgent?: unknown;
-	maxDepth?: unknown;
-	maxConcurrent?: unknown;
-	askTimeoutMs?: unknown;
-	permissions?: unknown;
-	agents?: unknown;
-	disabledAgents?: unknown;
-	compat?: unknown;
-}
-
-/** Semantic worker tiers: mechanical (high-volume, low reasoning) vs judgment (reasoning-heavy). */
-export interface SubagentRouteTierSettings {
-	/** Exact provider/model reference used for mechanical task classes. */
-	mechanical?: string;
-	/** Exact provider/model reference used for judgment task classes. */
-	judgment?: string;
-}
 
 export interface IceHookDefinitionInput {
 	id?: unknown;
@@ -85,64 +38,18 @@ export interface IceHooksSettingsInput {
 }
 
 export interface IceSettingsInput {
-	subagents?: IceSubagentSettingsInput;
+	subagents?: unknown;
 	hooks?: IceHooksSettingsInput;
 }
 
 export const ICE_SUBAGENT_SETTINGS_LIMITS = {
-	maxThinkingLength: 16,
-	minCheckInIntervalMs: 120_000,
-	minStartupTimeoutMs: 1,
-	maxStartupTimeoutMs: 10 * 60 * 1_000,
-	minTemperature: 0,
-	maxTemperature: 2,
-	minTopP: 0,
-	maxTopP: 1,
-	maxRoles: 64,
 	maxRoleNameBytes: 64,
-	maxRoleDefaults: 64,
 	maxHooks: 32,
 	maxHookIdBytes: 128,
 	maxHookTimeoutMs: 30_000,
 	maxHookOutputBytes: 32 * 1024,
-	maxRouteTierReferenceBytes: 256,
 } as const;
 
-export const ICE_SUBAGENT_THINKING_LEVELS: readonly SubagentThinkingLevel[] = Object.freeze([
-	"off",
-	"minimal",
-	"low",
-	"medium",
-	"high",
-	"xhigh",
-	"max",
-	"ultra",
-]);
-
-const KNOWN_SUBAGENT_SETTINGS_KEYS = new Set([
-	"enabled",
-	"defaults",
-	"allowedRoles",
-	"roleDefaults",
-	"restrictions",
-	"modelSelection",
-	"concurrency",
-	"routeTiers",
-	// Subagent V2 keys: validated by subagents/v2/settings.ts, ignored by this legacy parser.
-	"v2",
-	"defaultAgent",
-	"maxDepth",
-	"maxConcurrent",
-	"askTimeoutMs",
-	"permissions",
-	"agents",
-	"disabledAgents",
-	"compat",
-]);
-const KNOWN_CONCURRENCY_KEYS = new Set(["default", "max"]);
-const KNOWN_ROUTE_TIER_KEYS = new Set(["mechanical", "judgment"]);
-const KNOWN_PREFERENCE_KEYS = new Set(["thinking", "checkInIntervalMs", "startupTimeoutMs", "temperature", "topP"]);
-const KNOWN_RESTRICTION_KEYS = new Set(["maxStartupTimeoutMs", "denyRoles", "denyTools"]);
 const KNOWN_HOOK_KEYS = new Set(["id", "event", "roles", "kind", "timeoutMs", "maxOutputBytes", "required"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -150,19 +57,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function fail(path: string, message: string): Error {
-	return new Error(`Invalid ice subagent settings at ${path}: ${message}`);
+	return new Error(`Invalid ice settings at ${path}: ${message}`);
 }
 
 function checkPositiveInteger(value: unknown, path: string, minimum: number, maximum: number): number {
 	if (typeof value !== "number" || !Number.isInteger(value) || value < minimum || value > maximum) {
 		throw fail(path, `expected integer in [${minimum}, ${maximum}]`);
-	}
-	return value;
-}
-
-function checkFiniteNumber(value: unknown, path: string, minimum: number, maximum: number): number {
-	if (typeof value !== "number" || !Number.isFinite(value) || value < minimum || value > maximum) {
-		throw fail(path, `expected finite number in [${minimum}, ${maximum}]`);
 	}
 	return value;
 }
@@ -174,278 +74,6 @@ function checkRoleName(value: unknown, path: string): string {
 		throw fail(path, "role name is empty or exceeds 64 bytes");
 	}
 	return normalized;
-}
-
-function parsePreferenceFields(
-	value: unknown,
-	path: string,
-): { fields: IceSubagentPreferenceFields; diagnostics: string[] } {
-	if (value === undefined) return { fields: {}, diagnostics: [] };
-	if (!isRecord(value)) throw fail(path, "expected object");
-	const diagnostics: string[] = [];
-	const fields: IceSubagentPreferenceFields = {};
-	for (const key of Object.keys(value)) {
-		if (key === "maxOutputBytes") {
-			throw fail(`${path}.${key}`, "removed; final-answer retention is controlled by fixed host limits");
-		}
-		if (key === "maxTotalTokens") {
-			throw fail(
-				`${path}.${key}`,
-				'"maxTotalTokens" was removed; use startupTimeoutMs and provider/model token limits',
-			);
-		}
-		if (key === "maxTurns" || key === "maxToolCalls") {
-			throw fail(`${path}.${key}`, `"${key}" was removed; use startupTimeoutMs and provider/model token limits`);
-		}
-		if (!KNOWN_PREFERENCE_KEYS.has(key)) throw fail(`${path}.${key}`, `unknown preference key "${key}"`);
-	}
-	const raw = value as Record<string, unknown>;
-	if (raw.thinking !== undefined) {
-		if (
-			typeof raw.thinking !== "string" ||
-			!ICE_SUBAGENT_THINKING_LEVELS.includes(raw.thinking as SubagentThinkingLevel)
-		) {
-			throw fail(`${path}.thinking`, "expected a supported thinking level");
-		}
-		fields.thinking = raw.thinking as SubagentThinkingLevel;
-	}
-	if (raw.checkInIntervalMs !== undefined) {
-		fields.checkInIntervalMs = checkPositiveInteger(
-			raw.checkInIntervalMs,
-			`${path}.checkInIntervalMs`,
-			ICE_SUBAGENT_SETTINGS_LIMITS.minCheckInIntervalMs,
-			Number.MAX_SAFE_INTEGER,
-		);
-	}
-	if (raw.startupTimeoutMs !== undefined) {
-		fields.startupTimeoutMs = checkPositiveInteger(
-			raw.startupTimeoutMs,
-			`${path}.startupTimeoutMs`,
-			ICE_SUBAGENT_SETTINGS_LIMITS.minStartupTimeoutMs,
-			ICE_SUBAGENT_SETTINGS_LIMITS.maxStartupTimeoutMs,
-		);
-	}
-	if (raw.temperature !== undefined) {
-		fields.temperature = checkFiniteNumber(
-			raw.temperature,
-			`${path}.temperature`,
-			ICE_SUBAGENT_SETTINGS_LIMITS.minTemperature,
-			ICE_SUBAGENT_SETTINGS_LIMITS.maxTemperature,
-		);
-	}
-	if (raw.topP !== undefined) {
-		fields.topP = checkFiniteNumber(
-			raw.topP,
-			`${path}.topP`,
-			ICE_SUBAGENT_SETTINGS_LIMITS.minTopP,
-			ICE_SUBAGENT_SETTINGS_LIMITS.maxTopP,
-		);
-	}
-	return { fields: Object.freeze(fields), diagnostics };
-}
-
-export interface ParsedIceSubagentSettings {
-	enabled: boolean;
-	defaults: IceSubagentPreferenceFields;
-	allowedRoles: readonly string[] | undefined;
-	roleDefaults: Readonly<Record<string, IceSubagentPreferenceFields>>;
-	restrictions: {
-		maxStartupTimeoutMs?: number;
-		denyRoles: readonly string[];
-		denyTools: readonly string[];
-	};
-	modelSelection: { mode: "inherit-parent" | "configured" };
-	concurrency: SubagentConcurrencySettings;
-	routeTiers: SubagentRouteTierSettings;
-	diagnostics: readonly string[];
-}
-
-export function parseIceSubagentSettings(input: unknown, path = "ice.subagents"): ParsedIceSubagentSettings {
-	if (input === undefined || input === null) {
-		return {
-			enabled: true,
-			defaults: Object.freeze({}),
-			allowedRoles: undefined,
-			roleDefaults: Object.freeze({}),
-			restrictions: { denyRoles: Object.freeze([]), denyTools: Object.freeze([]) },
-			modelSelection: { mode: "inherit-parent" },
-			concurrency: Object.freeze({}),
-			routeTiers: Object.freeze({}),
-			diagnostics: Object.freeze([]),
-		};
-	}
-	if (!isRecord(input)) throw fail(path, "expected object");
-	for (const key of Object.keys(input)) {
-		if (!KNOWN_SUBAGENT_SETTINGS_KEYS.has(key)) throw fail(`${path}.${key}`, `unknown key "${key}"`);
-	}
-	const diagnostics: string[] = [];
-	const enabled = input.enabled === undefined ? true : input.enabled;
-	if (typeof enabled !== "boolean") throw fail(`${path}.enabled`, "expected boolean");
-	const { fields: defaults } = parsePreferenceFields(input.defaults, `${path}.defaults`);
-	let allowedRoles: readonly string[] | undefined;
-	if (input.allowedRoles !== undefined) {
-		if (!Array.isArray(input.allowedRoles)) throw fail(`${path}.allowedRoles`, "expected string array");
-		if (input.allowedRoles.length > ICE_SUBAGENT_SETTINGS_LIMITS.maxRoles) {
-			throw fail(`${path}.allowedRoles`, "too many roles");
-		}
-		allowedRoles = Object.freeze([
-			...new Set(input.allowedRoles.map((role) => checkRoleName(role, `${path}.allowedRoles`))),
-		]);
-	}
-	let roleDefaults: Record<string, IceSubagentPreferenceFields> = {};
-	if (input.roleDefaults !== undefined) {
-		if (!isRecord(input.roleDefaults)) throw fail(`${path}.roleDefaults`, "expected object");
-		const names = Object.keys(input.roleDefaults);
-		if (names.length > ICE_SUBAGENT_SETTINGS_LIMITS.maxRoleDefaults)
-			throw fail(`${path}.roleDefaults`, "too many roles");
-		for (const name of names) {
-			const normalized = checkRoleName(name, `${path}.roleDefaults`);
-			const { fields } = parsePreferenceFields(
-				(input.roleDefaults as Record<string, unknown>)[name],
-				`${path}.roleDefaults.${name}`,
-			);
-			roleDefaults[normalized] = fields;
-		}
-		roleDefaults = Object.freeze(roleDefaults);
-	}
-	const restrictions = {
-		maxStartupTimeoutMs: undefined as number | undefined,
-		denyRoles: [] as string[],
-		denyTools: [] as string[],
-	};
-	if (input.restrictions !== undefined) {
-		if (!isRecord(input.restrictions)) throw fail(`${path}.restrictions`, "expected object");
-		for (const key of Object.keys(input.restrictions)) {
-			if (key === "maxOutputBytes") {
-				throw fail(
-					`${path}.restrictions.${key}`,
-					"removed; final-answer retention is controlled by fixed host limits",
-				);
-			}
-			if (key === "maxTotalTokens") {
-				throw fail(
-					`${path}.restrictions.${key}`,
-					'"maxTotalTokens" was removed; use startupTimeoutMs and provider/model token limits',
-				);
-			}
-			if (key === "maxTurns" || key === "maxToolCalls") {
-				throw fail(
-					`${path}.restrictions.${key}`,
-					`"${key}" was removed; use startupTimeoutMs and provider/model token limits`,
-				);
-			}
-			if (!KNOWN_RESTRICTION_KEYS.has(key))
-				throw fail(`${path}.restrictions.${key}`, `unknown enforcement key "${key}"`);
-		}
-		const raw = input.restrictions as Record<string, unknown>;
-		if (raw.maxStartupTimeoutMs !== undefined) {
-			restrictions.maxStartupTimeoutMs = checkPositiveInteger(
-				raw.maxStartupTimeoutMs,
-				`${path}.restrictions.maxStartupTimeoutMs`,
-				ICE_SUBAGENT_SETTINGS_LIMITS.minStartupTimeoutMs,
-				ICE_SUBAGENT_SETTINGS_LIMITS.maxStartupTimeoutMs,
-			);
-		}
-		if (raw.denyRoles !== undefined) {
-			if (!Array.isArray(raw.denyRoles)) throw fail(`${path}.restrictions.denyRoles`, "expected string array");
-			restrictions.denyRoles = [
-				...new Set(raw.denyRoles.map((role) => checkRoleName(role, `${path}.restrictions.denyRoles`))),
-			];
-		}
-		if (raw.denyTools !== undefined) {
-			if (!Array.isArray(raw.denyTools)) throw fail(`${path}.restrictions.denyTools`, "expected string array");
-			if (
-				raw.denyTools.length > 64 ||
-				raw.denyTools.some(
-					(tool) =>
-						typeof tool !== "string" ||
-						!/^[A-Za-z][A-Za-z0-9_.-]{0,127}(?:\/[A-Za-z0-9][A-Za-z0-9_.-]{0,127})?$/.test(tool),
-				)
-			) {
-				throw fail(
-					`${path}.restrictions.denyTools`,
-					"expected bounded tool names or exact MCP server/tool identifiers",
-				);
-			}
-			restrictions.denyTools = [...new Set((raw.denyTools as string[]).map((tool) => tool.toLowerCase()))];
-		}
-	}
-	let modelSelection: { mode: "inherit-parent" | "configured" } = { mode: "inherit-parent" };
-	if (input.modelSelection !== undefined) {
-		if (!isRecord(input.modelSelection)) throw fail(`${path}.modelSelection`, "expected object");
-		const mode = (input.modelSelection as Record<string, unknown>).mode;
-		if (
-			Object.keys(input.modelSelection).some((key) => key !== "mode") ||
-			(mode !== undefined && mode !== "inherit-parent" && mode !== "configured")
-		) {
-			throw fail(`${path}.modelSelection.mode`, 'expected "inherit-parent" or "configured"');
-		}
-		modelSelection = { mode: mode === "configured" ? "configured" : "inherit-parent" };
-		if (mode === "configured") diagnostics.push("explicit child routing requires host-owned global approval");
-	}
-	let concurrency: SubagentConcurrencySettings = {};
-	if (input.concurrency !== undefined) {
-		if (!isRecord(input.concurrency)) throw fail(`${path}.concurrency`, "expected object");
-		for (const key of Object.keys(input.concurrency)) {
-			if (!KNOWN_CONCURRENCY_KEYS.has(key)) throw fail(`${path}.concurrency.${key}`, `unknown key "${key}"`);
-		}
-		const raw = input.concurrency as Record<string, unknown>;
-		if (raw.default !== undefined) {
-			concurrency.default = checkPositiveInteger(
-				raw.default,
-				`${path}.concurrency.default`,
-				SUBAGENT_CONCURRENCY_LIMITS.min,
-				SUBAGENT_CONCURRENCY_LIMITS.hardCap,
-			);
-		}
-		if (raw.max !== undefined) {
-			concurrency.max = checkPositiveInteger(
-				raw.max,
-				`${path}.concurrency.max`,
-				SUBAGENT_CONCURRENCY_LIMITS.min,
-				SUBAGENT_CONCURRENCY_LIMITS.hardCap,
-			);
-		}
-		concurrency = Object.freeze(concurrency);
-	}
-	let routeTiers: SubagentRouteTierSettings = {};
-	if (input.routeTiers !== undefined) {
-		if (!isRecord(input.routeTiers)) throw fail(`${path}.routeTiers`, "expected object");
-		for (const key of Object.keys(input.routeTiers)) {
-			if (!KNOWN_ROUTE_TIER_KEYS.has(key)) throw fail(`${path}.routeTiers.${key}`, `unknown key "${key}"`);
-		}
-		const raw = input.routeTiers as Record<string, unknown>;
-		for (const tier of ["mechanical", "judgment"] as const) {
-			const value = raw[tier];
-			if (value === undefined) continue;
-			if (
-				typeof value !== "string" ||
-				value.length === 0 ||
-				value.length > ICE_SUBAGENT_SETTINGS_LIMITS.maxRouteTierReferenceBytes ||
-				/\s/.test(value) ||
-				!value.includes("/")
-			) {
-				throw fail(`${path}.routeTiers.${tier}`, "expected an exact provider/model reference");
-			}
-			routeTiers[tier] = value;
-		}
-		routeTiers = Object.freeze(routeTiers);
-	}
-	return {
-		enabled,
-		defaults,
-		allowedRoles,
-		roleDefaults,
-		restrictions: Object.freeze({
-			...restrictions,
-			denyRoles: Object.freeze(restrictions.denyRoles),
-			denyTools: Object.freeze(restrictions.denyTools),
-		}),
-		modelSelection,
-		concurrency,
-		routeTiers,
-		diagnostics: Object.freeze(diagnostics),
-	};
 }
 
 // ---------------------------------------------------------------------------
@@ -580,21 +208,20 @@ export function parseIceHooksSettings(input: unknown, path = "ice.hooks"): Parse
 	return { enabled, commandPolicy, definitions: Object.freeze(definitions), diagnostics: Object.freeze([]) };
 }
 
-export function parseIceSettings(input: unknown): {
-	subagents: ParsedIceSubagentSettings;
-	hooks: ParsedIceHooksSettings;
-} {
-	if (input === undefined || input === null) {
-		return { subagents: parseIceSubagentSettings(undefined), hooks: parseIceHooksSettings(undefined) };
-	}
+/**
+ * Strictly validate one scope's `ice` namespace. Throws on any invalid or
+ * unknown key so security-sensitive settings never load partially.
+ * Deprecated legacy `ice.subagents` keys are accepted (and reported elsewhere).
+ */
+export function parseIceSettings(input: unknown): { hooks: ParsedIceHooksSettings } {
+	if (input === undefined || input === null) return { hooks: parseIceHooksSettings(undefined) };
 	if (!isRecord(input)) throw fail("ice", "expected object");
 	for (const key of Object.keys(input)) {
 		if (key !== "subagents" && key !== "hooks") throw fail(`ice.${key}`, `unknown key "${key}"`);
 	}
-	return {
-		subagents: parseIceSubagentSettings((input as Record<string, unknown>).subagents),
-		hooks: parseIceHooksSettings((input as Record<string, unknown>).hooks),
-	};
+	const subagents = resolveSubagentsV2Settings({ global: input.subagents, projectTrusted: false });
+	if (subagents.diagnostics.length > 0) throw fail("ice.subagents", subagents.diagnostics.join("; "));
+	return { hooks: parseIceHooksSettings(input.hooks) };
 }
 
 /** Read the raw `ice` namespace from merged or scoped settings. Unknown keys are preserved for strict parsing. */
@@ -605,88 +232,6 @@ export function readIceSettingsInput(settings: { ice?: unknown }): IceSettingsIn
 	return namespace as IceSettingsInput;
 }
 
-// ---------------------------------------------------------------------------
-// W05/W06 — deterministic defaults resolver + deny-first restriction composition
-// ---------------------------------------------------------------------------
-
-export type IceSettingSource =
-	| "bundled"
-	| "global"
-	| "project"
-	| "role"
-	| "global-role"
-	| "project-role"
-	| "call"
-	| "enforced";
-
-export interface IceResolvedField<T> {
-	value: T;
-	source: IceSettingSource;
-}
-
-export interface IceResolvedSubagentContract {
-	enabled: boolean;
-	thinking: IceResolvedField<SubagentThinkingLevel>;
-	checkInIntervalMs: IceResolvedField<number>;
-	timeoutMs: IceResolvedField<number>;
-	temperature: IceResolvedField<number | undefined>;
-	topP: IceResolvedField<number | undefined>;
-	allowedRoles: IceResolvedField<readonly string[] | undefined>;
-	role: IceResolvedField<string>;
-	diagnostics: readonly string[];
-	rejected: readonly string[];
-	/** W06: legacy flat projection for compact consumers (values only). */
-	values: {
-		thinking: SubagentThinkingLevel;
-		checkInIntervalMs: number;
-		timeoutMs: number;
-		temperature?: number;
-		topP?: number;
-	};
-	/** W06: legacy flat projection for compact consumers (sources only). */
-	sources: {
-		thinking: IceSettingSource;
-		checkInIntervalMs: IceSettingSource;
-		timeoutMs: IceSettingSource;
-		temperature: IceSettingSource;
-		topP: IceSettingSource;
-	};
-	/** W06: caps that clamped a preference value (empty when none applied). */
-	restrictionsApplied: readonly string[];
-	/** Host-owned quality-tier route aliases from global settings; project layers cannot set them. */
-	routeTiers: { mechanical?: string; judgment?: string };
-	/** W06: configured tool denials are applied again at the child dispatch boundary. */
-	deniedTools: readonly string[];
-	/** W06: deny-first refusal, when the role itself is refused. */
-	denied?: { code: "role_denied" | "role_not_allowed" | "disabled"; message: string };
-}
-
-export interface IceContractCallInput extends IceSubagentPreferenceFields {
-	role?: string;
-	tools?: string[];
-}
-
-export interface IceResolverInput {
-	global?: ParsedIceSubagentSettings;
-	project?: ParsedIceSubagentSettings;
-	/** ice always resolves global-first; stock ice keeps its own project-first default elsewhere. */
-	globalFirst?: boolean;
-	globalSettings?: { ice?: unknown };
-	projectSettings?: { ice?: unknown };
-	projectTrusted?: boolean;
-	role: string;
-	call?: IceContractCallInput;
-	parentActiveTools?: readonly string[];
-	unsafeHostExec?: boolean;
-	bundledDefaults?: IceSubagentPreferenceFields;
-}
-
-const BUNDLED_CONTRACT_DEFAULTS: IceSubagentPreferenceFields = Object.freeze({
-	thinking: "medium",
-	checkInIntervalMs: 120_000,
-	startupTimeoutMs: 120_000,
-});
-
 function frozenDiagnostics(values: string[]): readonly string[] {
 	return Object.freeze(values.map((value) => redactCredentialText(value).slice(0, 512)));
 }
@@ -694,298 +239,6 @@ function frozenDiagnostics(values: string[]): readonly string[] {
 /** Normalize a role name. Alias indirection was removed with the bundled catalog. */
 export function normalizeIceRoleName(role: string): string {
 	return role.trim().toLowerCase();
-}
-
-function intuitAllowedRolesIntersection(layers: Array<readonly string[] | undefined>): readonly string[] | undefined {
-	let result: Set<string> | undefined;
-	for (const layer of layers) {
-		// An omitted or empty preference allowlist means "no additional
-		// restriction". Deny-all policy is represented by denyRoles.
-		if (layer === undefined || layer.length === 0) continue;
-		const normalized = new Set(layer.map((role) => normalizeIceRoleName(role)));
-		if (result === undefined) result = normalized;
-		else result = new Set([...result].filter((role) => normalized.has(role)));
-	}
-	return result === undefined ? undefined : Object.freeze([...result].sort());
-}
-
-export function resolveIceSubagentContract(input: IceResolverInput): IceResolvedSubagentContract {
-	const diagnostics: string[] = [];
-	const rejected: string[] = [];
-	const requestedRole = input.role.trim().toLowerCase();
-	if (!requestedRole) throw new Error("Role must be nonempty.");
-	const canonicalRole = normalizeIceRoleName(requestedRole);
-
-	const globalParsed =
-		input.global ??
-		parseIceSubagentSettings(
-			input.globalSettings ? readIceSettingsInput(input.globalSettings as { ice?: unknown })?.subagents : undefined,
-			"ice.subagents(global)",
-		);
-	const projectTrusted = input.projectTrusted ?? true;
-	// Project policy is untrusted until the caller proves otherwise. Never let a
-	// pre-parsed project object bypass that boundary.
-	const projectParsed = projectTrusted
-		? (input.project ??
-			(input.projectSettings
-				? parseIceSubagentSettings(
-						readIceSettingsInput(input.projectSettings as { ice?: unknown })?.subagents,
-						"ice.subagents(project)",
-					)
-				: parseIceSubagentSettings(undefined, "ice.subagents(project)")))
-		: parseIceSubagentSettings(undefined, "ice.subagents(project)");
-	if (input.projectSettings && !projectTrusted) {
-		diagnostics.push("project ice.subagents ignored without project trust");
-	}
-
-	const enabled = globalParsed.enabled && projectParsed.enabled;
-	if (!globalParsed.enabled) diagnostics.push("ice.subagents disabled globally");
-	if (!projectParsed.enabled) diagnostics.push("ice.subagents disabled by project");
-
-	const bundled: IceSubagentPreferenceFields = { ...BUNDLED_CONTRACT_DEFAULTS, ...(input.bundledDefaults ?? {}) };
-	// ice resolves global-first: an explicit global/default beats a project value.
-	// Security restrictions stay deny-first either way. Stock ice behavior is
-	// unchanged because stock ice never routes through this ice resolver.
-	// globalFirst:false remains only as an escape hatch for legacy tests.
-	const globalFirst = input.globalFirst !== false;
-	const layers: Array<{ fields: IceSubagentPreferenceFields; source: IceSettingSource }> = globalFirst
-		? [
-				{ fields: bundled, source: "bundled" },
-				{ fields: projectParsed.defaults, source: "project" },
-				{ fields: globalParsed.defaults, source: "global" },
-			]
-		: [
-				{ fields: bundled, source: "bundled" },
-				{ fields: globalParsed.defaults, source: "global" },
-				{ fields: projectParsed.defaults, source: "project" },
-			];
-	const roleLayers: Array<{ fields: IceSubagentPreferenceFields; source: IceSettingSource }> = [];
-	const globalRole = globalParsed.roleDefaults[canonicalRole];
-	const projectRole = projectParsed.roleDefaults[canonicalRole];
-	if (globalFirst) {
-		if (projectRole) roleLayers.push({ fields: projectRole, source: "project-role" });
-		if (globalRole) roleLayers.push({ fields: globalRole, source: "global-role" });
-	} else {
-		if (globalRole) roleLayers.push({ fields: globalRole, source: "global-role" });
-		if (projectRole) roleLayers.push({ fields: projectRole, source: "project-role" });
-	}
-
-	type PreferenceKey = keyof IceSubagentPreferenceFields;
-	const resolveField = <K extends PreferenceKey>(
-		key: K,
-		callValue: IceSubagentPreferenceFields[K] | undefined,
-	): IceResolvedField<NonNullable<IceSubagentPreferenceFields[K]>> => {
-		let value = bundled[key] as NonNullable<IceSubagentPreferenceFields[K]>;
-		let source: IceSettingSource = "bundled";
-		const orderedLayers = globalFirst
-			? [
-					...layers.filter((layer) => layer.source === "project"),
-					...roleLayers.filter((layer) => layer.source === "project-role"),
-					...layers.filter((layer) => layer.source === "global"),
-					...roleLayers.filter((layer) => layer.source === "global-role"),
-				]
-			: [...layers.slice(1), ...roleLayers];
-		for (const layer of orderedLayers) {
-			const candidate = layer.fields[key];
-			if (candidate !== undefined) {
-				value = candidate as NonNullable<IceSubagentPreferenceFields[K]>;
-				source = layer.source;
-			}
-		}
-		if (callValue !== undefined) {
-			value = callValue as NonNullable<IceSubagentPreferenceFields[K]>;
-			source = "call";
-		}
-		return { value, source };
-	};
-
-	const call = input.call ?? {};
-	const thinking = resolveField("thinking", call.thinking);
-	const checkInIntervalMs = resolveField("checkInIntervalMs", call.checkInIntervalMs);
-	const timeoutMs = resolveField("startupTimeoutMs", call.startupTimeoutMs);
-	const resolveOptionalField = (
-		key: "temperature" | "topP",
-		callValue: number | undefined,
-	): IceResolvedField<number | undefined> => {
-		let value: number | undefined = bundled[key];
-		let source: IceSettingSource = "bundled";
-		const orderedLayers = globalFirst
-			? [
-					...layers.filter((layer) => layer.source === "project"),
-					...roleLayers.filter((layer) => layer.source === "project-role"),
-					...layers.filter((layer) => layer.source === "global"),
-					...roleLayers.filter((layer) => layer.source === "global-role"),
-				]
-			: [...layers.slice(1), ...roleLayers];
-		for (const layer of orderedLayers) {
-			const candidate = layer.fields[key];
-			if (candidate !== undefined) {
-				value = candidate;
-				source = layer.source;
-			}
-		}
-		if (callValue !== undefined) {
-			value = callValue;
-			source = "call";
-		}
-		return { value, source };
-	};
-	const temperature = resolveOptionalField("temperature", call.temperature);
-	const topP = resolveOptionalField("topP", call.topP);
-
-	// W06: enforced hard caps use the most restrictive applicable cap and are not
-	// another preference layer. Preference values above a cap are clamped with an
-	// explicit diagnostic; the enforced source label records the restriction.
-	const caps: Array<{ key: "startupTimeoutMs"; values: Array<number | undefined> }> = [
-		{
-			key: "startupTimeoutMs",
-			values: [globalParsed.restrictions.maxStartupTimeoutMs, projectParsed.restrictions.maxStartupTimeoutMs],
-		},
-	];
-	const resolvedTimeoutMs: IceResolvedField<number> = timeoutMs;
-	const clampToCap = (field: IceResolvedField<number>, cap: number, key: string): IceResolvedField<number> => {
-		if (field.value <= cap) return field;
-		diagnostics.push(`${key} clamped to enforced cap ${cap} (requested ${field.value} from ${field.source})`);
-		return { value: cap, source: "enforced" };
-	};
-	const cappedTimeoutMs = (() => {
-		const applicable = caps[0]!.values.filter((value): value is number => value !== undefined);
-		return applicable.length === 0
-			? resolvedTimeoutMs
-			: clampToCap(resolvedTimeoutMs, Math.min(...applicable), "startupTimeoutMs");
-	})();
-
-	// W06: allowed roles intersect across layers; project narrowing can never
-	// re-enable a globally denied or globally unlisted role. Alias normalization
-	// happens before the intersection so `scout` cannot bypass an `explore` deny.
-	const allowedRoles = intuitAllowedRolesIntersection([globalParsed.allowedRoles, projectParsed.allowedRoles]);
-	const denyRoles = new Set(
-		[...globalParsed.restrictions.denyRoles, ...projectParsed.restrictions.denyRoles].map(normalizeIceRoleName),
-	);
-	const deniedTools = Object.freeze(
-		[...new Set([...globalParsed.restrictions.denyTools, ...projectParsed.restrictions.denyTools])].sort(),
-	);
-	// W06: deny-first refusal is data, not a throw, so facades can render it
-	// without catching. Deny wins over weaker allow rules.
-	let denied: IceResolvedSubagentContract["denied"];
-	if (!enabled) {
-		denied = { code: "disabled", message: "ice.subagents is disabled." };
-	} else if (denyRoles.has(canonicalRole)) {
-		denied = {
-			code: "role_denied",
-			message: `Role "${canonicalRole}" is denied by ice.subagents restrictions (requested "${requestedRole}").`,
-		};
-	} else if (allowedRoles !== undefined && !allowedRoles.includes(canonicalRole)) {
-		denied = {
-			code: "role_not_allowed",
-			message: `Role "${canonicalRole}" is not in the ice.subagents allowedRoles set (requested "${requestedRole}").`,
-		};
-	}
-	const restrictionsApplied = diagnostics.some((entry) => entry.includes("startupTimeoutMs clamped"))
-		? ["startupTimeoutMs"]
-		: [];
-	// Quality-tier route aliases are host-owned global policy. A project layer
-	// may not broaden model access, so project routeTiers are ignored loudly.
-	if (Object.keys(projectParsed.routeTiers).length > 0) {
-		diagnostics.push("project ice.subagents.routeTiers ignored; tier routing is global host policy");
-	}
-	const routeTiers: { mechanical?: string; judgment?: string } = { ...globalParsed.routeTiers };
-
-	const contract: IceResolvedSubagentContract = {
-		enabled,
-		thinking,
-		checkInIntervalMs,
-		timeoutMs: cappedTimeoutMs,
-		temperature,
-		topP,
-		allowedRoles: {
-			value: allowedRoles,
-			source: projectParsed.allowedRoles && projectParsed.allowedRoles.length > 0 ? "project" : "global",
-		},
-		role: { value: canonicalRole, source: "call" },
-		deniedTools,
-		diagnostics: frozenDiagnostics(diagnostics),
-		rejected: frozenDiagnostics(rejected),
-		values: {
-			thinking: thinking.value,
-			checkInIntervalMs: checkInIntervalMs.value,
-			timeoutMs: cappedTimeoutMs.value,
-			...(temperature.value !== undefined ? { temperature: temperature.value } : {}),
-			...(topP.value !== undefined ? { topP: topP.value } : {}),
-		},
-		sources: {
-			thinking: thinking.source,
-			checkInIntervalMs: checkInIntervalMs.source,
-			timeoutMs: cappedTimeoutMs.source,
-			temperature: temperature.source,
-			topP: topP.source,
-		},
-		restrictionsApplied: Object.freeze(restrictionsApplied),
-		routeTiers: Object.freeze(routeTiers),
-		...(denied ? { denied } : {}),
-	};
-	return Object.freeze(contract);
-}
-
-export interface IceToolNarrowing {
-	requested: readonly string[];
-	effective: readonly SubagentRequestedToolName[];
-	denied: readonly string[];
-	diagnostics: readonly string[];
-}
-
-/** Intersect caller-requested tools with profile, parent, mode, and deny policy. */
-export function narrowIceSubagentTools(options: {
-	requested?: readonly string[];
-	profileRequested?: readonly string[];
-	profileTools?: readonly string[];
-	parentActiveTools?: readonly string[];
-	unsafeHostExec?: boolean;
-	denyTools?: readonly string[];
-}): IceToolNarrowing {
-	const diagnostics: string[] = [];
-	const parentActiveTools = options.parentActiveTools ?? ["read", "grep", "find", "ls"];
-	const unsafeHostExec = options.unsafeHostExec ?? false;
-	const profileRequested = options.profileRequested ?? options.profileTools ?? [];
-	const eligible = new Set<SubagentRequestedToolName>(
-		(unsafeHostExec
-			? (["read", "grep", "find", "ls", "bash", "edit", "write"] as const)
-			: (["read", "grep", "find", "ls"] as const)
-		).filter((tool) => parentActiveTools.includes(tool)),
-	);
-	const profile = new Set(profileRequested.map((tool) => tool.toLowerCase()));
-	const deny = new Set((options.denyTools ?? []).map((tool) => tool.toLowerCase()));
-	const requested =
-		options.requested === undefined ? [...profile] : [...options.requested.map((tool) => tool.toLowerCase())];
-	if (options.requested !== undefined && options.requested.length === 0) {
-		diagnostics.push("caller requested an empty tool subset; no tools will be granted");
-	}
-	const effective: SubagentRequestedToolName[] = [];
-	const denied: string[] = [];
-	for (const tool of new Set(requested)) {
-		if (deny.has(tool)) {
-			denied.push(tool);
-			diagnostics.push(`tool "${tool}" denied by ice.subagents restrictions`);
-			continue;
-		}
-		if (!profile.has(tool)) {
-			denied.push(tool);
-			diagnostics.push(`tool "${tool}" is not requested by the selected profile`);
-			continue;
-		}
-		if (!eligible.has(tool as SubagentRequestedToolName)) {
-			denied.push(tool);
-			diagnostics.push(`tool "${tool}" is not eligible under the parent/mode policy`);
-			continue;
-		}
-		effective.push(tool as SubagentRequestedToolName);
-	}
-	return {
-		requested: Object.freeze(requested),
-		effective: Object.freeze(effective),
-		denied: Object.freeze(denied),
-		diagnostics: frozenDiagnostics(diagnostics),
-	};
 }
 
 // ---------------------------------------------------------------------------

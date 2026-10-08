@@ -38,6 +38,35 @@ function createLiveSource(): {
 }
 
 describe("ICE agent view bridge", () => {
+	it("exposes the subagent overview and approval answers, failing soft without a source", () => {
+		const bridge = new IceAgentViewBridge();
+		expect(bridge.getSubagentOverview()).toBeUndefined();
+		expect(bridge.respondToSubagentApproval("r1", "deny")).toBe(false);
+		const overview = {
+			enabled: true,
+			capacity: { running: 0, queued: 0, max: 4 },
+			maxDepth: 0,
+			children: [],
+			approvals: [],
+			diagnostics: [],
+		};
+		const respond = vi.fn(() => true);
+		const listener = vi.fn();
+		bridge.subscribe(listener);
+		bridge.setSubagentControlSource({ overview: () => overview, respondToApproval: respond });
+		expect(listener).toHaveBeenCalledOnce();
+		expect(bridge.getSubagentOverview()).toBe(overview);
+		expect(bridge.respondToSubagentApproval("r1", "allow-session")).toBe(true);
+		expect(respond).toHaveBeenCalledWith("r1", "allow-session");
+		bridge.setSubagentControlSource({
+			overview: () => {
+				throw new Error("no parent session");
+			},
+			respondToApproval: respond,
+		});
+		expect(bridge.getSubagentOverview()).toBeUndefined();
+	});
+
 	it("keeps parent, live, and historical views distinct and replaces live with history", () => {
 		const bridge = new IceAgentViewBridge();
 		const parent = fakeSession("parent");

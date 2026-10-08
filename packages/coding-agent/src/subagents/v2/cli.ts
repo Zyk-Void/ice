@@ -13,22 +13,26 @@ import { getSubagentGlobalAgentsDir } from "../definitions/legacy-profiles.ts";
 import { type LoadedAgentDefinitions, loadAgentDefinitions } from "../definitions/load.ts";
 import { parseNativeAgentMarkdown } from "../definitions/parse.ts";
 import { formatAgentDefinitions } from "./agent-manager.ts";
-import { resolveSubagentsV2Settings } from "./settings.ts";
+import { resolveSubagentsV2Settings, type SubagentsV2Settings } from "./settings.ts";
 
 export interface AgentsCliResult {
 	exitCode: number;
 	stdout: string;
 }
 
-export function loadAgentsForCli(cwd: string, agentDir: string): LoadedAgentDefinitions {
+function resolveCliSettings(cwd: string, agentDir: string): { settings: SubagentsV2Settings; projectTrusted: boolean } {
 	const settingsManager = SettingsManager.create(cwd, agentDir);
 	const projectTrusted = settingsManager.isProjectTrusted();
-	const read = (settings: unknown) => (settings as { ice?: { subagents?: unknown } } | undefined)?.ice?.subagents;
 	const settings = resolveSubagentsV2Settings({
-		global: read(settingsManager.getGlobalSettings()),
-		project: read(settingsManager.getProjectSettings()),
+		global: settingsManager.getGlobalSettings().ice?.subagents,
+		project: settingsManager.getProjectSettings().ice?.subagents,
 		projectTrusted,
 	});
+	return { settings, projectTrusted };
+}
+
+export function loadAgentsForCli(cwd: string, agentDir: string): LoadedAgentDefinitions {
+	const { settings, projectTrusted } = resolveCliSettings(cwd, agentDir);
 	return loadAgentDefinitions({
 		cwd,
 		userAgentsDir: getSubagentGlobalAgentsDir(agentDir),
@@ -41,10 +45,16 @@ export function loadAgentsForCli(cwd: string, agentDir: string): LoadedAgentDefi
 
 export function runAgentsCli(
 	args: readonly string[],
-	options: { cwd: string; agentDir: string; load?: () => LoadedAgentDefinitions },
+	options: {
+		cwd: string;
+		agentDir: string;
+		load?: () => LoadedAgentDefinitions;
+		settings?: () => SubagentsV2Settings;
+	},
 ): AgentsCliResult {
 	const [command, ...rest] = args;
 	const load = options.load ?? (() => loadAgentsForCli(options.cwd, options.agentDir));
+	const settings = options.settings ?? (() => resolveCliSettings(options.cwd, options.agentDir).settings);
 	if (command === "list") {
 		const definitions = load();
 		if (!rest.includes("--json"))
@@ -71,14 +81,18 @@ export function runAgentsCli(
 	if (command === "validate") {
 		const paths = rest.filter((arg) => !arg.startsWith("-"));
 		if (paths.length === 0) {
+			const { diagnostics, deprecations } = settings();
 			const invalid = load().issues.filter((issue) => issue.availability === "invalid");
-			const lines = invalid.map(
-				(issue) => `${issue.sourcePath ?? issue.name ?? "(unknown)"}: ${issue.diagnostics.join("; ")}`,
-			);
-			return {
-				exitCode: invalid.length > 0 ? 1 : 0,
-				stdout: `${invalid.length > 0 ? lines.join("\n") : "All agent definitions are valid."}\n`,
-			};
+			const lines = [
+				...diagnostics.map((message) => `settings: invalid: ${message}`),
+				...invalid.map(
+					(issue) => `${issue.sourcePath ?? issue.name ?? "(unknown)"}: ${issue.diagnostics.join("; ")}`,
+				),
+				...deprecations.map(({ message }) => `settings: warning: ${message}`),
+			];
+			const failed = diagnostics.length > 0 || invalid.length > 0;
+			if (!failed) lines.push("All agent definitions and subagent settings are valid.");
+			return { exitCode: failed ? 1 : 0, stdout: `${lines.join("\n")}\n` };
 		}
 		let failed = false;
 		const lines = paths.map((path) => {

@@ -119,6 +119,29 @@ describe("subagent V2 Agent Hub", () => {
 		view.dispose();
 	});
 
+	it("resumes a parked child before opening it", async () => {
+		const resumed = new Set<string>();
+		const { view, done } = hub({
+			rows: () => [{ ...ROWS[0]!, state: "parked" }],
+			focus: (id) => resumed.has(id),
+			resume: async (id) => {
+				resumed.add(id);
+			},
+		});
+		view.handleInput("\r");
+		expect(view.render(80).join("\n")).toContain("Resuming ag_a");
+		await vi.waitFor(() => expect(done).toHaveBeenCalledOnce());
+		view.dispose();
+	});
+
+	it("shows slot usage in the header and closes on the hub key", () => {
+		const { view, done } = hub({ capacity: () => ({ running: 1, queued: 2, max: 4 }) });
+		expect(view.render(80)[0]).toContain("1/4 slots in use, 2 queued");
+		view.handleInput("\x1b[D");
+		expect(done).toHaveBeenCalledOnce();
+		view.dispose();
+	});
+
 	it("answers the selected child's pending approval", () => {
 		const { view, responses } = hub();
 		view.handleInput("\x1b[B");

@@ -187,8 +187,9 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 				appendSubagentHookJournal(ice, entry),
 			);
 		},
-		// Background asks wait for the Agent Hub inbox only in an interactive TUI.
-		hasApprovalInbox: () => latestCtx?.mode === "tui" && latestCtx.hasUI === true,
+		// Background asks wait for an inbox: the Agent Hub in the TUI, or an RPC client
+		// answering through respond_subagent_approval. Elsewhere they are denied at once.
+		hasApprovalInbox: () => (latestCtx?.mode === "tui" || latestCtx?.mode === "rpc") && latestCtx.hasUI === true,
 		onApprovalsChanged: (pending) => {
 			for (const approval of pending) {
 				if (announcedApprovals.has(approval.request.id)) continue;
@@ -282,6 +283,16 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		},
 	};
 	let unsubscribeRegistry: (() => void) | undefined;
+	options.agentViewBridge?.setSubagentControlSource({
+		overview: () => {
+			try {
+				return runtime.overview();
+			} catch {
+				return undefined; // No parent session yet.
+			}
+		},
+		respondToApproval: (approvalId, answer) => runtime.respondToApproval(approvalId, answer),
+	});
 	// Ctrl+B: foreground agent waits the user may move to the background.
 	const blockingWaits = new Set<{ ownerSessionId: string; release: () => void }>();
 	const backgroundIds: string[] = [];
@@ -683,7 +694,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 	};
 
 	const hubSource: HubSource = {
-		rows: () => runtime.hubRows(),
+		rows: () => runtime.overview().children,
 		approvals: () => runtime.pendingApprovals(),
 		details: (id) => runtime.describeChild(id),
 		subscribe: (listener) => {
@@ -692,8 +703,10 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		},
 		focus: (id) => options.agentViewBridge?.requestDisplay(id) ?? false,
 		stop: (id) => runtime.stop(id),
+		resume: (id) => runtime.revive(id),
 		delete: (id) => runtime.delete(id),
 		respond: (approvalId, answer) => runtime.respondToApproval(approvalId, answer),
+		capacity: () => runtime.overview().capacity,
 	};
 	if (typeof ice.registerCommand === "function") {
 		ice.registerCommand("agents", {
@@ -737,9 +750,9 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 					ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning");
 					return;
 				}
+				// In place of the editor, like other pickers: an overlay draws over the transcript without clearing it.
 				await ctx.ui.custom<void>(
 					(tui, theme, keybindings, done) => new AgentHubView(tui, theme, keybindings, hubSource, () => done()),
-					{ overlay: true },
 				);
 			},
 		});

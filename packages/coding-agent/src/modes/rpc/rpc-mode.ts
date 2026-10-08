@@ -25,6 +25,7 @@ import {
 	waitForRawStdoutBackpressure,
 	writeRawStdout,
 } from "../../core/output-guard.ts";
+import type { IceAgentViewBridge } from "../../ice-agent-view-bridge.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { toJsonEvent } from "../json-event.ts";
@@ -54,6 +55,7 @@ import type {
 	RpcResponse,
 	RpcSessionState,
 	RpcSlashCommand,
+	RpcSubagentsUpdateEvent,
 } from "./rpc-types.ts";
 
 export type {
@@ -80,8 +82,14 @@ export type {
  * Run in RPC mode.
  * Listens for JSON commands on stdin, outputs events and responses on stdout.
  */
-export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<never> {
+export interface RpcModeOptions {
+	/** ICE-only bridge exposing the subagent overview and approval answers. */
+	agentViewBridge?: IceAgentViewBridge;
+}
+
+export async function runRpcMode(runtimeHost: AgentSessionRuntime, options: RpcModeOptions = {}): Promise<never> {
 	takeOverStdout();
+	const { agentViewBridge } = options;
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
@@ -425,6 +433,17 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	await rebindSession();
 	registerSignalHandlers();
 
+	// Push subagent overview changes; identical consecutive overviews are not repeated.
+	let lastSubagentOverview = "";
+	agentViewBridge?.subscribe(() => {
+		const overview = agentViewBridge.getSubagentOverview();
+		if (!overview) return;
+		const serialized = JSON.stringify(overview);
+		if (serialized === lastSubagentOverview) return;
+		lastSubagentOverview = serialized;
+		output({ type: "subagents_update", overview } satisfies RpcSubagentsUpdateEvent);
+	});
+
 	const getSettingsContext = (): RpcSettingsContext => ({
 		cwd: session.sessionManager.getCwd(),
 		settingsManager: session.settingsManager,
@@ -547,6 +566,29 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				const update = "data" in command ? command.data : command;
 				const snapshot = await applyRpcSetting(getSettingsContext(), update);
 				return success(id, "set_setting", snapshot);
+			}
+
+			// =================================================================
+			// Subagents
+			// =================================================================
+
+			case "get_subagents": {
+				return success(id, "get_subagents", agentViewBridge?.getSubagentOverview() ?? null);
+			}
+
+			case "respond_subagent_approval": {
+				if (
+					typeof command.approvalId !== "string" ||
+					!["allow-once", "allow-session", "deny"].includes(command.answer)
+				) {
+					return error(
+						id,
+						"respond_subagent_approval",
+						"Expected approvalId and answer allow-once, allow-session, or deny.",
+					);
+				}
+				const accepted = agentViewBridge?.respondToSubagentApproval(command.approvalId, command.answer) ?? false;
+				return success(id, "respond_subagent_approval", { accepted });
 			}
 
 			// =================================================================

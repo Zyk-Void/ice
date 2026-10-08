@@ -832,6 +832,66 @@ Response:
 
 The current session name is available via `get_state` in the `sessionName` field. To set the initial name when starting RPC mode, pass `--name <name>` or `-n <name>` to the `ice --mode rpc` process.
 
+### Subagents
+
+Available only under the `ice` launcher. Other hosts return `null` from `get_subagents` and `accepted: false` from `respond_subagent_approval`.
+
+#### get_subagents
+
+Returns the subagent overview for the current parent session, or `null` before a parent session exists.
+
+```json
+{"type": "get_subagents"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_subagents",
+  "success": true,
+  "data": {
+    "enabled": true,
+    "capacity": {"running": 1, "queued": 0, "max": 4},
+    "maxDepth": 0,
+    "children": [
+      {
+        "id": "ag_2d4jiycqlw6yf6ycwk4rpanbrg",
+        "agent": "explore",
+        "description": "Read a.txt",
+        "state": "running",
+        "depth": 0,
+        "running": true,
+        "background": true,
+        "resident": true,
+        "turns": 1,
+        "tokens": 6648,
+        "cost": 0
+      }
+    ],
+    "approvals": [],
+    "diagnostics": []
+  }
+}
+```
+
+`capacity.max` is the concurrency ceiling the session started with (`ice.subagents.maxConcurrent`); `queued` counts turns waiting for a slot. `enabled` is false when `ice.subagents.enabled` is false or `diagnostics` lists invalid settings; either blocks new launches. Child `state` is the registry state (`starting`, `running`, `idle`, `parked`, `blocked`, `stopped`). `background` is true when no parent tool call waits on the running turn; `resident` is false for parked children.
+
+#### respond_subagent_approval
+
+Answers a pending approval from `approvals`. `answer` is `allow-once`, `allow-session` (grants the approval's `sessionRule` for that child), or `deny`. `accepted` is false when the approval is no longer pending.
+
+```json
+{"type": "respond_subagent_approval", "approvalId": "<id from approvals>", "answer": "allow-once"}
+```
+
+Response:
+```json
+{"type": "response", "command": "respond_subagent_approval", "success": true, "data": {"accepted": true}}
+```
+
+In RPC mode, a background child's `ask` waits for this answer until `ice.subagents.askTimeoutMs` (default 10 minutes) and is then denied. Foreground asks still use the `select` extension UI request.
+
 ### Commands
 
 #### get_commands
@@ -1171,6 +1231,17 @@ For branch summaries, `source` is `"branchSummary"` and no `reason` is present.
 ```json
 {
   "type": "summarization_retry_finished"
+}
+```
+
+### subagents_update
+
+Emitted under the `ice` launcher whenever the subagent overview changes (a child starts, finishes, parks, or is deleted, or an approval is queued or answered). `overview` has the same shape as the `get_subagents` data. Identical consecutive overviews are not repeated.
+
+```json
+{
+  "type": "subagents_update",
+  "overview": {"enabled": true, "capacity": {"running": 0, "queued": 0, "max": 4}, "maxDepth": 0, "children": [], "approvals": [], "diagnostics": []}
 }
 ```
 

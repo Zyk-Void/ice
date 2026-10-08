@@ -12,6 +12,7 @@ import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import type { IceSubagentApprovalAnswer, IceSubagentOverview } from "../../ice-agent-view-bridge.ts";
 import type {
 	RpcCommandErrorDetails,
 	RpcCommandInvocationResult,
@@ -41,6 +42,10 @@ export type RpcCommand =
 	| { id?: string; type: "get_settings" }
 	| ({ id?: string; type: "set_setting" } & RpcSettingUpdate)
 	| { id?: string; type: "set_setting"; data: RpcSettingUpdate }
+
+	// Subagents (ICE launcher only)
+	| { id?: string; type: "get_subagents" }
+	| { id?: string; type: "respond_subagent_approval"; approvalId: string; answer: IceSubagentApprovalAnswer }
 
 	// Model
 	| { id?: string; type: "set_model"; provider: string; modelId: string }
@@ -162,6 +167,16 @@ export type RpcResponse =
 	// Settings
 	| { id?: string; type: "response"; command: "get_settings"; success: true; data: RpcSettingsSnapshot }
 	| { id?: string; type: "response"; command: "set_setting"; success: true; data: RpcSettingsSnapshot }
+
+	// Subagents: null when this host has no subagent runtime or no parent session yet
+	| { id?: string; type: "response"; command: "get_subagents"; success: true; data: IceSubagentOverview | null }
+	| {
+			id?: string;
+			type: "response";
+			command: "respond_subagent_approval";
+			success: true;
+			data: { accepted: boolean };
+	  }
 
 	// Model
 	| {
@@ -292,6 +307,12 @@ export type RpcResponse =
 			errorCode?: string;
 			errorDetails?: RpcCommandErrorDetails;
 	  };
+
+/** Emitted whenever the subagent overview changes; carries the full bounded overview. */
+export interface RpcSubagentsUpdateEvent {
+	type: "subagents_update";
+	overview: IceSubagentOverview;
+}
 
 // ============================================================================
 // Extension UI Events (stdout)

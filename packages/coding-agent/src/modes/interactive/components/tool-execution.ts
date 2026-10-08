@@ -392,7 +392,7 @@ export class ToolExecutionComponent extends Container {
 		}
 		const diff = this.toolName === "edit" ? this.getEditDiff() : undefined;
 		if (diff) {
-			const diffLines = trimBlankLines(renderDiff(diff).split("\n"));
+			const diffLines = trimBlankLines(renderDiff(diff, { width }).split("\n"));
 			return diffLines.length > COMPACT_DIFF_PREVIEW_LINES
 				? [...diffLines.slice(0, COMPACT_DIFF_PREVIEW_LINES), more(diffLines.length - COMPACT_DIFF_PREVIEW_LINES)]
 				: diffLines;
@@ -427,7 +427,7 @@ export class ToolExecutionComponent extends Container {
 		const editDiff = this.toolName === "edit" ? this.getEditDiff() : undefined;
 		const body = trimBlankLines(
 			this.expanded && this.result && !this.result.isError && editDiff
-				? renderDiff(editDiff).split("\n")
+				? renderDiff(editDiff, { width: bodyWidth }).split("\n")
 				: this.expanded && this.result && this.toolName !== "edit"
 					? (this.resultRendererComponent?.render(bodyWidth) ??
 						resultTextLines(this.result).map((line) => this.toolOutput(line)))

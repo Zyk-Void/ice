@@ -655,9 +655,8 @@ export class InteractiveMode {
 			() => keyText("app.notices.show"),
 		);
 		this.footer.setCapabilitySource(() => this.getElevatedCapabilities());
-		this.footer.setBackgroundTaskSource(
-			() => this.session.bashBackground.runningCount() + (this.agentViewBridge?.backgroundSubagentCount() ?? 0),
-		);
+		this.footer.setBackgroundTaskSource(() => this.session.bashBackground.runningCount());
+		this.footer.setSubagentSource(() => this.agentViewBridge?.getSubagentOverview());
 		this.footer.setStyle(this.settingsManager.getFooterStyle());
 		this.applySymbolsSetting();
 		this.noticeCenter.subscribe(() => this.ui.requestRender());
@@ -2435,8 +2434,15 @@ export class InteractiveMode {
 		);
 	}
 
-	private openSubagentChooser(): void {
-		this.openAgentSwitcherDock();
+	/** The Agent Hub is the one management panel; it is owned by the subagent extension's `/agents` command. */
+	private openAgentHub(): void {
+		if (!this.agentViewBridge?.getSubagentOverview()) {
+			this.showWarning("Subagents are not available in this session.");
+			return;
+		}
+		this.session.prompt("/agents").catch((error: unknown) => {
+			this.showWarning(`Unable to open the Agent Hub: ${error instanceof Error ? error.message : String(error)}`);
+		});
 	}
 
 	private openAgentSwitcherDock(): void {
@@ -3433,10 +3439,23 @@ export class InteractiveMode {
 				if (released > 0) this.showStatus("Moved to background. You will get a message when it finishes.");
 			},
 		);
-		this.defaultEditor.onAction("app.subagents.open", () => this.openSubagentChooser());
-		this.defaultEditor.onAction("app.subagents.parent", () => this.agentViewBridge?.returnToParent());
-		this.defaultEditor.onAction("app.subagents.next", () => this.cycleSubagentView(1));
-		this.defaultEditor.onAction("app.subagents.previous", () => this.cycleSubagentView(-1));
+		this.defaultEditor.onAction("app.subagents.open", () => this.openAgentHub());
+		// Navigation keys share defaults with editor cursor movement, so they only act while
+		// subagents exist and the editor holds no draft; otherwise the editor handles them.
+		const editorIdle = () => this.defaultEditor.getText().length === 0 && !this.defaultEditor.isShowingAutocomplete();
+		const canNavigateAgents = () => editorIdle() && (this.agentViewBridge?.listViews().length ?? 0) > 1;
+		this.defaultEditor.onConditionalAction(
+			"app.agents.hub",
+			() => editorIdle() && (this.agentViewBridge?.getSubagentOverview()?.children.length ?? 0) > 0,
+			() => this.openAgentHub(),
+		);
+		this.defaultEditor.onConditionalAction("app.subagents.parent", canNavigateAgents, () =>
+			this.agentViewBridge?.returnToParent(),
+		);
+		this.defaultEditor.onConditionalAction("app.subagents.next", canNavigateAgents, () => this.cycleSubagentView(1));
+		this.defaultEditor.onConditionalAction("app.subagents.previous", canNavigateAgents, () =>
+			this.cycleSubagentView(-1),
+		);
 		this.defaultEditor.onAction("app.subagents.takeControl", () => this.toggleSubagentControl());
 		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
 		this.defaultEditor.onAction("app.editor.external", () => void this.handleOpenExternalEditor());
@@ -3559,7 +3578,7 @@ export class InteractiveMode {
 				this.editor.setText("");
 				const bashTasks = this.session.bashBackground.list();
 				if (bashTasks.length === 0) {
-					this.openSubagentChooser();
+					this.openAgentHub();
 					return;
 				}
 				const lines = bashTasks.map(
@@ -3594,25 +3613,12 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
-			if (
-				text === "/agents" ||
-				text.startsWith("/agents ") ||
-				text === "/subagents" ||
-				text.startsWith("/subagents ")
-			) {
+			if (text === "/subagents" || text.startsWith("/subagents ")) {
+				// Alias for the subagent extension's /agents command (Agent Hub, list, new).
 				this.editor.setText("");
-				const commandArgs = text.trim().split(/\s+/).slice(1);
-				if (commandArgs[0] === "split" || !this.agentViewBridge) {
-					try {
-						await this.session.prompt(text);
-					} catch (error: unknown) {
-						this.showWarning(
-							`Unable to open subagent observatory: ${error instanceof Error ? error.message : String(error)}`,
-						);
-					}
-				} else if (!this.agentViewBridge.requestAgentSwitcher()) {
-					this.showWarning("Agent switcher is unavailable in this interactive host");
-				}
+				this.session.prompt(`/agents${text.slice("/subagents".length)}`).catch((error: unknown) => {
+					this.showWarning(`Unable to run /agents: ${error instanceof Error ? error.message : String(error)}`);
+				});
 				return;
 			}
 			if (text === "/fork") {

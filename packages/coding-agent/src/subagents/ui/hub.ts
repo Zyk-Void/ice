@@ -36,8 +36,12 @@ export interface HubSource {
 	/** Show the child in the normal interactive view; false when it cannot be focused. */
 	focus(id: string): boolean;
 	stop(id: string): Promise<void>;
+	/** Revive a parked child into memory so it can be shown live. */
+	resume?(id: string): Promise<void>;
 	delete(id: string): Promise<void>;
 	respond(approvalId: string, answer: ApprovalAnswer): boolean;
+	/** Running turns, turns queued for a slot, and the concurrency ceiling. */
+	capacity?(): { running: number; queued: number; max: number };
 }
 
 const WIDE_WIDTH = 110;
@@ -106,7 +110,7 @@ export class AgentHubView implements Component {
 	handleInput(data: string): void {
 		const rows = this.source.rows();
 		const row = this.selectedRow();
-		if (this.keybindings.matches(data, "tui.select.cancel")) {
+		if (this.keybindings.matches(data, "tui.select.cancel") || this.keybindings.matches(data, "app.agents.hub")) {
 			this.done();
 			return;
 		}
@@ -122,7 +126,21 @@ export class AgentHubView implements Component {
 				this.done();
 				return;
 			}
-			this.notice = `${row.id} has no live session to show; resume it first.`;
+			const resume = this.source.resume;
+			if (row.state === "parked" && resume) {
+				this.notice = `Resuming ${row.id}…`;
+				resume(row.id).then(
+					() => {
+						if (this.source.focus(row.id)) this.done();
+						else this.notice = `${row.id} was resumed but cannot be shown.`;
+						this.tui.requestRender();
+					},
+					(error: unknown) => {
+						this.notice = error instanceof Error ? error.message : String(error);
+						this.tui.requestRender();
+					},
+				);
+			} else this.notice = `${row.id} has no live session to show.`;
 		} else if (row && this.keybindings.matches(data, "app.agents.stop"))
 			this.act(this.source.stop(row.id), `Stopped the current turn of ${row.id}.`);
 		else if (row && this.keybindings.matches(data, "app.agents.delete"))
@@ -143,8 +161,14 @@ export class AgentHubView implements Component {
 
 	private header(rows: readonly HubRow[], approvals: number): string {
 		const count = (state: string) => rows.filter((row) => row.state === state).length;
+		const capacity = this.source.capacity?.();
 		const parts = [
 			`${rows.length} agent${rows.length === 1 ? "" : "s"}`,
+			...(capacity
+				? [
+						`${capacity.running}/${capacity.max} slots in use${capacity.queued > 0 ? `, ${capacity.queued} queued` : ""}`,
+					]
+				: []),
 			...(["running", "idle", "parked", "blocked"] as const)
 				.map((state) => [state, count(state)] as const)
 				.filter(([, value]) => value > 0)

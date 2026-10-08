@@ -256,6 +256,54 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
 	return { r, g, b };
 }
 
+function isLightHex(hex: string): boolean {
+	if (!/^#[0-9a-f]{6}$/i.test(hex)) return false;
+	const { r, g, b } = hexToRgb(hex);
+	return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 >= 0.5;
+}
+
+/**
+ * A diff background with the hue of a theme's diff color: dark and moderately saturated on
+ * dark surfaces, pale on light ones. Words get a stronger tint than whole rows.
+ */
+function diffTint(color: string | number, lightSurface: boolean, emphasis: "line" | "word"): string | undefined {
+	if (typeof color !== "string" || !/^#[0-9a-f]{6}$/i.test(color)) return undefined;
+	const { r, g, b } = hexToRgb(color);
+	const max = Math.max(r, g, b) / 255;
+	const min = Math.min(r, g, b) / 255;
+	const delta = max - min;
+	let hue = 0;
+	if (delta > 0) {
+		if (max === r / 255) hue = (((g - b) / 255 / delta) % 6) * 60;
+		else if (max === g / 255) hue = ((b - r) / 255 / delta + 2) * 60;
+		else hue = ((r - g) / 255 / delta + 4) * 60;
+	}
+	if (hue < 0) hue += 360;
+	const saturation = delta === 0 ? 0 : Math.min(0.6, Math.max(0.35, delta / (1 - Math.abs(max + min - 1))));
+	const lightness = lightSurface ? (emphasis === "line" ? 0.92 : 0.82) : emphasis === "line" ? 0.14 : 0.24;
+	// HSL to RGB.
+	const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+	const x = chroma * (1 - Math.abs(((hue / 60) % 2) - 1));
+	const m = lightness - chroma / 2;
+	const [r1, g1, b1] =
+		hue < 60
+			? [chroma, x, 0]
+			: hue < 120
+				? [x, chroma, 0]
+				: hue < 180
+					? [0, chroma, x]
+					: hue < 240
+						? [0, x, chroma]
+						: hue < 300
+							? [x, 0, chroma]
+							: [chroma, 0, x];
+	const channel = (value: number) =>
+		Math.round((value + m) * 255)
+			.toString(16)
+			.padStart(2, "0");
+	return `#${channel(r1)}${channel(g1)}${channel(b1)}`;
+}
+
 // The 6x6x6 color cube channel values (indices 0-5)
 const CUBE_VALUES = [0, 95, 135, 175, 215, 255];
 
@@ -414,6 +462,7 @@ export class Theme {
 	sourceInfo?: SourceInfo;
 	private fgColors: Map<ThemeColor, string>;
 	private bgColors: Map<ThemeBg, string>;
+	private readonly diffBackgrounds = new Map<string, string>();
 	private mode: ColorMode;
 
 	constructor(
@@ -444,6 +493,25 @@ export class Theme {
 		for (const [key, value] of Object.entries(backgrounds) as [ThemeBg, string | number][]) {
 			this.bgColors.set(key, bgAnsi(value, mode));
 		}
+		const surface = [bgColors.toolPendingBg, bgColors.userMessageBg, bgColors.selectedBg].find(
+			(value): value is string => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value),
+		);
+		const lightSurface = surface !== undefined && isLightHex(surface);
+		for (const kind of ["added", "removed"] as const) {
+			const source = kind === "added" ? fgColors.toolDiffAdded : fgColors.toolDiffRemoved;
+			for (const emphasis of ["line", "word"] as const) {
+				const tint = diffTint(source, lightSurface, emphasis);
+				if (tint) this.diffBackgrounds.set(`${kind}:${emphasis}`, bgAnsi(tint, mode));
+			}
+		}
+	}
+
+	/**
+	 * Background for a diff row (`line`) or a changed word within it (`word`), tinted with the
+	 * theme's own diff color. Undefined when that color is not a hex value (ANSI index or default).
+	 */
+	getDiffBgAnsi(kind: "added" | "removed", emphasis: "line" | "word"): string | undefined {
+		return this.diffBackgrounds.get(`${kind}:${emphasis}`);
 	}
 
 	fg(color: ThemeColor, text: string): string {

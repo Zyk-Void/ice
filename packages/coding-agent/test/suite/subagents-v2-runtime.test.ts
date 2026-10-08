@@ -79,6 +79,8 @@ function transcriptOf(runtime: SubagentV2Runtime, childId: string): string {
 }
 
 const task = (agent: string, prompt: string) => ({ agent, description: `${agent} task`, prompt });
+/** A request that still wants tools, so a budget reached here stops work instead of completing it. */
+const unfinished = () => fauxAssistantMessage(fauxToolCall("read", { path: "missing.txt" }), { stopReason: "toolUse" });
 
 async function runOne(
 	runtime: SubagentV2Runtime,
@@ -159,18 +161,19 @@ describe("subagent V2 runtime", () => {
 		await runtime.shutdown();
 	});
 
-	it("permits tools before the last model request and restores hooks for renewed tasks", async () => {
+	it("completes a task that finishes on its last allowed request and keeps the frozen ceiling", async () => {
 		const { harness, host } = await setup();
 		writeFileSync(join(harness.tempDir, "read.txt"), "data");
 		harness.setResponses([
 			fauxAssistantMessage(fauxToolCall("read", { path: "read.txt" }), { stopReason: "toolUse" }),
 			fauxAssistantMessage("ordinary report"),
-			fauxAssistantMessage("bounded report"),
 		]);
 		const runtime = new SubagentV2Runtime(host());
 		const [record] = await runtime.launch([{ ...task("explore", "read"), maxTurns: 2 }]);
+		// The final answer arrives on the last allowed request: the task completed within budget.
 		expect(await runtime.runTurn(record!.id, "read", { foreground: true })).toMatchObject({
-			outcome: "budget_exhausted",
+			outcome: "completed",
+			text: "ordinary report",
 		});
 		expect(transcriptOf(runtime, record!.id)).toContain("data");
 		await runtime.registry.park(runtime.ownerSessionId(), record!.id);
@@ -230,7 +233,7 @@ describe("subagent V2 runtime", () => {
 	it("does not execute hallucinated wrap-up tools or make another request", async () => {
 		const { harness, host } = await setup();
 		harness.setResponses([
-			fauxAssistantMessage("ordinary"),
+			unfinished(),
 			fauxAssistantMessage(fauxToolCall("write", { path: "wrap.txt", content: "no" }), { stopReason: "toolUse" }),
 			fauxAssistantMessage("must not run"),
 		]);
@@ -260,6 +263,45 @@ describe("subagent V2 runtime", () => {
 		await runtime.stop(record!.id);
 		expect(await running).toMatchObject({ outcome: "cancelled" });
 		expect(harness.getPendingResponseCount()).toBe(1);
+		await runtime.shutdown();
+	});
+
+	it("projects capacity, queue, and per-child run state in the overview", async () => {
+		const { harness, host } = await setup();
+		const settings = resolveSubagentsV2Settings({
+			global: { maxConcurrent: 1, maxDepth: 2 },
+			projectTrusted: false,
+		});
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const waiting = vi.fn(async () => {
+			await gate;
+			return fauxAssistantMessage("first");
+		});
+		harness.setResponses([waiting, fauxAssistantMessage("second")]);
+		const runtime = new SubagentV2Runtime(host({ getSettings: () => settings }));
+		expect(runtime.overview()).toMatchObject({
+			enabled: true,
+			capacity: { running: 0, queued: 0, max: 1 },
+			maxDepth: 2,
+			children: [],
+			approvals: [],
+		});
+		const [first, second] = await runtime.launch([task("explore", "first"), task("explore", "second")]);
+		const running = runtime.runTurn(first!.id, "first", { foreground: true });
+		await vi.waitFor(() => expect(waiting).toHaveBeenCalledOnce());
+		const queued = runtime.runTurn(second!.id, "second", { foreground: false, background: true });
+		await vi.waitFor(() => expect(runtime.overview().capacity).toEqual({ running: 1, queued: 1, max: 1 }));
+		const children = new Map(runtime.overview().children.map((child) => [child.id, child]));
+		expect(children.get(first!.id)).toMatchObject({ running: true, background: false, resident: true, depth: 0 });
+		expect(children.get(second!.id)).toMatchObject({ running: true, background: true });
+		release();
+		await running;
+		await queued;
+		expect(runtime.overview().capacity).toEqual({ running: 0, queued: 0, max: 1 });
+		expect(runtime.overview().children.every((child) => !child.running)).toBe(true);
 		await runtime.shutdown();
 	});
 
@@ -299,7 +341,7 @@ describe("subagent V2 runtime", () => {
 			);
 			return fauxAssistantMessage("", { stopReason: "aborted" });
 		});
-		harness.setResponses([fauxAssistantMessage("ordinary"), waiting, fauxAssistantMessage("must not run")]);
+		harness.setResponses([unfinished(), waiting, fauxAssistantMessage("must not run")]);
 		const runtime = new SubagentV2Runtime(host());
 		const [record] = await runtime.launch([{ ...task("explore", "finish"), maxTurns: 1 }]);
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -317,7 +359,7 @@ describe("subagent V2 runtime", () => {
 			await runtime.shutdown();
 		}
 		harness.setResponses([
-			fauxAssistantMessage("ordinary"),
+			unfinished(),
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: "503 temporary error" }),
 			fauxAssistantMessage("must not retry"),
 		]);
@@ -330,7 +372,7 @@ describe("subagent V2 runtime", () => {
 
 	it("persists exhaustion across restart and denies empty or invalid renewal before revival", async () => {
 		const { harness, host, parent, sessionManager } = await setup();
-		harness.setResponses([fauxAssistantMessage("ordinary"), fauxAssistantMessage("wrap")]);
+		harness.setResponses([unfinished(), fauxAssistantMessage("wrap")]);
 		const runtime = new SubagentV2Runtime(host());
 		const [record] = await runtime.launch([{ ...task("explore", "finish"), maxTurns: 1 }]);
 		await runtime.runTurn(record!.id, "finish", { foreground: true });
@@ -348,7 +390,7 @@ describe("subagent V2 runtime", () => {
 			restored.continueChild(record!.id, "again", { foreground: true, budgets: { maxTurns: 2 } }),
 		).rejects.toThrow(/frozen ceiling/);
 		expect(factory).not.toHaveBeenCalled();
-		harness.setResponses([fauxAssistantMessage("renewed"), fauxAssistantMessage("wrap renewed")]);
+		harness.setResponses([unfinished(), fauxAssistantMessage("wrap renewed")]);
 		expect(
 			await restored.continueChild(record!.id, "again", { foreground: true, budgets: { maxTurns: 1 } }),
 		).toMatchObject({ outcome: "budget_exhausted", text: "wrap renewed" });
@@ -424,7 +466,7 @@ describe("subagent V2 runtime", () => {
 				});
 				return session;
 			};
-			harness.setResponses([fauxAssistantMessage("ordinary"), fauxAssistantMessage("must not wrap")]);
+			harness.setResponses([unfinished(), fauxAssistantMessage("must not wrap")]);
 			const runtime = new SubagentV2Runtime(host({ createChildAgentSession: factory }));
 			const [record] = await runtime.launch([{ ...task("explore", "finish"), maxTurns: 1 }]);
 			const running = runtime.runTurn(record!.id, "finish", { foreground: true });
@@ -461,7 +503,7 @@ describe("subagent V2 runtime", () => {
 			});
 			return session;
 		};
-		harness.setResponses([fauxAssistantMessage("ordinary"), fauxAssistantMessage("must not wrap")]);
+		harness.setResponses([unfinished(), fauxAssistantMessage("must not wrap")]);
 		const runtime = new SubagentV2Runtime(host({ createChildAgentSession: factory }));
 		const [record] = await runtime.launch([{ ...task("explore", "finish"), maxTurns: 1 }]);
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -580,6 +622,18 @@ describe("subagent V2 runtime", () => {
 		});
 		const runtime = new SubagentV2Runtime(host({ getSettings: () => settings, createChildAgentSession: factory }));
 		await expect(runtime.launch([task("general", "read")])).rejects.toThrow(/Invalid parent settings/);
+		expect(factory).not.toHaveBeenCalled();
+		expect(runtime.registry.list(sessionManager.getSessionId())).toEqual([]);
+		await runtime.shutdown();
+	});
+
+	it("refuses new launches while ice.subagents.enabled is false", async () => {
+		const { host, sessionManager } = await setup();
+		const factory = vi.fn(createV2ChildSession);
+		const settings = resolveSubagentsV2Settings({ global: { enabled: false }, projectTrusted: false });
+		const runtime = new SubagentV2Runtime(host({ getSettings: () => settings, createChildAgentSession: factory }));
+		await expect(runtime.launch([task("general", "read")])).rejects.toThrow(/disabled by ice.subagents.enabled/);
+		await expect(runtime.launch([])).resolves.toEqual([]);
 		expect(factory).not.toHaveBeenCalled();
 		expect(runtime.registry.list(sessionManager.getSessionId())).toEqual([]);
 		await runtime.shutdown();

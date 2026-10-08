@@ -243,7 +243,7 @@ describe("subagent footer observability", () => {
 
 		try {
 			const text = switcher.render(120).join("\n");
-			expect(text).toContain("2 active");
+			expect(text).toContain("2 working");
 			expect(text).toContain("[Main agent] MAIN");
 			expect(text).not.toContain("[1/2 explorer · first-task]");
 		} finally {
@@ -312,7 +312,7 @@ describe("subagent footer observability", () => {
 		try {
 			const wide = switcher.render(120);
 			const text = wide.join("\n");
-			expect(text).toContain("2 active");
+			expect(text).toContain("1 working · 1 idle");
 			expect(text).toContain("1 retained");
 			expect(text).toContain("1 needs attention");
 			expect(text).toContain("[2/3 reviewer · api-review] IDLE");
@@ -363,7 +363,7 @@ describe("subagent footer observability", () => {
 
 		try {
 			const text = switcher.render(120).join("\n");
-			expect(text).toContain("0 active");
+			expect(text).toContain("none live");
 			expect(text).toContain("1 retained");
 			expect(text).toContain("COMPLETED");
 			expect(text).not.toContain("…");

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager } from "../src/core/package-manager.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { resolveIceSubagentContract, resolveIceSubagentHooks } from "../src/subagents/settings.ts";
+import { resolveIceSubagentHooks } from "../src/subagents/settings.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -100,19 +100,6 @@ describe("ice-only resource precedence and no ambient child installs", () => {
 		expect(resolve).not.toHaveBeenCalled();
 		expect(extensions).not.toHaveBeenCalled();
 		expect(loader.getExtensions().extensions).toEqual([]);
-	});
-	it("keeps explicit global preferences above project per-role defaults without weakening caps", () => {
-		const contract = resolveIceSubagentContract({
-			role: "self",
-			projectTrusted: true,
-			globalSettings: {
-				ice: {
-					subagents: { defaults: { startupTimeoutMs: 10_000 }, restrictions: { maxStartupTimeoutMs: 8_000 } },
-				},
-			},
-			projectSettings: { ice: { subagents: { roleDefaults: { self: { startupTimeoutMs: 4_000 } } } } },
-		});
-		expect(contract.values.timeoutMs).toBe(8_000);
 	});
 	it("global hook definitions win collisions, retaining required status", () => {
 		const hook = { id: "gate", event: "subagent.beforeLaunch", kind: "in-process" };

@@ -4,6 +4,7 @@ import type { AgentSession } from "../../../core/agent-session.ts";
 import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import { addUsageToTotals, createUsageTotals } from "../../../core/usage-totals.ts";
+import type { IceSubagentOverview } from "../../../ice-agent-view-bridge.ts";
 import { createDefaultAppearance } from "../appearance/appearance-defaults.ts";
 import type { FooterAppearance, FooterFieldId } from "../appearance/appearance-types.ts";
 import { applyTextPresentation } from "../appearance/text-presentation.ts";
@@ -75,6 +76,7 @@ export class FooterComponent implements Component {
 	private getNoticesHint: () => string = () => "";
 	private getCapabilities: () => readonly string[] = () => [];
 	private getBackgroundTaskCount: () => number = () => 0;
+	private getSubagentOverview: () => IceSubagentOverview | undefined = () => undefined;
 	private style: FooterStyle = "legacy";
 
 	constructor(session: AgentSession, footerData: ReadonlyFooterDataProvider) {
@@ -109,9 +111,14 @@ export class FooterComponent implements Component {
 		this.getCapabilities = getCapabilities;
 	}
 
-	/** Running background tasks (bash commands and subagents) shown as a right-side segment. */
+	/** Running background bash commands shown as a right-side segment. */
 	setBackgroundTaskSource(getCount: () => number): void {
 		this.getBackgroundTaskCount = getCount;
+	}
+
+	/** Subagent capacity (running/max), queue, and pending approvals shown as a right-side segment. */
+	setSubagentSource(getOverview: () => IceSubagentOverview | undefined): void {
+		this.getSubagentOverview = getOverview;
 	}
 
 	setAppearance(appearance: FooterAppearance | null): void {
@@ -214,6 +221,23 @@ export class FooterComponent implements Component {
 		const backgroundTasks = this.getBackgroundTaskCount();
 		if (backgroundTasks > 0) {
 			right.push({ text: primary(`${backgroundTasks} in background`), priority: 95 });
+		}
+		const subagents = this.getSubagentOverview();
+		if (subagents) {
+			const { running, queued, max } = subagents.capacity;
+			const approvals = subagents.approvals.length;
+			const parts = [
+				subagents.enabled ? `agents ${running}/${max}` : "agents off",
+				...(queued > 0 ? [`${queued} queued`] : []),
+			];
+			const label = running > 0 || queued > 0 ? primary(parts.join(" ")) : dim(parts.join(" "));
+			const approvalLabel =
+				approvals > 0 ? theme.fg("warning", `${approvals} approval${approvals === 1 ? "" : "s"}`) : "";
+			right.push({
+				text: approvalLabel ? `${label}${separator}${approvalLabel}` : label,
+				// Capacity outranks the working directory; activity and approvals outrank the model.
+				priority: approvals > 0 ? REQUIRED_PRIORITY : running > 0 || queued > 0 ? 96 : 65,
+			});
 		}
 		const badge = this.renderNoticesBadge(appearance);
 		if (badge) right.push({ text: badge, priority: REQUIRED_PRIORITY });

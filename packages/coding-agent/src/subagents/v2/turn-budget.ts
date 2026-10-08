@@ -46,6 +46,8 @@ export class ChildTurnBudget {
 	private readonly restore: () => void;
 	private timer: ReturnType<typeof setTimeout> | undefined;
 	private exhaustion: ExhaustedBudget | undefined;
+	/** True once the budget stopped work the child still wanted to do. */
+	private cutShort = false;
 	private wrappingUp = false;
 	private wrapRequests = 0;
 	private wrapTimedOut = false;
@@ -112,7 +114,12 @@ export class ChildTurnBudget {
 		};
 		agent.shouldStopAfterTurn = async (context, signal) => {
 			recordUsage(context.message);
-			if (this.wrappingUp || this.exhausted()) return true;
+			if (this.wrappingUp) return true;
+			if (this.exhausted()) {
+				// A final answer on the last allowed request is a completed task, not an exhausted one.
+				if (context.message.stopReason !== "stop") this.cutShort = true;
+				return true;
+			}
 			return (await stop?.(context, signal)) ?? false;
 		};
 		// Avoid automatic recovery/summary requests outside the task budget. These
@@ -143,6 +150,7 @@ export class ChildTurnBudget {
 					return;
 				}
 				this.exhaustion ??= { status: "exhausted", limit: "timeoutMs", used: timeoutMs, max: timeoutMs };
+				this.cutShort = true;
 				void session.abort().catch(() => {});
 			};
 			arm();
@@ -155,15 +163,24 @@ export class ChildTurnBudget {
 		return this.exhaustion;
 	}
 
+	/** The exhausted limit, only when it stopped work; a task finishing exactly at its limit completed. */
+	interrupted(): ExhaustedBudget | undefined {
+		const state = this.exhausted();
+		return state && this.cutShort ? state : undefined;
+	}
+
 	assertOrdinaryWork(): void {
 		this.signal.throwIfAborted();
 		if (this.wrappingUp) throw new Error("Tools are disabled during budget wrap-up.");
 		const state = this.exhausted();
-		if (state) throw new Error(budgetExhaustedMessage(state));
+		if (state) {
+			this.cutShort = true;
+			throw new Error(budgetExhaustedMessage(state));
+		}
 	}
 
 	async wrapUp(signal: AbortSignal): Promise<string | undefined> {
-		const state = this.exhausted();
+		const state = this.interrupted();
 		if (!state || signal.aborted || this.wrappingUp) return undefined;
 		// The runtime timer can exhaust even when an injected test clock has not advanced.
 		// wrapRequests independently enforces one request in both cases.
