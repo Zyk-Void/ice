@@ -141,7 +141,8 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 	let latestCtx: ExtensionContext | undefined;
 	const agentDir = options.agentDir ?? getAgentDir();
 	const settingsFor = (ctx: ExtensionContext | undefined) => {
-		const manager = ctx?.settingsManager;
+		// The footer can initialize the owner before session_start provides an extension context.
+		const manager = ctx?.settingsManager ?? options.agentViewBridge?.getParentSession()?.settingsManager;
 		const trusted = ctx?.isProjectTrusted?.() ?? false;
 		return resolveSubagentsV2Settings({
 			global: (manager?.getGlobalSettings() as { ice?: { subagents?: unknown } } | undefined)?.ice?.subagents,

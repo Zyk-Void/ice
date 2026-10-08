@@ -11,6 +11,20 @@ afterEach(() => {
 });
 
 describe("subagents V2 SDK wiring", () => {
+	it("uses the parent's concurrency setting when the overview initializes before session_start", async () => {
+		const subagents = createIceSubagents({ agentDir: join("/nonexistent", "agent") });
+		const harness = await createHarness({
+			extensionFactories: [subagents.extension],
+			persistSession: true,
+			settings: { ice: { subagents: { maxConcurrent: 2 } } },
+		});
+		harnesses.push(harness);
+		subagents.attach(harness.session);
+		expect(subagents.overview()?.capacity.max).toBe(2);
+		await harness.session.bindExtensions({ mode: "tui" });
+		expect(subagents.overview()?.capacity.max).toBe(2);
+	});
+
 	it("runs a child through the inline extension and exposes it in the overview", async () => {
 		const subagents = createIceSubagents({
 			agents: { summarizer: { description: "Summarize text", prompt: "Summarize what you are given." } },
