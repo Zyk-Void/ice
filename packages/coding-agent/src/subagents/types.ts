@@ -1,12 +1,8 @@
 /** Legacy subagent types, limits, and shared constants (moved from ice-subagents.ts). */
 import { createHash } from "node:crypto";
-import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import type { Api, Model } from "@zykairotis/ice-ai/compat";
 import type { TSchema } from "typebox";
-import type { ModelRuntime } from "../core/model-runtime.ts";
-import type { SettingsManager } from "../core/settings-manager.ts";
 import type { SubagentProfileColor } from "../ice-agent-view-bridge.ts";
-import { SUBAGENT_CONCURRENCY_LIMITS, type SubagentConcurrencyAdmission } from "./registry/admission.ts";
 import type { SubagentAssuranceLevel } from "./results/assurance.ts";
 import type { SubagentOutput } from "./results/output-artifacts.ts";
 import type {
@@ -16,16 +12,9 @@ import type {
 	SubagentTaskContractVerificationInput,
 } from "./results/task-contract.ts";
 import type { SubagentContextManifest } from "./runtime/context-bootstrap.ts";
-import type { SubagentHookRuntime } from "./runtime/live-session.ts";
 import type { SubagentPreflightRequirement, SubagentPreflightRequirementInput } from "./runtime/preflight.ts";
 import type { IceModelCandidateSkip, IceSubagentRouteSnapshot } from "./runtime/routing.ts";
-import type {
-	SubagentCheckInState,
-	SubagentManagementChildState,
-	SubagentRetryState,
-	SubagentRuntimeAttention,
-	SubagentToolActivityDigest,
-} from "./runtime/view-state.ts";
+import type { SubagentRuntimeAttention, SubagentToolActivityDigest } from "./runtime/view-state.ts";
 import type { IceHookDispatchRecord } from "./settings.ts";
 import type { IceResolvedDelegableTool } from "./tools/adapters.ts";
 
@@ -49,59 +38,7 @@ export function createDelegatedShellEnvironment(environment: NodeJS.ProcessEnv):
 	);
 }
 
-export const SUBAGENT_TOOL_NAMES = ["read", "grep", "find", "ls"] as const;
-export type SubagentToolName = (typeof SUBAGENT_TOOL_NAMES)[number];
-
-/** Every built-in capability a profile may request. Safe launches still clamp this to SUBAGENT_TOOL_NAMES. */
-export const SUBAGENT_REQUESTED_TOOL_NAMES = ["read", "grep", "find", "ls", "bash", "edit", "write"] as const;
-export type SubagentRequestedToolName = (typeof SUBAGENT_REQUESTED_TOOL_NAMES)[number];
 export type SubagentThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
-
-export const SUBAGENT_PROFILE_LIMITS = {
-	minTimeoutMs: 1_000,
-	maxTimeoutMs: 10 * 60 * 1_000,
-	minTemperature: 0,
-	maxTemperature: 2,
-	minTopP: 0,
-	maxTopP: 1,
-} as const;
-
-/** Conservative per-call ceiling for a management `wait`; expiry is never a child timeout. */
-export const SUBAGENT_MANAGEMENT_WAIT_LIMIT_MS = 60_000;
-export const SUBAGENT_MANAGED_REQUEST_LIMIT = 256;
-export const SUBAGENT_MANAGEMENT_WAIT_DEFAULT_MS = 30_000;
-/** Bounded number of settled detached-run terminal results retained for post-terminal management. */
-export const SUBAGENT_RETAINED_RESULT_LIMIT = 32;
-/**
- * Bounded retention window granted to a detached child. It is separate from the
- * supervisor extension reserve, so detaching never spends the extension budget.
- */
-export const SUBAGENT_DETACH_RETENTION_MS = 2 * 60 * 1_000;
-
-/**
- * Bounded result of an observational management action. `waitExpired` is true
- * only when the parent's management window elapsed before a child state change;
- * it never implies the child timed out.
- */
-export interface SubagentManagedObservation {
-	readonly runId: string;
-	readonly childState: SubagentManagementChildState;
-	readonly terminal: boolean;
-	readonly waitExpired: boolean;
-	readonly attention?: SubagentRuntimeAttention;
-	readonly checkIn?: SubagentCheckInState;
-	readonly result?: SubagentResult;
-}
-
-/**
- * Launch-time admission handle for a retained managed child. It is delivered
- * once, when supervision starts, so the parent can return control before the
- * initial hard timeout while the same child session keeps running.
- */
-export interface SubagentManagedHandle {
-	readonly runId: string;
-	readonly childSessionId?: string;
-}
 
 export interface UnsafeSubagentStartupArgOptions {
 	stdinIsTTY: boolean;
@@ -207,9 +144,6 @@ export function normalizeUnsafeSubagentStartupArgs(
 	return normalized;
 }
 
-export const WRITER_TOOL_NAMES = ["read", "grep", "find", "ls", "write", "edit"] as const;
-export type WriterToolName = (typeof WRITER_TOOL_NAMES)[number];
-
 /**
  * `timed_out` and `needs_time` remain in the shared status vocabulary only
  * for historical/persisted compatibility. Current managed launches do not
@@ -259,8 +193,6 @@ export type SubagentFailureCode =
 
 export type SubagentProfileSource = "user" | "project" | "self";
 
-export type SubagentProfileKind = "file" | "self";
-
 /**
  * Parent-owned MCP capability metadata. The adapter, not a server description,
  * decides whether a selector is safe for a delegated child.
@@ -306,13 +238,6 @@ export function subagentMcpToolName(selector: string): string {
 	return `mcp_${label}_${createHash("sha256").update(selector).digest("hex").slice(0, 12)}`;
 }
 
-export type SubagentProfileAvailability = "available" | "limited" | "requires_yolo" | "invalid" | "untrusted";
-
-export const SUBAGENT_PROFILE_TAG_LIMITS = {
-	maxTags: 8,
-	maxTagBytes: 32,
-} as const;
-
 export interface SubagentProfile {
 	name: string;
 	description: string;
@@ -354,51 +279,6 @@ export interface ResolvedSubagentProfile extends SubagentProfile {
 	sourceHash: string;
 }
 
-export interface SubagentProfileSummary {
-	name: string;
-	description: string;
-	source: SubagentProfileSource;
-	sourcePath: string;
-	/** W08: stable discoverability metadata; bounded tags, never executable resources. */
-	tags?: readonly string[];
-	effectiveThinkingLevel?: SubagentThinkingLevel;
-	effectiveCheckInIntervalMs?: number;
-	effectiveTimeoutMs?: number;
-	requestedTemperature?: number;
-	effectiveTemperature?: number;
-	requestedTopP?: number;
-	effectiveTopP?: number;
-	color?: SubagentProfileColor;
-	effectiveSettingSources?: Readonly<{
-		thinking: string;
-		checkInIntervalMs: string;
-		timeoutMs: string;
-		temperature: string;
-		topP: string;
-	}>;
-	profileDiagnostics?: readonly string[];
-	unsafeHostExec: boolean;
-	/** Capabilities declared by the profile, not capabilities granted to this invocation. */
-	requestedTools: readonly string[];
-	/** Capabilities granted under the listing invocation's effective policy. */
-	effectiveTools: readonly string[];
-	effectiveModel?: string;
-	modelCandidateSkips?: readonly IceModelCandidateSkip[];
-	effectiveMcpTools?: readonly string[];
-	/** Adapter IDs requested by the profile; they are not authority by themselves. */
-	requestedAdapters?: readonly string[];
-	/** Adapter IDs admitted from the current parent registration/policy snapshot. */
-	effectiveAdapters?: readonly string[];
-	/** Compatibility alias for older consumers. */
-	tools: readonly string[];
-	availability: SubagentProfileAvailability;
-	diagnostics?: readonly string[];
-	requestedModel?: string;
-	fallbackModel?: string;
-	mcpTools?: readonly string[];
-	selfDelegated?: boolean;
-}
-
 export type SubagentResourceKind = "skill" | "prompt" | "context";
 
 export interface SubagentResourceSelection {
@@ -425,23 +305,6 @@ export interface ResolvedSubagentResources {
 /** Parent-facing presentation cap for single and aggregate subagent tool results. */
 export const SUBAGENT_PRESENTATION_LIMIT_BYTES = 64 * 1024;
 
-export const SUBAGENT_BATCH_LIMITS = {
-	maxTasks: 8,
-	defaultConcurrency: SUBAGENT_CONCURRENCY_LIMITS.bundledDefault,
-	maxConcurrency: 24,
-	maxManagedBatches: 16,
-	retainedManagedBatches: 32,
-} as const;
-
-export const SUBAGENT_PROFILE_ALIASES: Readonly<Record<string, string>> = Object.freeze({});
-
-export const SUBAGENT_PROFILES: Readonly<Record<string, SubagentProfile>> = Object.freeze({});
-
-/** File agents and self-delegation only; the hardcoded specialist catalog was removed. */
-export function isBundledSubagentProfileName(_name: string): boolean {
-	return false;
-}
-
 export interface SubagentScope {
 	roots: string[];
 	targets?: string[];
@@ -453,22 +316,6 @@ export const SUBAGENT_SCOPE_ROOT_HINT =
 	'scope.roots accepts existing directories only. For the current workspace, prefer scope.roots:["."]. Use relative subdirectories when narrower scope is sufficient. To inspect a specific file, use its parent directory as a root and identify the file in scope.targets or the task. Do not reconstruct the absolute cwd when "." is sufficient.';
 export const SUBAGENT_SCOPE_TARGET_HINT =
 	"scope.targets accepts existing regular files only and narrows the directory authority granted by scope.roots.";
-export const SUBAGENT_SCOPE_TOOL_GUIDANCE =
-	'scope.roots accepts existing directories only. For the current workspace, prefer scope.roots:["."] and use relative subdirectories when narrower scope is sufficient. To focus a file, use its parent directory in scope.roots and the file in scope.targets or task text. Do not reconstruct the absolute cwd when "." is sufficient.';
-export const SUBAGENT_INTERNAL_REPORT_GUIDANCE =
-	"Typed child runs (output schema, acceptance criteria, review batches) use the runtime's internal bounded structured final-report protocol; describe the task normally and do not ask the child to format its work as JSON. Ordinary delegations answer in plain prose; the runtime ingests the child's natural final assistant turn directly.";
-
-export const SUBAGENT_DELEGATION_POLICY_GUIDELINES: readonly string[] = [
-	"Do not delegate a simple single task: when the whole job is one straightforward piece of work you can do directly with your own tools, do it yourself instead of launching a subagent.",
-	"Delegate only when the work fans out to two or more children (delegate_batch or concurrent background delegate launches).",
-	"Brief every child as a zero-context collaborator: a child sees no parent conversation history, so a terse task string produces shallow work. State the objective and why it matters, not just the command to run.",
-	"Include what you already know in the brief: relevant file paths with line hints, verified facts, approaches already tried or ruled out, and constraints discovered so far. Do not delegate understanding you already have.",
-	"State the exact deliverable and response form: what the child must return, which evidence paths support it, and what to do when evidence is insufficient (report uncertainty; never fill gaps with plausible invention).",
-	"State how to verify when possible: the command, test, or check that establishes the work is done, and tell the child to run it when it has the tools to do so.",
-	"Tell the child what not to do: name non-goals, out-of-scope files, and forbidden actions explicitly; scope.roots grants authority, the brief defines intent.",
-	"Keep sibling scopes independent so children cannot conflict, and perform synthesis yourself in the parent: children return evidence and findings, the parent reconciles disagreements and draws conclusions.",
-];
-
 export const SUBAGENT_CONTEXT_PACKET_LIMITS = {
 	maxItems: 16,
 	maxItemBytes: 32 * 1024,
@@ -498,16 +345,6 @@ export interface SubagentContextPacket {
 
 export type SubagentContextMode = "fresh" | "fork";
 
-export const SUBAGENT_FORK_CONTEXT_LIMITS = {
-	maxMessages: 64,
-	maxMessageBytes: 32 * 1024,
-	maxTotalBytes: 256 * 1024,
-} as const;
-
-export const SUBAGENT_HANDOFF_CONTEXT_LIMITS = {
-	maxTotalBytes: 256 * 1024,
-} as const;
-
 export const SUBAGENT_REPORT_LIMITS = {
 	maxEvidencePaths: 64,
 	maxEvidencePathBytes: 4096,
@@ -524,12 +361,6 @@ export const SUBAGENT_REPORT_PARSER_LIMITS = {
  * criteria, review batches) keep the strict bounded JSON report protocol.
  */
 export type SubagentReportMode = "plain_final_turn" | "structured_report";
-
-export const SUBAGENT_WRAP_UP_LIMITS = {
-	wallReserveRatio: 0.2,
-	minimumWallReserveMs: 1_000,
-	maximumWallReserveMs: 10_000,
-} as const;
 
 export const SUBAGENT_REPORT_ARTIFACT_LIMITS = {
 	maxBytes: 512 * 1024,
@@ -671,12 +502,6 @@ export interface SubagentForkContext {
 	readonly dropped: SubagentForkDropped;
 }
 
-export interface SubagentForkContextSource {
-	getSessionId(): string;
-	getLeafId(): string | null;
-	buildSessionContext(): { messages: readonly AgentMessage[] };
-}
-
 /**
  * W12: shared optional per-call execution overrides. Every field is a request
  * that must be validated and enforced by the runtime; prompt text alone never
@@ -699,16 +524,6 @@ export interface SubagentExecutionContract {
 	temperature?: number;
 	topP?: number;
 }
-
-export const SUBAGENT_EXECUTION_LIMITS = {
-	minTemperature: 0,
-	maxTemperature: 2,
-	minTopP: 0,
-	maxTopP: 1,
-} as const;
-
-/** Fixed bound for each delegated external-tool response, independent of final-answer retention. */
-export const SUBAGENT_DELEGABLE_TOOL_OUTPUT_MAX_BYTES = 24 * 1024;
 
 export interface SubagentRequest {
 	parentSessionId: string;
@@ -750,22 +565,6 @@ export interface SelfDelegationInput {
 	inheritSkills?: boolean;
 	/** Explicit MCP server/tool selection; never ambient connection or credential inheritance. */
 	mcp?: readonly string[];
-}
-
-export interface WriterRequest {
-	parentSessionId: string;
-	task: string;
-	scope: SubagentScope;
-	baseCommit: string;
-	cwd?: string;
-	timeoutMs?: number;
-}
-
-export interface NormalizedWriterRequest extends Omit<WriterRequest, "scope" | "cwd" | "timeoutMs"> {
-	scope: { roots: string[] };
-	cwd: string;
-	timeoutMs: number;
-	allowExternal: boolean;
 }
 
 export interface WriterLaunchPreflight {
@@ -924,19 +723,6 @@ export interface SubagentBatchTask {
 	outputSchema?: Record<string, unknown>;
 }
 
-export interface ReviewerModelProvenance {
-	source: "parent" | "call";
-	resolved: string;
-}
-
-export interface ResolvedSubagentBatchTask {
-	id: string;
-	request: NormalizedSubagentRequest;
-	model?: Model<Api>;
-	modelProvenance?: ReviewerModelProvenance;
-	hookRuntime?: SubagentHookRuntime;
-}
-
 export interface SubagentUsage {
 	inputTokens: number;
 	outputTokens: number;
@@ -958,9 +744,6 @@ export interface SubagentDiagnostic {
 	retryable?: boolean;
 }
 
-export const REVIEW_DIMENSIONS = ["correctness", "security", "tests", "regressions"] as const;
-export type ReviewDimension = (typeof REVIEW_DIMENSIONS)[number];
-
 export interface EvidenceRef {
 	path: string;
 }
@@ -972,36 +755,8 @@ export interface ReviewFinding {
 	evidence: EvidenceRef[];
 }
 
-export interface ReviewTask {
-	id: string;
-	dimension: ReviewDimension;
-	task: string;
-	scope: SubagentScope;
-	evidence?: EvidenceRef[];
-	context?: string;
-	contextPacket?: SubagentContextPacketInput;
-	contextMode?: SubagentContextMode;
-	checkInIntervalMs?: number;
-	timeoutMs?: number;
-	execution?: SubagentExecutionOverrideInput;
-	resources?: SubagentResourceSelection;
-	outputSchema?: Record<string, unknown>;
-}
-
-export interface ResolvedReviewTask extends ResolvedSubagentBatchTask {
-	dimension: ReviewDimension;
-}
-
 export interface SubagentEvidence {
 	paths: string[];
-}
-
-export interface SubagentRun {
-	runId: string;
-	parentSessionId: string;
-	childSessionId?: string;
-	profile: SubagentProfile["name"];
-	status: SubagentStatus;
 }
 
 export type SubagentAttemptNumber = 1 | 2;
@@ -1118,264 +873,4 @@ export interface SubagentRequirementSummary {
 	readonly states: readonly SubagentRequirementState[];
 	/** True when required visual/quality criteria remain unmet while functional checks passed. */
 	readonly visualAcceptancePending: boolean;
-}
-
-export interface SubagentLaunchProvenance {
-	profile: Pick<
-		ResolvedSubagentProfile,
-		"name" | "source" | "sourcePath" | "canonicalPath" | "sourceHash" | "unsafeHostExec" | "color"
-	>;
-	resources: ResolvedSubagentResources;
-	projectTrusted: boolean;
-	allowExternal: boolean;
-	model?: string;
-	modelProvenance?: ReviewerModelProvenance;
-	modelCandidates?: readonly string[];
-	modelCandidateSkips?: readonly IceModelCandidateSkip[];
-	mcpTools?: readonly string[];
-	/** Explicit profile adapter selectors captured at launch. */
-	adapterIds?: readonly string[];
-	scopeRoots: string[];
-	scopeTargets: string[];
-	checkIn: { intervalMs: number; source: string };
-	execution: {
-		thinking: SubagentThinkingLevel;
-		timeoutMs: number;
-		temperature?: number;
-		topP?: number;
-		tools?: readonly string[];
-		sources: {
-			thinking: string;
-			timeoutMs: string;
-			temperature: string;
-			topP: string;
-		};
-		restrictionsApplied: readonly string[];
-	};
-	settingsDiagnostics: readonly string[];
-	deniedTools: readonly string[];
-	outputSchema?: { schemaBytes: number; maxPayloadBytes: number };
-}
-
-export interface SubagentLaunchPreflightTask {
-	taskId: string;
-	role: string;
-	cwd: string;
-	model: {
-		resolved?: string;
-		source: "parent" | "call";
-		candidates?: readonly string[];
-		skipped?: readonly IceModelCandidateSkip[];
-	};
-	mcpTools?: readonly string[];
-	/** Explicit profile adapter selectors, if any. */
-	adapterIds?: readonly string[];
-	scopeRoots: string[];
-	scopeTargets: string[];
-	tools: string[];
-	resources: {
-		skills: string[];
-		prompts: string[];
-		context: string[];
-	};
-	execution: {
-		thinking: SubagentThinkingLevel;
-		timeoutMs: number;
-		temperature?: number;
-		topP?: number;
-		tools: readonly string[] | undefined;
-	};
-	outputSchema?: { schemaBytes: number; maxPayloadBytes: number };
-	resourceProvenance: {
-		skills: Array<Pick<SubagentResourceProvenance, "kind" | "name" | "source" | "canonicalPath" | "sourceHash">>;
-		prompts: Array<Pick<SubagentResourceProvenance, "kind" | "name" | "source" | "canonicalPath" | "sourceHash">>;
-		context: Array<Pick<SubagentResourceProvenance, "kind" | "name" | "source" | "canonicalPath" | "sourceHash">>;
-	};
-	contextPacket: {
-		itemCount: number;
-		totalBytes: number;
-		items: Array<{ id: string; kind: SubagentContextItemKind; bytes: number }>;
-	};
-	forkContext: {
-		mode: SubagentContextMode;
-		sourceSessionId?: string;
-		sourceLeafId?: string;
-		messageCount: number;
-		totalBytes: number;
-		dropped: SubagentForkDropped;
-	};
-	contextBudget: {
-		packetBytes: number;
-		forkBytes: number;
-		totalBytes: number;
-		maxBytes: number;
-	};
-	projectTrusted: boolean;
-}
-
-export interface SubagentLaunchPreflight {
-	batchId?: string;
-	taskCount: number;
-	concurrency: number;
-	recovery: {
-		maxAttempts: 1 | 2;
-		sameModel: boolean;
-		retryableFailures: readonly "explicit_transient_startup"[];
-	};
-	tasks: SubagentLaunchPreflightTask[];
-}
-
-export type SubagentBatchStatus = "completed" | "partial" | "failed" | "cancelled" | "timed_out";
-
-export type AggregateUsage = SubagentUsage;
-
-export interface SubagentBatchItemResult {
-	taskId: string;
-	launch: SubagentLaunchProvenance;
-	result: SubagentResult;
-	verification: SubagentVerification;
-}
-
-export type BatchItemResult = SubagentBatchItemResult;
-export type LaunchProvenance = SubagentLaunchProvenance;
-
-export interface SubagentBatchResult {
-	batchId: string;
-	status: SubagentBatchStatus;
-	preflight: SubagentLaunchPreflight;
-	items: SubagentBatchItemResult[];
-	usage: AggregateUsage;
-	diagnostics: SubagentDiagnostic[];
-}
-
-export interface ReviewerResult {
-	taskId: string;
-	dimension: ReviewDimension;
-	findings: ReviewFinding[];
-	verification: SubagentVerification;
-	result: SubagentResult;
-	launch: SubagentLaunchProvenance;
-	modelProvenance: ReviewerModelProvenance;
-}
-
-export interface ReviewBatchResult {
-	batchId: string;
-	status: SubagentBatchStatus;
-	preflight: SubagentLaunchPreflight;
-	reviewers: ReviewerResult[];
-	usage: AggregateUsage;
-	diagnostics: SubagentDiagnostic[];
-}
-
-type ManagedBatchTaskStatus = "queued" | "admitted" | "running" | "completed" | "failed" | "cancelled" | "timed_out";
-
-export interface ManagedBatchTaskState {
-	taskId: string;
-	runId: string;
-	role: string;
-	model: string;
-	status: ManagedBatchTaskStatus;
-	checkIn?: SubagentCheckInState;
-	currentTool?: string;
-	currentPath?: string;
-}
-
-export interface ManagedSubagentBatchRecord {
-	readonly batchId: string;
-	readonly ownerSessionId: string;
-	readonly kind: "batch" | "review";
-	readonly acceptedAt: number;
-	readonly tasks: Map<string, ManagedBatchTaskState>;
-	readonly controller: AbortController;
-	readonly outputArtifactIds: Set<string>;
-	state: "queued" | "running" | "completed" | "partial" | "failed" | "cancelled";
-	completion?: Promise<SubagentBatchResult | ReviewBatchResult>;
-	result?: SubagentBatchResult | ReviewBatchResult;
-}
-
-export interface SubagentBatchRunOptions {
-	batchId?: string;
-	/** Return admitted child handles without waiting for the aggregate result. */
-	managedBackground?: boolean;
-	/** Owner integration arms periodic check-ins after each child session is admitted. */
-	onManagedHandle?: (task: ResolvedSubagentBatchTask, handle: SubagentManagedHandle) => void;
-	/** Called exactly once after each child's terminal result or launch failure. */
-	onChildTerminal?: (task: ResolvedSubagentBatchTask, result?: SubagentResult) => void;
-	concurrency?: number;
-	/** Shared admission coordinator across batch and background-job execution. */
-	admission?: SubagentConcurrencyAdmission;
-	modelRuntime?: ModelRuntime;
-	/** Parent-resolved retry policy copied into each isolated child session. */
-	settingsManager?: SettingsManager;
-	unsafeHostExec?: boolean;
-	failFast?: boolean;
-	signal?: AbortSignal;
-	onEvent?: (event: SubagentEvent) => void;
-	onTaskState?: (event: SubagentBatchTaskLifecycleEvent) => void;
-	isAuthorityStillValid?: (
-		request: NormalizedSubagentRequest,
-		hookRuntime?: SubagentHookRuntime,
-	) => boolean | Promise<boolean>;
-}
-
-export type SubagentBatchTaskLifecycleEvent =
-	| {
-			type: "task_queued";
-			batchId: string;
-			taskId: string;
-			role: string;
-			index: number;
-	  }
-	| {
-			type: "task_admitted";
-			batchId: string;
-			taskId: string;
-			role: string;
-			index: number;
-	  }
-	| {
-			type: "task_skipped";
-			batchId: string;
-			taskId: string;
-			status: "failed" | "cancelled" | "timed_out";
-			reason: string;
-	  };
-
-export type SubagentCompactionReason = "manual" | "threshold" | "overflow";
-export type SubagentCompactionStatus = "started" | "completed" | "aborted" | "failed";
-
-export interface SubagentEvent {
-	type:
-		| "subagent_created"
-		| "subagent_started"
-		| "subagent_progress"
-		| "subagent_tool_start"
-		| "subagent_tool_end"
-		| "subagent_compaction_start"
-		| "subagent_compaction_end"
-		| "subagent_retry"
-		| "subagent_wrap_up"
-		| "subagent_completed"
-		| "subagent_failed"
-		| "subagent_cancelled"
-		| "subagent_timed_out";
-	runId: string;
-	parentSessionId: string;
-	childSessionId?: string;
-	profile: SubagentProfile["name"];
-	color?: SubagentProfileColor;
-	status: SubagentStatus;
-	toolName?: string;
-	toolCallId?: string;
-	path?: string;
-	attention?: SubagentRuntimeAttention;
-	retry?: SubagentRetryState;
-	model?: string;
-	taskId?: string;
-	attempt?: 1 | 2;
-	batchId?: string;
-	/** Bounded child compaction lifecycle metadata; summary contents are never projected. */
-	compactionReason?: SubagentCompactionReason;
-	compactionStatus?: SubagentCompactionStatus;
-	compactionWillRetry?: boolean;
 }

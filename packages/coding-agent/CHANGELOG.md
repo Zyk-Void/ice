@@ -129,6 +129,7 @@
 
 ### Removed
 
+- Removed 58 unused legacy exports from `subagents/types.ts` (bundled profile tables, batch, writer, and managed-run types and limits), about 490 lines.
 - Removed the legacy subagent supervisor, check-in scheduler, profile loader (`definitions/legacy-profiles.ts`), and tool derivation (`tools/derive.ts`). Their few still-used helpers moved to `subagents/definitions/paths.ts`, and the display types the agent strip and view bridge accept moved to `subagents/runtime/view-state.ts`.
 - Removed the unused `app.subagents.expand` (`space`) and `app.subagents.inspect` (`ctrl+enter`) keybindings, left over from the removed agent list and job inspector.
 - Removed the legacy subagent job registry (`subagents/registry/jobs.ts`) and Observatory (`subagents/ui/observatory.ts`), which no V2 code path used, plus the observability recorder's subagent progress lanes they fed; recordings still carry an empty `lanes` list.
