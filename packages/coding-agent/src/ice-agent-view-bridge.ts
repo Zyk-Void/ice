@@ -502,8 +502,10 @@ export interface IceBlockingWaitSource {
 export interface IceSubagentOverviewChild {
 	readonly id: string;
 	readonly agent: string;
+	/** Optional name given at launch; usable wherever the ID is. */
+	readonly name?: string;
 	readonly description: string;
-	/** Registry instance state: starting, running, idle, parked, blocked, stopped, deleted. */
+	/** Instance state: starting, queued (waiting for a concurrency slot), running, idle, parked, blocked, stopped. */
 	readonly state: string;
 	readonly lastTurnOutcome?: string;
 	readonly depth: number;
@@ -513,6 +515,8 @@ export interface IceSubagentOverviewChild {
 	readonly background: boolean;
 	/** True while the child session is in memory and can be shown live. */
 	readonly resident: boolean;
+	/** Parked after its work settled: out of memory and live views, still resumable. */
+	readonly finished: boolean;
 	readonly turns: number;
 	readonly tokens: number;
 	readonly cost: number;

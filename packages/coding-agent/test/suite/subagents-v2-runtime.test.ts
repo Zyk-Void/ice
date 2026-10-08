@@ -10,7 +10,7 @@ import { worktreeSnapshotRef } from "../../src/subagents/isolation/worktree.ts";
 import { CHILD_INIT_ENTRY_TYPE } from "../../src/subagents/registry/child-sessions.ts";
 import { type IceSubagentMcpAdapter, subagentMcpToolName } from "../../src/subagents/types.ts";
 import iceSubagentsV2 from "../../src/subagents/v2/extension.ts";
-import { MAX_RESIDENT_CHILDREN, SubagentV2Runtime } from "../../src/subagents/v2/runtime.ts";
+import { MAX_RESIDENT_CHILDREN, RETIRE_GRACE_MS, SubagentV2Runtime } from "../../src/subagents/v2/runtime.ts";
 import { type ChildTurnResult, mcpDelegableTools, type V2RuntimeHost } from "../../src/subagents/v2/runtime-support.ts";
 import { createV2ChildSession } from "../../src/subagents/v2/session-factory.ts";
 import { resolveSubagentsV2Settings } from "../../src/subagents/v2/settings.ts";
@@ -280,8 +280,10 @@ describe("subagent V2 runtime", () => {
 			await gate;
 			return fauxAssistantMessage("first");
 		});
-		harness.setResponses([waiting, fauxAssistantMessage("second")]);
-		const runtime = new SubagentV2Runtime(host({ getSettings: () => settings }));
+		// The first child reads a file (one finished model response), then waits mid-turn.
+		harness.setResponses([unfinished(), waiting, fauxAssistantMessage("second")]);
+		let activity = 0;
+		const runtime = new SubagentV2Runtime(host({ getSettings: () => settings, onChildActivity: () => activity++ }));
 		expect(runtime.overview()).toMatchObject({
 			enabled: true,
 			capacity: { running: 0, queued: 0, max: 1 },
@@ -295,13 +297,152 @@ describe("subagent V2 runtime", () => {
 		const queued = runtime.runTurn(second!.id, "second", { foreground: false, background: true });
 		await vi.waitFor(() => expect(runtime.overview().capacity).toEqual({ running: 1, queued: 1, max: 1 }));
 		const children = new Map(runtime.overview().children.map((child) => [child.id, child]));
-		expect(children.get(first!.id)).toMatchObject({ running: true, background: false, resident: true, depth: 0 });
-		expect(children.get(second!.id)).toMatchObject({ running: true, background: true });
+		expect(children.get(first!.id)).toMatchObject({
+			state: "running",
+			running: true,
+			background: false,
+			resident: true,
+			depth: 0,
+			turns: 0,
+		});
+		// Usage of the turn in progress is visible before the turn ends.
+		expect(children.get(first!.id)!.tokens).toBeGreaterThan(0);
+		expect(activity).toBeGreaterThan(0);
+		expect(runtime.describeChild(first!.id).join("\n")).toContain("0 turns + 1 running");
+		expect(children.get(second!.id)).toMatchObject({ state: "queued", running: true, background: true });
 		release();
-		await running;
+		const firstResult = await running;
 		await queued;
 		expect(runtime.overview().capacity).toEqual({ running: 0, queued: 0, max: 1 });
 		expect(runtime.overview().children.every((child) => !child.running)).toBe(true);
+		// After the turn the live count moves into the record exactly once.
+		const settled = runtime.overview().children.find((child) => child.id === first!.id)!;
+		expect(settled).toMatchObject({ state: "idle", turns: 1 });
+		expect(settled.tokens).toBe(firstResult.usage.inputTokens + firstResult.usage.outputTokens);
+		await runtime.shutdown();
+	});
+
+	it("addresses children by unique names that survive a restart", async () => {
+		const { harness, host, parent, sessionManager } = await setup();
+		const runtime = new SubagentV2Runtime(host());
+		const [named] = await runtime.launch([{ ...task("explore", "read"), name: "auth-review" }]);
+		expect(runtime.resolveChildRef("auth-review")).toBe(named!.id);
+		expect(runtime.resolveChildRef(named!.id)).toBe(named!.id);
+		expect(runtime.overview().children[0]).toMatchObject({ name: "auth-review" });
+		// A duplicate name fails the whole batch before anything is accepted.
+		await expect(
+			runtime.launch([
+				{ ...task("explore", "other"), name: "fresh" },
+				{ ...task("explore", "again"), name: "auth-review" },
+			]),
+		).rejects.toThrow(/already used/);
+		await expect(
+			runtime.launch([
+				{ ...task("explore", "a"), name: "twin" },
+				{ ...task("explore", "b"), name: "twin" },
+			]),
+		).rejects.toThrow(/already used/);
+		expect(runtime.registry.list(runtime.ownerSessionId())).toHaveLength(1);
+		expect(() => runtime.resolveChildRef("missing")).toThrow(/Names in this session: auth-review/);
+		harness.setResponses([fauxAssistantMessage("named report")]);
+		await runtime.runTurn(named!.id, "read", { foreground: true });
+		await runtime.shutdown();
+		parent.session = {
+			...parent.session,
+			sessionManager: SessionManager.open(sessionManager.getSessionFile()!),
+		} as AgentSession;
+		const restored = new SubagentV2Runtime(host());
+		expect(restored.resolveChildRef("auth-review")).toBe(named!.id);
+		await restored.shutdown();
+	});
+
+	it("retires a settled child after the grace period unless it is busy or displayed", async () => {
+		const { harness, host } = await setup();
+		let displayed: string | undefined;
+		const runtime = new SubagentV2Runtime(host({ isDisplayed: (id) => id === displayed }));
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		try {
+			harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+			const done = await runOne(runtime, "explore", "first");
+			const kept = await runOne(runtime, "explore", "second");
+			const owner = runtime.ownerSessionId();
+			displayed = kept.childId;
+			await vi.advanceTimersByTimeAsync(RETIRE_GRACE_MS - 1);
+			expect(runtime.registry.get(owner, done.childId).state).toBe("idle");
+			await vi.advanceTimersByTimeAsync(1);
+			expect(runtime.registry.get(owner, done.childId).state).toBe("parked");
+			expect(runtime.registry.resident(owner, done.childId)).toBeUndefined();
+			// The displayed child stays resident and is checked again later.
+			expect(runtime.registry.get(owner, kept.childId).state).toBe("idle");
+			displayed = undefined;
+			await vi.advanceTimersByTimeAsync(RETIRE_GRACE_MS);
+			expect(runtime.registry.get(owner, kept.childId).state).toBe("parked");
+			// A retired child resumes with its context on the next turn.
+			harness.setResponses([fauxAssistantMessage("resumed")]);
+			expect(await runtime.continueChild(done.childId, "again", { foreground: true })).toMatchObject({
+				outcome: "completed",
+				text: "resumed",
+			});
+		} finally {
+			vi.useRealTimers();
+			await runtime.shutdown();
+		}
+	});
+
+	it("does not retire a child whose next turn started within the grace period", async () => {
+		const { harness, host } = await setup();
+		const runtime = new SubagentV2Runtime(host());
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		try {
+			let release!: () => void;
+			const gate = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			harness.setResponses([
+				fauxAssistantMessage("first"),
+				async () => {
+					await gate;
+					return fauxAssistantMessage("second");
+				},
+			]);
+			const first = await runOne(runtime, "explore", "first");
+			await vi.advanceTimersByTimeAsync(RETIRE_GRACE_MS / 2);
+			const second = runtime.continueChild(first.childId, "next", { foreground: true });
+			await vi.advanceTimersByTimeAsync(RETIRE_GRACE_MS);
+			const owner = runtime.ownerSessionId();
+			expect(runtime.registry.resident(owner, first.childId)?.running).toBeDefined();
+			release();
+			await second;
+			expect(runtime.registry.get(owner, first.childId).state).toBe("idle");
+		} finally {
+			vi.useRealTimers();
+			await runtime.shutdown();
+		}
+	});
+
+	it("removes a child that was stopped before it ever ran", async () => {
+		const { harness, host } = await setup();
+		const settings = resolveSubagentsV2Settings({ global: { maxConcurrent: 1 }, projectTrusted: false });
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const waiting = vi.fn(async () => {
+			await gate;
+			return fauxAssistantMessage("first");
+		});
+		harness.setResponses([waiting]);
+		const runtime = new SubagentV2Runtime(host({ getSettings: () => settings }));
+		const [first, second] = await runtime.launch([task("explore", "first"), task("explore", "second")]);
+		const running = runtime.runTurn(first!.id, "first", { foreground: true });
+		await vi.waitFor(() => expect(waiting).toHaveBeenCalledOnce());
+		const queued = runtime.runTurn(second!.id, "second", { foreground: true });
+		await vi.waitFor(() => expect(runtime.overview().capacity.queued).toBe(1));
+		await runtime.stop(second!.id);
+		expect(await queued).toMatchObject({ outcome: "cancelled" });
+		await vi.waitFor(() => expect(runtime.overview().children.map((child) => child.id)).toEqual([first!.id]));
+		release();
+		await running;
 		await runtime.shutdown();
 	});
 
@@ -762,8 +903,36 @@ describe("subagent V2 runtime", () => {
 		await Promise.resolve();
 		expect(parent.sent).toHaveLength(1);
 		expect(parent.sent[0]).toMatchObject({ customType: "subagent_completed" });
+		const content = String(parent.sent[0]!.content);
+		expect(content).toContain(`continue it with resume=${result.childId}`);
+		expect(content).toContain(`agent_control action=delete id=${result.childId}`);
+		expect(content).toContain("No other subagents are running.");
 		runtime.flushCompletions();
 		expect(parent.sent).toHaveLength(1);
+	});
+
+	it("lists still-running siblings in a completion message", async () => {
+		const { harness, parent, host } = await setup();
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const slowResponse = vi.fn(async () => {
+			await gate;
+			return fauxAssistantMessage("slow report");
+		});
+		harness.setResponses([slowResponse, fauxAssistantMessage("quick report")]);
+		const runtime = new SubagentV2Runtime(host());
+		const [quick, slow] = await runtime.launch([task("explore", "quick"), task("explore", "slow")]);
+		const slowRun = runtime.runTurn(slow!.id, "slow", { foreground: false, background: true });
+		await vi.waitFor(() => expect(slowResponse).toHaveBeenCalledOnce());
+		await runtime.runTurn(quick!.id, "quick", { foreground: false, background: true });
+		await Promise.resolve();
+		const content = String(parent.sent.find((message) => String(message.content).includes(quick!.id))!.content);
+		expect(content).toContain(`1 other subagent is still running (${slow!.id})`);
+		release();
+		await slowRun;
+		await runtime.shutdown();
 	});
 
 	it("restores after a restart, revives under the frozen contract, and blocks when authority was revoked", async () => {

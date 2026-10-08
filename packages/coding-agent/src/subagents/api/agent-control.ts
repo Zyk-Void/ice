@@ -5,7 +5,7 @@
  * `agent({ tasks: [{ resume }] })` share one continuation primitive (D21).
  */
 import { type Static, Type } from "typebox";
-import { CHILD_ID_PATTERN_SOURCE } from "../contract/child-runtime-contract.ts";
+import { CHILD_REF_PATTERN_SOURCE } from "../contract/child-runtime-contract.ts";
 import { SUBAGENT_OUTPUT_ARTIFACT_LIMITS } from "../results/output-artifacts.ts";
 
 export const AGENT_CONTROL_ACTIONS = [
@@ -32,7 +32,7 @@ export const AGENT_CONTROL_LIMITS = Object.freeze({
 	maxOutputReadBytes: 48 * 1024,
 });
 
-const childId = Type.String({ pattern: CHILD_ID_PATTERN_SOURCE });
+const childId = Type.String({ pattern: CHILD_REF_PATTERN_SOURCE });
 
 export const AgentControlParametersSchema = Type.Object(
 	{

@@ -72,6 +72,10 @@ export interface V2RuntimeHost {
 	hasApprovalInbox?: () => boolean;
 	/** Called whenever the set of pending approvals changes. */
 	onApprovalsChanged?: (pending: readonly PendingApproval[]) => void;
+	/** True while the user is viewing this child; it is not retired then. */
+	isDisplayed?: (childId: string) => boolean;
+	/** A child produced a model response; live views refresh their usage. */
+	onChildActivity?: () => void;
 	/** Resolve configured subagent hooks for one child; undefined when none apply. Throws on invalid configuration. */
 	createHookRuntime?: (target: SubagentHookTarget) => SubagentHookRuntime | undefined;
 	createChildAgentSession?: typeof createV2ChildSession;
@@ -94,6 +98,10 @@ export interface ResidentChild {
 	/** The parent stopped waiting (Ctrl+B); deliver this turn's completion as a follow-up. */
 	detached?: boolean;
 	running?: Promise<ChildTurnResult>;
+	/** Usage of the turn in flight, before it is added to the registry record at turn end. */
+	liveUsage?: TurnResultContext["usage"];
+	/** False while the turn in flight waits for an admission slot. */
+	admitted?: boolean;
 	dispose(): Promise<void>;
 }
 
@@ -120,6 +128,8 @@ export interface OwnerState {
 	admission: SubagentConcurrencyAdmission;
 	broker: ApprovalBroker;
 	waiters: Array<() => void>;
+	/** Pending retirement (parking) of children whose last turn settled. */
+	retireTimers: Map<string, ReturnType<typeof setTimeout>>;
 	closed: boolean;
 }
 

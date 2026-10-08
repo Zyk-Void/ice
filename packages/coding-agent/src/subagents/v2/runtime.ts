@@ -18,7 +18,7 @@ import type { IceSubagentOverview, IceSubagentOverviewChild } from "../../ice-ag
 import { pathIsWithin, resolveProspectivePath, validateMutationPath } from "../../ice-safe-verify.ts";
 import { redactCredentialText } from "../../utils/redact.ts";
 import type { AgentTaskInput } from "../api/agent.ts";
-import type { ChildRuntimeContract } from "../contract/child-runtime-contract.ts";
+import { CHILD_ID_PATTERN, type ChildRuntimeContract } from "../contract/child-runtime-contract.ts";
 import { buildChildRuntimeContract, type ChildRuntimeContractInput, createChildId } from "../contract/serialize.ts";
 import { validateChildResume } from "../contract/validate-resume.ts";
 import { callableAgentDefinitions } from "../definitions/listing.ts";
@@ -108,6 +108,8 @@ import { ChildTurnBudget, resolveTurnBudget } from "./turn-budget.ts";
 
 /** Idle children kept in memory per owner; older ones are parked to disk. */
 export const MAX_RESIDENT_CHILDREN = 8;
+/** A child idle this long after its turn settles is parked: out of memory and live views, still resumable. */
+export const RETIRE_GRACE_MS = 30_000;
 
 export class SubagentV2Runtime {
 	private readonly host: V2RuntimeHost;
@@ -179,6 +181,7 @@ export class SubagentV2Runtime {
 				...(this.host.now ? { now: this.host.now } : {}),
 			}),
 			waiters: [],
+			retireTimers: new Map(),
 			closed: false,
 		};
 		const owner = this.owner;
@@ -192,6 +195,20 @@ export class SubagentV2Runtime {
 
 	ownerSessionId(): string {
 		return this.state().sessionId;
+	}
+
+	/** Resolve a child reference from tool input: an ID, or a name given at launch. */
+	resolveChildRef(ref: string): string {
+		if (CHILD_ID_PATTERN.test(ref)) return ref;
+		const state = this.state();
+		const records = state.registry.list(state.sessionId);
+		const match = records.find((record) => record.name === ref);
+		if (match) return match.id;
+		const names = records.flatMap((record) => (record.name ? [record.name] : []));
+		throw new SubagentV2Error(
+			"preflight",
+			`No subagent is named "${ref}".${names.length > 0 ? ` Names in this session: ${names.join(", ")}.` : " No subagent in this session has a name."}`,
+		);
 	}
 
 	definitions(): LoadedAgentDefinitions {
@@ -649,6 +666,18 @@ export class SubagentV2Runtime {
 			throw new SubagentV2Error("preflight", "Subagents are disabled by ice.subagents.enabled.");
 		const parent = this.parent();
 		const state = this.state();
+		const taken = new Set(
+			state.registry.list(state.sessionId).flatMap((record) => (record.name ? [record.name] : [])),
+		);
+		for (const task of tasks) {
+			if (!task.name) continue;
+			if (taken.has(task.name))
+				throw new SubagentV2Error(
+					"preflight",
+					`The name "${task.name}" is already used by another subagent in this session; choose another.`,
+				);
+			taken.add(task.name);
+		}
 		// Preflight every task before persisting any, so a bad batch launches nothing.
 		const prepared = tasks.map((task) => ({ task, ...this.preflight(task, settings) }));
 		for (const { input } of prepared) {
@@ -747,6 +776,7 @@ export class SubagentV2Runtime {
 					rootSessionId: contract.rootSessionId,
 					depth: contract.depth,
 					agent: contract.agent.name,
+					...(task.name ? { name: task.name } : {}),
 					description: task.description,
 					contractHash: created.contractHash,
 					transcriptPath: created.transcriptPath,
@@ -860,6 +890,9 @@ export class SubagentV2Runtime {
 			observations,
 			usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 },
 		};
+		this.cancelRetire(state, id);
+		resident.liveUsage = resultContext.usage;
+		resident.admitted = false;
 		state.registry.transition(state.sessionId, id, record.generation, record.state, { turnInFlight: true }, true);
 		options.accepted?.();
 		const controller = new AbortController();
@@ -877,7 +910,11 @@ export class SubagentV2Runtime {
 			let unsubscribe: (() => void) | undefined;
 			try {
 				await this.acquire(state, controller.signal);
+				resident.admitted = true;
 			} catch {
+				// A child stopped before it ever ran holds no work: remove it once this turn settles.
+				const current = state.registry.get(state.sessionId, id);
+				if (current.usage.turns === 0 && !current.patchState) void this.delete(id).catch(() => {});
 				return this.finishTurn(
 					state,
 					resident,
@@ -922,6 +959,7 @@ export class SubagentV2Runtime {
 					resultContext.usage.cacheReadTokens = (resultContext.usage.cacheReadTokens ?? 0) + usage.cacheRead;
 					resultContext.usage.cacheWriteTokens = (resultContext.usage.cacheWriteTokens ?? 0) + usage.cacheWrite;
 					resultContext.usage.cost += usage.cost.total;
+					this.host.onChildActivity?.();
 				});
 				await resident.session.prompt(prompt, { expandPromptTemplates: false, source: "extension" });
 				if (controller.signal.aborted) outcome = "cancelled";
@@ -985,6 +1023,7 @@ export class SubagentV2Runtime {
 		})().finally(() => {
 			options.signal?.removeEventListener("abort", cancel);
 			resident.running = undefined;
+			this.scheduleRetire(state, id);
 			void this.parkExcessResidents(state).catch(() => {});
 		});
 		resident.running = run;
@@ -1049,6 +1088,9 @@ export class SubagentV2Runtime {
 		error: string | undefined,
 		resultContext: TurnResultContext,
 	): Promise<ChildTurnResult> {
+		// The turn usage moves into the record below; drop the live view so it is not counted twice.
+		resident.liveUsage = undefined;
+		resident.admitted = undefined;
 		const { inputTokens, outputTokens, cacheReadTokens = 0, cacheWriteTokens = 0, cost } = resultContext.usage;
 		const rawFinalText =
 			resultContext.final?.content
@@ -1148,6 +1190,40 @@ export class SubagentV2Runtime {
 		return result;
 	}
 
+	private cancelRetire(state: OwnerState, id: string): void {
+		const timer = state.retireTimers.get(id);
+		if (timer) clearTimeout(timer);
+		state.retireTimers.delete(id);
+	}
+
+	private scheduleRetire(state: OwnerState, id: string): void {
+		this.cancelRetire(state, id);
+		const timer = setTimeout(() => {
+			state.retireTimers.delete(id);
+			void this.retire(state, id).catch(() => {});
+		}, RETIRE_GRACE_MS);
+		timer.unref?.();
+		state.retireTimers.set(id, timer);
+	}
+
+	/** Park a settled child that nothing is using; a displayed child is checked again later. */
+	private async retire(state: OwnerState, id: string): Promise<void> {
+		if (state.closed || this.owner !== state) return;
+		let record: ChildRecord;
+		try {
+			record = state.registry.get(state.sessionId, id);
+		} catch {
+			return; // Deleted meanwhile.
+		}
+		const resident = state.registry.resident(state.sessionId, id);
+		if (record.state !== "idle" || !resident || resident.running || resident.foreground) return;
+		if (this.patchOperations.has(id) || this.host.isDisplayed?.(id)) {
+			this.scheduleRetire(state, id);
+			return;
+		}
+		await state.registry.park(state.sessionId, id);
+	}
+
 	/**
 	 * Keep at most MAX_RESIDENT_CHILDREN idle children in memory per owner by
 	 * parking the least recently used ones (plan 11.4). Parked children keep their
@@ -1210,7 +1286,7 @@ export class SubagentV2Runtime {
 				.sendCustomMessage(
 					{
 						customType: SUBAGENT_COMPLETED_CUSTOM_TYPE,
-						content: `Subagent ${claimed.agent} (${claimed.childId}) finished: ${claimed.outcome}.${claimed.validation ? `\nAssurance: ${claimed.validation.assurance}; ${claimed.validation.reason}` : ""}\n\nUntrusted child report:\n${claimed.summary}\n\nUse agent_control action=output id=${claimed.childId} for the full result.`,
+						content: `Subagent ${claimed.agent}${this.childName(state, claimed.childId)} (${claimed.childId}) finished: ${claimed.outcome}.${claimed.validation ? `\nAssurance: ${claimed.validation.assurance}; ${claimed.validation.reason}` : ""}\n\nUntrusted child report:\n${claimed.summary}\n\n${this.completionTrailer(state, claimed.childId)}`,
 						display: true,
 						details: {
 							childId: claimed.childId,
@@ -1223,6 +1299,33 @@ export class SubagentV2Runtime {
 				)
 				.catch(() => {});
 		}
+	}
+
+	/** ` "name"` for a named child, else empty. */
+	private childName(state: OwnerState, childId: string): string {
+		try {
+			const name = state.registry.get(state.sessionId, childId).name;
+			return name ? ` "${name}"` : "";
+		} catch {
+			return ""; // Deleted meanwhile.
+		}
+	}
+
+	/** Next actions for a finished child, and which of its siblings are still working. */
+	private completionTrailer(state: OwnerState, childId: string): string {
+		const working = state.registry
+			.list(state.sessionId)
+			.filter((record) => record.id !== childId && state.registry.resident(state.sessionId, record.id)?.running)
+			.map((record) => record.name ?? record.id);
+		const siblings =
+			working.length > 0
+				? `${working.length} other subagent${working.length === 1 ? " is" : "s are"} still running (${working.join(", ")}); their results arrive as separate messages.`
+				: "No other subagents are running.";
+		return [
+			`Full result: agent_control action=output id=${childId}.`,
+			`Next: continue it with resume=${childId} if its context helps, or delete it with agent_control action=delete id=${childId} when you no longer need it.`,
+			siblings,
+		].join("\n");
 	}
 
 	// --- continuation and control ----------------------------------------
@@ -1409,6 +1512,7 @@ export class SubagentV2Runtime {
 			);
 		await this.stop(id);
 		const state = this.state();
+		this.cancelRetire(state, id);
 		await state.registry.delete(state.sessionId, id, async (record) => {
 			try {
 				const contract = openChildSession(record.transcriptPath, record.contractHash).contract;
@@ -1590,6 +1694,8 @@ export class SubagentV2Runtime {
 		const owner = this.owner;
 		if (!owner) return;
 		owner.closed = true;
+		for (const timer of owner.retireTimers.values()) clearTimeout(timer);
+		owner.retireTimers.clear();
 		owner.broker.dispose();
 		const runs: Promise<ChildTurnResult>[] = [];
 		for (const record of owner.registry.list(owner.sessionId)) {
@@ -1669,19 +1775,24 @@ export class SubagentV2Runtime {
 		const settings = this.host.getSettings();
 		const children = state.registry.list(state.sessionId).map((record): IceSubagentOverviewChild => {
 			const resident = state.registry.resident(state.sessionId, record.id);
+			const live = resident?.liveUsage;
 			return {
 				id: record.id,
 				agent: record.agent,
+				...(record.name ? { name: record.name } : {}),
 				description: record.description,
-				state: record.state,
+				// A turn waiting for an admission slot is queued, whatever the instance state.
+				state: resident?.running && resident.admitted === false ? "queued" : record.state,
 				...(record.lastTurnOutcome ? { lastTurnOutcome: record.lastTurnOutcome } : {}),
 				depth: record.depth,
 				running: resident?.running !== undefined,
 				background: resident?.running !== undefined && !resident.foreground,
 				resident: resident !== undefined,
+				finished: record.state === "parked",
 				turns: record.usage.turns,
-				tokens: record.usage.inputTokens + record.usage.outputTokens,
-				cost: record.usage.cost,
+				tokens:
+					record.usage.inputTokens + record.usage.outputTokens + (live ? live.inputTokens + live.outputTokens : 0),
+				cost: record.usage.cost + (live?.cost ?? 0),
 				...(record.patchState ? { patchState: record.patchState } : {}),
 				...(record.blockedReasons?.length ? { blockedReasons: record.blockedReasons } : {}),
 			};
@@ -1709,6 +1820,10 @@ export class SubagentV2Runtime {
 	/** Agent Hub inspector lines for one child, from its frozen contract and latest result. */
 	describeChild(id: string): string[] {
 		const { record, contract } = this.contractOf(id);
+		const live = this.registry.resident(this.ownerSessionId(), id)?.liveUsage;
+		const tokens =
+			record.usage.inputTokens + record.usage.outputTokens + (live ? live.inputTokens + live.outputTokens : 0);
+		const cost = record.usage.cost + (live?.cost ?? 0);
 		const { capabilities, model, isolation, budgets } = contract;
 		const budget = [
 			budgets.maxTurns ? `${budgets.maxTurns} turns` : "",
@@ -1724,7 +1839,7 @@ export class SubagentV2Runtime {
 			`Scope: ${capabilities.scopeRoots.join(", ")}`,
 			`Isolation: ${isolation.mode}${record.patchState ? ` · patch ${record.patchState}` : ""}`,
 			`Budget: ${budget.join(" · ") || "none"}`,
-			`Usage: ${record.usage.turns} turns · ${record.usage.inputTokens + record.usage.outputTokens} tokens · ${record.usage.cost.toFixed(4)}`,
+			`Usage: ${record.usage.turns} turns${live ? " + 1 running" : ""} · ${tokens} tokens · ${cost.toFixed(4)}`,
 		];
 		const result = record.lastResult;
 		if (result) {

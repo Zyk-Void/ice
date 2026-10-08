@@ -119,7 +119,7 @@ describe("RPC settings bridge", () => {
 			effectiveSource: "project",
 			kind: "number",
 			restartRequired: true,
-			constraints: { min: 1, max: 24, integer: true },
+			constraints: { min: 1, integer: true },
 		});
 		// A project can only lower the ceiling.
 		expect(field(snapshot, "ice.subagents.maxDepth")).toMatchObject({ effectiveValue: 2, effectiveSource: "global" });
@@ -136,8 +136,11 @@ describe("RPC settings bridge", () => {
 			applyRpcSetting(context, { key: "ice.subagents.defaultAgent", scope: "global", value: "Not Valid" }),
 		).rejects.toMatchObject({ code: "invalid_value" });
 		await expect(
-			applyRpcSetting(context, { key: "ice.subagents.maxConcurrent", scope: "global", value: 25 }),
+			applyRpcSetting(context, { key: "ice.subagents.maxConcurrent", scope: "global", value: 0 }),
 		).rejects.toMatchObject({ code: "out_of_range" });
+		// No upper ceiling: the user decides how many subagents may run at once.
+		const many = await applyRpcSetting(context, { key: "ice.subagents.maxConcurrent", scope: "global", value: 50 });
+		expect(field(many, "ice.subagents.maxConcurrent").effectiveValue).toBe(50);
 		await expect(
 			applyRpcSetting(context, { key: "ice.subagents.askTimeoutMs", scope: "project", value: 5_000 }),
 		).rejects.toMatchObject({ code: "scope_not_supported" });

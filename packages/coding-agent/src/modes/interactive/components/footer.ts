@@ -244,11 +244,14 @@ export class FooterComponent implements Component {
 			appearance ? applyTextPresentation(appearance.primary, text) : theme.fg("accent", text);
 		const { running, queued, max } = subagents.capacity;
 		const approvals = subagents.approvals.length;
+		const idle = subagents.children.filter((child) => child.state === "idle").length;
 		const parts = [
 			subagents.enabled ? `agents ${running}/${max}` : "agents off",
 			...(queued > 0 ? [`${queued} queued`] : []),
+			...(idle > 0 ? [`${idle} idle`] : []),
 		];
-		const label = running > 0 || queued > 0 ? primary(parts.join(" ")) : dim(parts.join(" "));
+		const text = parts.join(` ${sym("separator")} `);
+		const label = running > 0 || queued > 0 ? primary(text) : dim(text);
 		const approvalLabel =
 			approvals > 0 ? theme.fg("warning", `${approvals} approval${approvals === 1 ? "" : "s"}`) : "";
 		return {

@@ -219,6 +219,50 @@ describe("subagent footer observability", () => {
 		}
 	});
 
+	it("counts live children waiting for a slot as queued, not idle", () => {
+		const bridge = new IceAgentViewBridge();
+		bridge.setParentSession(session("parent"));
+		const live = new SubagentLiveSessionRegistry();
+		bridge.connectLiveSessions(live);
+		const releases = [
+			live.register({ runId: "run-a", role: "explorer", taskId: "a", session: session("a", true) }),
+			live.register({ runId: "run-b", role: "explorer", taskId: "b", session: session("b") }),
+			live.register({ runId: "run-c", role: "explorer", taskId: "c", session: session("c") }),
+		];
+		const child = (id: string, state: string) => ({
+			id,
+			agent: "explorer",
+			description: id,
+			state,
+			depth: 0,
+			running: state !== "idle",
+			background: true,
+			resident: true,
+			finished: false,
+			turns: 0,
+			tokens: 0,
+			cost: 0,
+		});
+		bridge.setSubagentControlSource({
+			overview: () => ({
+				enabled: true,
+				capacity: { running: 1, queued: 1, max: 1 },
+				maxDepth: 0,
+				children: [child("run-a", "running"), child("run-b", "queued"), child("run-c", "idle")],
+				approvals: [],
+				diagnostics: [],
+			}),
+			respondToApproval: () => false,
+		});
+		const switcher = new SubagentFooterSwitcher({ requestRender: vi.fn() } as never, fakeTheme() as never, bridge);
+		try {
+			expect(switcher.render(140).join("\n")).toContain("Agents 1 working · 1 queued · 1 idle");
+		} finally {
+			switcher.dispose();
+			for (const release of releases) release();
+		}
+	});
+
 	it("keeps active and retained children readable in collapsed and narrow layouts", () => {
 		const bridge = new IceAgentViewBridge();
 		bridge.setParentSession(session("parent"));

@@ -57,6 +57,8 @@ export interface ChildRecord {
 	parentChildId?: string;
 	depth: number;
 	agent: string;
+	/** Optional parent-chosen name, unique among the owner's children. */
+	name?: string;
 	description: string;
 	contractHash: string;
 	transcriptPath: string;

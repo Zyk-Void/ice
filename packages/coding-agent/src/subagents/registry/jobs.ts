@@ -31,7 +31,8 @@ export const SUBAGENT_JOB_RETENTION_LIMIT = 32;
 /** Default active background jobs; derived from the canonical concurrency policy. */
 export const SUBAGENT_JOB_DEFAULT_CONCURRENCY = SUBAGENT_CONCURRENCY_LIMITS.bundledDefault;
 /** Hard ceiling for active background jobs; shared admission may cap lower. */
-export const SUBAGENT_JOB_MAX_CONCURRENCY = SUBAGENT_CONCURRENCY_LIMITS.hardCap;
+/** Ceiling of the legacy background job registry. */
+export const SUBAGENT_JOB_MAX_CONCURRENCY = 24;
 export const SUBAGENT_JOB_QUEUE_LIMIT = 16;
 // Historical snapshot validation only; new durable admission does not reserve output bytes.
 const LEGACY_JOB_OWNER_OUTPUT_BUDGET = 256 * 1024;

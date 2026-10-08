@@ -58,18 +58,30 @@ import { type ChildTurnResult, mcpDelegableTools, withContextPacket } from "./ru
 import { resolveSubagentsV2Settings } from "./settings.ts";
 
 const AGENT_TOOL_DESCRIPTION =
-	"Launch subagents: independent child sessions that work in their own context window and return a final report. " +
-	"Each task names an agent from the agent list (default `general`), a short description, and a self-contained prompt: the child cannot see this conversation, so include the goal, relevant paths and facts, constraints, and the expected result. " +
-	"Prefer doing small sequential work yourself; delegate independent parallel work, work that benefits from a separate context window, or work suited to a specialist agent. " +
-	"Up to 8 tasks run concurrently. By default the call waits and returns each child's report; multi-task foreground calls also include bounded deterministic counts, evidence overlap, and possible disagreements from checked child results. This is bookkeeping, not semantic consensus or verification. With background=true it returns child IDs at once and each completion arrives independently as a follow-up message. Large final answers expose bounded offset/length reads through agent_control action=output. " +
-	"To continue a child, pass resume=<id> with a new prompt. After budget_exhausted, also supply an explicit maxTurns/maxTokens/timeoutMs within the frozen ceiling to renew the task budget. Child permissions never exceed yours; edits and shell commands may require approval.";
+	"Launch subagents: independent child sessions with their own context window that return a final report. " +
+	"Each task names an agent from the agent list (default `general`), a 3-5 word description, and a self-contained prompt. " +
+	"Up to 8 tasks per call; they run concurrently up to the configured limit and the rest queue. By default the call waits and returns each report; multi-task calls also include bounded deterministic counts, evidence overlap, and possible disagreements from checked results (bookkeeping, not verification). With background=true it returns child IDs at once and each completion arrives later as a message. Large final answers are read in chunks with agent_control action=output. " +
+	"Continue a child with resume=<id> and a new prompt; it keeps its context. After budget_exhausted, also supply an explicit maxTurns/maxTokens/timeoutMs within the frozen ceiling. Child permissions never exceed yours; edits and shell commands may require approval.";
+
+/** How to delegate well; rendered into the system prompt while the `agent` tool is active. */
+const AGENT_TOOL_GUIDELINES = [
+	"Delegate independent, context-heavy, or parallel work to subagents. Read a known file, look up a specific symbol, or search 2-3 known files yourself; delegating those is slower.",
+	"A new subagent has not seen this conversation. Brief it fully: the goal and why it matters, what you already know or ruled out, exact paths and lines, whether to change code or only research, and the report you expect (with a length limit when short is enough).",
+	'Do not delegate understanding. Never write "based on your findings, fix it": synthesize results yourself, then give the next subagent a concrete instruction.',
+	"Launch independent tasks in one agent call so they run in parallel. Use background=true only when you have other work to do meanwhile.",
+	"Background results arrive as messages. Do not poll with agent_control status or wait, or sleep in a loop; continue other work or end your turn. Until a result arrives, say the subagent is still running; never guess its findings.",
+	"Subagent reports are not shown to the user. Summarize what matters in your reply.",
+	"Give a subagent a short name (for example auth-review) when you may refer to it later; resume, agent_control, and agent_patch accept the name or the ID. Continue a subagent with resume=<name or id> when its context helps the follow-up. Delete a subagent you will not need again with agent_control action=delete. Finished subagents leave memory after 30 seconds but stay listed and resumable until deleted.",
+];
 
 const AGENT_PATCH_DESCRIPTION =
 	"Review the changes of a subagent that ran with isolation=worktree. inspect shows the files and diff it changed relative to your workspace at spawn time (your pre-existing uncommitted work is excluded). apply merges those changes into your working tree without touching the git index; it writes nothing if your workspace changed in a conflicting way. reject discards them. Both apply and reject remove the child's worktree.";
 const PATCH_PREVIEW_LIMIT = 48 * 1024;
+/** How often agent_control wait checks for a user message that should end it. */
+const WAIT_MESSAGE_POLL_MS = 250;
 
 const AGENT_CONTROL_DESCRIPTION =
-	"Manage subagents by ID: status, list, wait (until idle or timeout), output (latest bounded report; supply offset and optional length to read a retained large final-answer artifact in chunks), send (message: note for the running or next turn; followup: start a new turn; interrupt: cancel the current turn then follow up), resume (revive a parked child), stop (cancel the current turn, keep the child), delete (remove a stopped child), agents (definition diagnostics). Output reads are owner-scoped, redacted, and bounded to 48 KiB; continue at the returned nextOffset.";
+	"Manage subagents by ID: status, list, wait (block once until the children settle or the timeout; background completions arrive as messages, so do not wait repeatedly), output (latest bounded report; supply offset and optional length to read a retained large final-answer artifact in chunks), send (message: note for the running or next turn; followup: start a new turn; interrupt: cancel the current turn then follow up), resume (revive a parked child), stop (cancel the current turn, keep the child), delete (stop it if running, then remove it; use when its work is done and you will not resume it), agents (definition diagnostics). Output reads are owner-scoped, redacted, and bounded to 48 KiB; continue at the returned nextOffset.";
 
 function text(value: string, details?: unknown) {
 	const projection = truncateHead(redactCredentialText(value), {
@@ -187,6 +199,8 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 				appendSubagentHookJournal(ice, entry),
 			);
 		},
+		onChildActivity: () => notifyHub(),
+		isDisplayed: (childId) => options.agentViewBridge?.getDisplayedId() === childId,
 		// Background asks wait for an inbox: the Agent Hub in the TUI, or an RPC client
 		// answering through respond_subagent_approval. Elsewhere they are denied at once.
 		hasApprovalInbox: () => (latestCtx?.mode === "tui" || latestCtx?.mode === "rpc") && latestCtx.hasUI === true,
@@ -270,7 +284,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 				live.push({
 					runId: record.id,
 					role: record.agent,
-					taskId: record.description,
+					taskId: record.name ?? record.description,
 					session: resident.session,
 					control: entry.control,
 				});
@@ -383,6 +397,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		label: "agent",
 		description: AGENT_TOOL_DESCRIPTION,
 		promptSnippet: "Launch or continue subagents",
+		promptGuidelines: AGENT_TOOL_GUIDELINES,
 		parameters: AgentToolParametersSchema,
 		execute: async (_toolCallId, params: AgentToolParameters, signal, _onUpdate, ctx) => {
 			latestCtx = ctx;
@@ -391,6 +406,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 				if (task.resume && task.outputSchema)
 					return text("A resumed task keeps its frozen outputSchema; remove that field.");
 				if (task.resume && task.agent) return text("A task cannot set both resume and agent.");
+				if (task.resume && task.name) return text("A resumed task keeps its name; remove the name field.");
 				if (task.resume && (task.model || task.thinking || task.isolation || task.scope))
 					return text(
 						"A resumed task keeps its frozen model, thinking, isolation, and scope; remove those fields.",
@@ -407,13 +423,17 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			const prompts = new Map<string, string>();
 			const order: string[] = [];
 			try {
+				// resume accepts an ID or a name given at launch.
+				const resumeIds = params.tasks.map((task) =>
+					task.resume ? runtime.resolveChildRef(task.resume) : undefined,
+				);
 				const records = await runtime.launch(fresh);
 				let launched = 0;
 				params.tasks.forEach((task, index) => {
 					if (!task.resume) prompts.set(records[launched++]!.id, taskPrompts[index]!);
 				});
 				let freshIndex = 0;
-				for (const task of params.tasks) order.push(task.resume ?? records[freshIndex++]!.id);
+				for (const resumeId of resumeIds) order.push(resumeId ?? records[freshIndex++]!.id);
 			} catch (error) {
 				return text(`Could not launch: ${error instanceof Error ? error.message : String(error)}`);
 			}
@@ -519,13 +539,16 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		parameters: AgentControlParametersSchema,
 		execute: async (_toolCallId, params: AgentControlParameters, signal, _onUpdate, ctx) => {
 			latestCtx = ctx;
-			const ids = params.ids ?? (params.id ? [params.id] : []);
+			const refs = params.ids ?? (params.id ? [params.id] : []);
+			let ids: string[] = refs;
 			const needId = () => {
 				if (ids.length === 0) throw new Error(`action=${params.action} needs id or ids.`);
 				return ids;
 			};
 			try {
 				const owner = runtime.ownerSessionId();
+				// Every action accepts IDs or names given at launch.
+				ids = refs.map((ref) => runtime.resolveChildRef(ref));
 				const registry = runtime.registry;
 				switch (params.action) {
 					case "list": {
@@ -535,7 +558,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 							records
 								.map(
 									(record) =>
-										`${record.id}  ${record.agent}  ${record.state}${record.lastTurnOutcome ? ` (last turn: ${record.lastTurnOutcome})` : ""}  ${record.description}`,
+										`${record.id}${record.name ? ` (${record.name})` : ""}  ${record.agent}  ${record.state}${record.lastTurnOutcome ? ` (last turn: ${record.lastTurnOutcome})` : ""}  ${record.description}`,
 								)
 								.join("\n"),
 						);
@@ -554,15 +577,48 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 						);
 					}
 					case "wait": {
-						const result = await registry.waitFor(
-							owner,
-							needId(),
-							(record) => !record.turnInFlight && record.state !== "running" && record.state !== "starting",
-							params.timeoutMs ?? 60_000,
-							signal,
-						);
+						// The user can always talk to the parent: a queued message or Ctrl+B ends the wait early.
+						const interrupt = new AbortController();
+						let reason: "message" | "released" | undefined;
+						const stop = (why?: "message" | "released") => {
+							reason ??= why;
+							interrupt.abort();
+						};
+						const onAbort = () => stop();
+						signal?.addEventListener("abort", onAbort, { once: true });
+						const poll = setInterval(() => {
+							if (ctx.hasPendingMessages()) stop("message");
+						}, WAIT_MESSAGE_POLL_MS);
+						const blocking = {
+							ownerSessionId: options.agentViewBridge?.getParentSession()?.sessionId ?? "",
+							release: () => stop("released"),
+						};
+						blockingWaits.add(blocking);
+						if (ctx.hasPendingMessages()) stop("message");
+						let result: Awaited<ReturnType<typeof registry.waitFor>>;
+						try {
+							result = await registry.waitFor(
+								owner,
+								needId(),
+								(record) => !record.turnInFlight && record.state !== "running" && record.state !== "starting",
+								params.timeoutMs ?? 60_000,
+								interrupt.signal,
+							);
+						} finally {
+							clearInterval(poll);
+							blockingWaits.delete(blocking);
+							signal?.removeEventListener("abort", onAbort);
+						}
+						const header =
+							reason === "message"
+								? "Stopped waiting because the user sent a message; read it now. The children keep running and their completions still arrive as messages."
+								: reason === "released"
+									? "The user moved this wait to the background. The children keep running and their completions arrive as messages."
+									: result.timedOut
+										? "Wait ended before every child settled. Their completions arrive as messages; do not wait again in a loop."
+										: "All children settled.";
 						return text(
-							`${result.timedOut ? "Wait ended before every child settled." : "All children settled."}\n${result.records.map((record) => `${record.id}: ${record.state}${record.lastTurnOutcome ? ` (${record.lastTurnOutcome})` : ""}`).join("\n")}`,
+							`${header}\n${result.records.map((record) => `${record.id}: ${record.state}${record.lastTurnOutcome ? ` (${record.lastTurnOutcome})` : ""}`).join("\n")}`,
 						);
 					}
 					case "output": {
@@ -622,12 +678,14 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		executionMode: "sequential",
 		execute: async (_toolCallId, params: AgentPatchParameters, signal, _onUpdate, ctx) => {
 			latestCtx = ctx;
+			let id = params.id;
 			try {
+				id = runtime.resolveChildRef(params.id);
 				if (params.action === "inspect") {
-					const inspection = runtime.inspectPatch(params.id);
+					const inspection = runtime.inspectPatch(id);
 					if (!inspection.delta)
 						return text(
-							`Patch of ${params.id} is ${inspection.state}.${inspection.recoveryRef ? ` Recovery data: ${inspection.recoveryRef}` : ""}`,
+							`Patch of ${id} is ${inspection.state}.${inspection.recoveryRef ? ` Recovery data: ${inspection.recoveryRef}` : ""}`,
 							{
 								status: inspection.state,
 								artifactRef: inspection.artifactRef,
@@ -635,7 +693,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 							},
 						);
 					const { delta } = inspection;
-					if (delta.empty) return text(`Child ${params.id} made no changes.`, { status: "empty" });
+					if (delta.empty) return text(`Child ${id} made no changes.`, { status: "empty" });
 					const preview = truncateHead(redactCredentialText(delta.patch), {
 						maxBytes: PATCH_PREVIEW_LIMIT,
 						maxLines: 2000,
@@ -647,20 +705,20 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 					);
 				}
 				if (params.action === "apply") {
-					const outcome = await runtime.applyPatch(params.id, signal);
+					const outcome = await runtime.applyPatch(id, signal);
 					switch (outcome.status) {
 						case "applied":
 							return text(
-								`${"unverified" in outcome ? "Applied (unverified: no --ice-verify verifier is configured; run your checks)" : "Applied and verified"} the patch of ${params.id}: ${outcome.writtenPaths.join(", ")}. The parent index was not changed.${outcome.cleanupError ? ` Cleanup needs inspection: ${outcome.cleanupError}` : ""}`,
+								`${"unverified" in outcome ? "Applied (unverified: no --ice-verify verifier is configured; run your checks)" : "Applied and verified"} the patch of ${id}: ${outcome.writtenPaths.join(", ")}. The parent index was not changed.${outcome.cleanupError ? ` Cleanup needs inspection: ${outcome.cleanupError}` : ""}`,
 								outcome,
 							);
 						case "empty":
-							return text(`Child ${params.id} made no changes; its worktree was removed.`, outcome);
+							return text(`Child ${id} made no changes; its worktree was removed.`, outcome);
 						case "already":
-							return text(`The patch of ${params.id} was already ${outcome.patchState}.`, outcome);
+							return text(`The patch of ${id} was already ${outcome.patchState}.`, outcome);
 						case "conflict":
 							return text(
-								`The patch of ${params.id} conflicts with changes made in the parent since the child started. Nothing was written.\n${outcome.details}`,
+								`The patch of ${id} conflicts with changes made in the parent since the child started. Nothing was written.\n${outcome.details}`,
 								outcome,
 							);
 						case "changed_during_apply":
@@ -677,11 +735,11 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 							);
 					}
 				}
-				const rejected = runtime.rejectPatch(params.id);
+				const rejected = runtime.rejectPatch(id);
 				return text(
 					rejected.status === "rejected"
-						? `Rejected the patch of ${params.id} and removed its worktree.`
-						: `The patch of ${params.id} was already ${rejected.patchState}.`,
+						? `Rejected the patch of ${id} and removed its worktree.`
+						: `The patch of ${id} was already ${rejected.patchState}.`,
 					rejected,
 				);
 			} catch (error) {

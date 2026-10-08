@@ -8,7 +8,6 @@ import type {
 	SettingsScope,
 } from "../../core/settings-manager.ts";
 import { DEFAULT_ASK_TIMEOUT_MS } from "../../subagents/permissions/approval.ts";
-import { SUBAGENT_CONCURRENCY_LIMITS } from "../../subagents/registry/admission.ts";
 import { parseIceSettings } from "../../subagents/settings.ts";
 import { resolveSubagentsV2Settings, type SubagentsV2Settings } from "../../subagents/v2/settings.ts";
 
@@ -255,7 +254,7 @@ const ICE_SETTINGS: RpcSettingsDefinition[] = [
 		kind: "number",
 		scope: "both",
 		defaultValue: 4,
-		constraints: { min: 1, max: SUBAGENT_CONCURRENCY_LIMITS.hardCap, integer: true },
+		constraints: { min: 1, integer: true },
 		restartRequired: true,
 		read: (settings) => effectiveIceValue(settings, "ice.subagents.maxConcurrent", 4) as number,
 	}),

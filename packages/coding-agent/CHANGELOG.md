@@ -6,6 +6,7 @@
 
 ### Added
 
+- Added subagent names: an `agent` task may set `name` (for example `auth-review`), unique among the session's subagents; `resume`, `agent_control`, and `agent_patch` accept the name wherever an ID is accepted, and names show in the Agent Hub, the agent strip, `agent_control list`, and completion messages.
 - Added subagents V2, which replaces the legacy delegation tools with `agent`, `agent_control`, and `agent_patch`: Claude Code-style agent files discovered from `.ice/agents` up to the git root plus `~/.ice/agents` and settings, built-in `general`/`explore`/`plan`/`review`/`worker` agents, an allow/ask/deny permission model in which a child never exceeds its parent and repository rules can only narrow, durable child sessions that survive restarts, worktree isolation that starts from uncommitted work with conflict-safe patch apply, an Agent Hub (`/agents`) with an approval inbox, `ice agents list|validate`, the `--agents` JSON flag, lifecycle events on `ice:subagent`, and the existing `ice.hooks` subagent hooks (launch, tool, and accept decisions plus lifecycle observations). See `docs/subagents-v2.md`.
 - Added `createIceSubagents()` for SDK sessions: it returns the `ice` launcher's subagent extension as an inline extension for `DefaultResourceLoader`, plus `attach(session)`, `overview()`, and `respondToApproval()`. Options cover parent mode (`plan` by default), extra agent definitions, hook handlers, an MCP adapter, and the agent directory. The parent session must be persistent; without an approval UI, `ask` rules are denied. See `docs/sdk.md` and `examples/sdk/14-subagents.ts`.
 - Added RPC subagent support: `get_subagents` returns the subagent overview (capacity, queue, children, pending approvals), `subagents_update` events push changes, and `respond_subagent_approval` answers background approvals, which now wait for an RPC answer instead of being denied at once. `RpcClient` exposes `getSubagents()` and `respondToSubagentApproval()`.
@@ -199,6 +200,8 @@
 
 ### Changed
 
+- Removed the upper limit of 24 on `ice.subagents.maxConcurrent`; any integer of at least 1 is accepted and extra turns queue. The agent strip now counts queued subagents separately from idle ones.
+- Changed subagent lifecycle: a subagent whose turn settled is parked 30 seconds later (out of memory, the agent strip, and `alt` view cycling; still resumable and listed under Finished in the Agent Hub), and a subagent stopped before it ever ran is removed. The `agent` tool now adds delegation guidance to the system prompt (briefing, when not to delegate, no polling, summarizing results, deleting finished subagents), and completion messages state the next actions and which siblings are still running.
 - Changed edit diffs to a gutter layout (line number and `+`/`-` sign) with full-width tinted rows for added and removed lines and a stronger tint on changed words. Tints derive from each theme's `toolDiffAdded`/`toolDiffRemoved` hue; themes with non-hex diff colors and customized diff appearances keep colored text.
 - Realigned subagent bounds with reference harnesses: final-answer inline projections are 48 KiB (from 8 KiB), per-artifact storage is 4 MiB (from 512 KiB), parent-facing result presentation is capped at 64 KiB (from 16 KiB), context packet/fork/handoff budgets are 256 KiB (from 64 KiB) with 32 KiB items, selected resources are 128 KiB per file and 512 KiB aggregate, bundled child concurrency is 8 with a hard ceiling of 24 (from 4/8, justified by the no-network concurrency benchmark), and the durable FIFO queue holds 16 queued jobs (from 8).
 - Durable output retention failure no longer flips a completed job to `verification_failed`: the terminal status is preserved, the output projection degrades to `artifact_unavailable`, and an `output_artifact_unavailable` diagnostic records the failure; artifact availability stays distinct from verification.
@@ -221,6 +224,8 @@
 
 ### Fixed
 
+- Fixed running subagents showing `0 tok` until their turn ended, queued subagents showing `starting`, and the footer hiding idle subagents (`agents 0/4 · 2 idle`).
+- Fixed `agent_control wait` keeping the user from reaching the main agent: it now ends as soon as the user queues a message or presses `ctrl+b`.
 - Fixed subagents that finish on their last allowed request (`maxTurns`/`maxTokens`) being reported `budget_exhausted` and sent an extra wrap-up request past the budget. A turn is now exhausted only when the budget stopped work the child still wanted to do.
 - Fixed the agent strip counting idle children as "active"; it now shows `N working · N idle`. Opening a parked child from the Agent Hub now resumes it instead of asking you to resume it first.
 - Fixed `/agents` and `/subagents` in interactive mode opening the old view switcher instead of the Agent Hub, which also kept `/agents list` and `/agents new` from running. `ctrl+shift+a` and `/tasks` with no background bash now open the Hub too; the Hub renders in place of the editor instead of as an overlay over the transcript.

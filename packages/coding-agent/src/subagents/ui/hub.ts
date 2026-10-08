@@ -16,6 +16,7 @@ import type { ApprovalAnswer, PendingApproval } from "../permissions/approval.ts
 export interface HubRow {
 	id: string;
 	agent: string;
+	name?: string;
 	description: string;
 	state: string;
 	lastTurnOutcome?: string;
@@ -50,6 +51,16 @@ function formatTokens(tokens: number): string {
 	return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens);
 }
 
+/** Parked children finished their work: listed after active ones, still resumable. */
+function isFinished(row: HubRow): boolean {
+	return row.state === "parked";
+}
+
+/** Active children first, then finished ones, each in registry order. */
+function orderedRows(rows: readonly HubRow[]): HubRow[] {
+	return [...rows.filter((row) => !isFinished(row)), ...rows.filter(isFinished)];
+}
+
 function pad(text: string, width: number): string {
 	const truncated = truncateToWidth(text, width, "…");
 	return truncated + " ".repeat(Math.max(0, width - visibleWidth(truncated)));
@@ -81,7 +92,7 @@ export class AgentHubView implements Component {
 	invalidate(): void {}
 
 	private selectedRow(): HubRow | undefined {
-		const rows = this.source.rows();
+		const rows = orderedRows(this.source.rows());
 		if (rows.length === 0) return undefined;
 		this.selected = Math.min(Math.max(0, this.selected), rows.length - 1);
 		return rows[this.selected];
@@ -108,7 +119,7 @@ export class AgentHubView implements Component {
 	}
 
 	handleInput(data: string): void {
-		const rows = this.source.rows();
+		const rows = orderedRows(this.source.rows());
 		const row = this.selectedRow();
 		if (this.keybindings.matches(data, "tui.select.cancel") || this.keybindings.matches(data, "app.agents.hub")) {
 			this.done();
@@ -162,14 +173,16 @@ export class AgentHubView implements Component {
 	private header(rows: readonly HubRow[], approvals: number): string {
 		const count = (state: string) => rows.filter((row) => row.state === state).length;
 		const capacity = this.source.capacity?.();
+		const finished = rows.filter(isFinished).length;
+		const active = rows.length - finished;
 		const parts = [
-			`${rows.length} agent${rows.length === 1 ? "" : "s"}`,
+			`${active} active${finished > 0 ? `, ${finished} finished` : ""}`,
 			...(capacity
 				? [
 						`${capacity.running}/${capacity.max} slots in use${capacity.queued > 0 ? `, ${capacity.queued} queued` : ""}`,
 					]
 				: []),
-			...(["running", "idle", "parked", "blocked"] as const)
+			...(["running", "queued", "idle", "blocked"] as const)
 				.map((state) => [state, count(state)] as const)
 				.filter(([, value]) => value > 0)
 				.map(([state, value]) => `${value} ${state}`),
@@ -183,9 +196,15 @@ export class AgentHubView implements Component {
 	private rosterLines(rows: readonly HubRow[], width: number): string[] {
 		if (rows.length === 0)
 			return [this.theme.fg("muted", "No subagents in this session. Use the agent tool to start one.")];
-		return rows.map((row, index) => {
+		const firstFinished = rows.findIndex(isFinished);
+		const lines = rows.map((row, index) => {
 			const marker = index === this.selected ? this.theme.fg("accent", "›") : " ";
-			const stateColor = row.state === "running" ? "accent" : row.state === "blocked" ? "warning" : "muted";
+			const stateColor =
+				row.state === "running"
+					? "accent"
+					: row.state === "blocked" || row.state === "queued"
+						? "warning"
+						: "muted";
 			const extra = [
 				row.lastTurnOutcome && row.state !== "running" ? row.lastTurnOutcome : "",
 				row.patchState ? `patch ${row.patchState}` : "",
@@ -194,9 +213,12 @@ export class AgentHubView implements Component {
 				.filter(Boolean)
 				.join(" · ");
 			const fixed = `${marker} ${pad(row.agent, 10)} ${this.theme.fg(stateColor, pad(row.state, 8))} `;
-			const rest = `${row.description}  ${this.theme.fg("dim", extra)}`;
+			const rest = `${row.name ? `${this.theme.bold(row.name)} ` : ""}${row.description}  ${this.theme.fg("dim", extra)}`;
 			return truncateToWidth(fixed + rest, width, "…");
 		});
+		if (firstFinished >= 0)
+			lines.splice(firstFinished, 0, this.theme.fg("dim", "Finished (enter resumes and opens)"));
+		return lines;
 	}
 
 	private approvalLines(approvals: readonly PendingApproval[], width: number): string[] {
@@ -217,13 +239,16 @@ export class AgentHubView implements Component {
 
 	private inspectorLines(row: HubRow | undefined, width: number): string[] {
 		if (!row) return [];
-		const lines = [this.theme.bold(`${row.agent} · ${row.id}`), ...this.source.details(row.id)];
+		const lines = [
+			this.theme.bold(`${row.agent} · ${row.name ? `${row.name} · ` : ""}${row.id}`),
+			...this.source.details(row.id),
+		];
 		if (row.blockedReasons?.length) lines.push(this.theme.fg("warning", `Blocked: ${row.blockedReasons.join("; ")}`));
 		return lines.map((line) => truncateToWidth(line, width, "…"));
 	}
 
 	render(width: number): string[] {
-		const rows = this.source.rows();
+		const rows = orderedRows(this.source.rows());
 		const approvals = this.source.approvals();
 		const row = this.selectedRow();
 		const lines = [this.header(rows, approvals.length), "", ...this.approvalLines(approvals, width)];

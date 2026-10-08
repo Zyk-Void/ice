@@ -545,7 +545,9 @@ describe("subagent V2 control wait", () => {
 			const tool = definitions.find((candidate) => candidate.name === "agent_control")!;
 			let settled = false;
 			const waiting = tool
-				.execute("wait-call", { action: "wait", id, timeoutMs: 1000 }, undefined, undefined, {} as ExtensionContext)
+				.execute("wait-call", { action: "wait", id, timeoutMs: 1000 }, undefined, undefined, {
+					hasPendingMessages: () => false,
+				} as unknown as ExtensionContext)
 				.then((result) => {
 					settled = true;
 					return result;

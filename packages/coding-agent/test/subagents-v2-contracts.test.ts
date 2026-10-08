@@ -167,7 +167,10 @@ describe("subagent V2 model-facing API", () => {
 			}),
 		).toBe(true);
 		expect(Value.Check(AgentControlParametersSchema, { action: "cancel", id: CHILD_ID })).toBe(false);
-		expect(Value.Check(AgentControlParametersSchema, { action: "wait", id: "run-123" })).toBe(false);
+		// A reference is a child ID or a launch name; anything else is rejected.
+		expect(Value.Check(AgentControlParametersSchema, { action: "wait", id: "run_123" })).toBe(false);
+		expect(Value.Check(AgentControlParametersSchema, { action: "wait", id: "Auth Review" })).toBe(false);
+		expect(Value.Check(AgentControlParametersSchema, { action: "wait", id: "auth-review" })).toBe(true);
 		expect(Value.Check(AgentPatchParametersSchema, { id: CHILD_ID, action: "apply" })).toBe(true);
 		expect(Value.Check(AgentPatchParametersSchema, { id: CHILD_ID, action: "integrate" })).toBe(false);
 	});

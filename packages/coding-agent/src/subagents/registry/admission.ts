@@ -10,8 +10,6 @@ export const SUBAGENT_CONCURRENCY_LIMITS = {
 	min: 1,
 	/** Bundled default active children for read-only/bounded work. */
 	bundledDefault: 8,
-	/** Absolute hard ceiling; neither settings nor calls can exceed it. */
-	hardCap: 24,
 } as const;
 
 /**
@@ -26,13 +24,10 @@ export class SubagentConcurrencyAdmission {
 	readonly maxActive: number;
 
 	constructor(maxActive: number) {
-		if (
-			!Number.isSafeInteger(maxActive) ||
-			maxActive < SUBAGENT_CONCURRENCY_LIMITS.min ||
-			maxActive > SUBAGENT_CONCURRENCY_LIMITS.hardCap
-		) {
+		// No upper bound: the user owns the memory, CPU, and rate-limit tradeoff; excess turns queue.
+		if (!Number.isSafeInteger(maxActive) || maxActive < SUBAGENT_CONCURRENCY_LIMITS.min) {
 			throw new Error(
-				`Subagent concurrency admission cap must be between ${SUBAGENT_CONCURRENCY_LIMITS.min} and ${SUBAGENT_CONCURRENCY_LIMITS.hardCap}.`,
+				`Subagent concurrency admission cap must be an integer of at least ${SUBAGENT_CONCURRENCY_LIMITS.min}.`,
 			);
 		}
 		this.maxActive = maxActive;

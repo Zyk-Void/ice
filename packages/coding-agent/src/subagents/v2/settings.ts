@@ -36,7 +36,7 @@ const V2KeysSchema = Type.Object({
 	v2: Type.Optional(Type.Boolean()),
 	defaultAgent: Type.Optional(Type.String({ pattern: "^[a-z0-9][a-z0-9-]{0,63}$" })),
 	maxDepth: Type.Optional(Type.Integer({ minimum: 0, maximum: 4 })),
-	maxConcurrent: Type.Optional(Type.Integer({ minimum: 1, maximum: 24 })),
+	maxConcurrent: Type.Optional(Type.Integer({ minimum: 1 })),
 	askTimeoutMs: Type.Optional(Type.Integer({ minimum: 1_000, maximum: 60 * 60 * 1000 })),
 	permissions: Type.Optional(
 		Type.Object(

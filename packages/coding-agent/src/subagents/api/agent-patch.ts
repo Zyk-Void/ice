@@ -6,14 +6,14 @@
  * mutation and goes through the parent evaluator and mode gate like `edit`.
  */
 import { type Static, Type } from "typebox";
-import { CHILD_ID_PATTERN_SOURCE } from "../contract/child-runtime-contract.ts";
+import { CHILD_REF_PATTERN_SOURCE } from "../contract/child-runtime-contract.ts";
 
 export const AGENT_PATCH_ACTIONS = ["inspect", "apply", "reject"] as const;
 export type AgentPatchAction = (typeof AGENT_PATCH_ACTIONS)[number];
 
 export const AgentPatchParametersSchema = Type.Object(
 	{
-		id: Type.String({ pattern: CHILD_ID_PATTERN_SOURCE }),
+		id: Type.String({ pattern: CHILD_REF_PATTERN_SOURCE }),
 		action: Type.Enum(AGENT_PATCH_ACTIONS),
 	},
 	{ additionalProperties: false },

@@ -429,7 +429,7 @@ export const SUBAGENT_PRESENTATION_LIMIT_BYTES = 64 * 1024;
 export const SUBAGENT_BATCH_LIMITS = {
 	maxTasks: 8,
 	defaultConcurrency: SUBAGENT_CONCURRENCY_LIMITS.bundledDefault,
-	maxConcurrency: SUBAGENT_CONCURRENCY_LIMITS.hardCap,
+	maxConcurrency: 24,
 	maxManagedBatches: 16,
 	retainedManagedBatches: 32,
 } as const;

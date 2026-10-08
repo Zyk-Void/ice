@@ -284,7 +284,7 @@ describe("FooterComponent width handling", () => {
 			diagnostics: [],
 		};
 		footer.setSubagentSource(() => overview);
-		expect(stripAnsi(footer.render(160)[0]!)).toContain("agents 2/4 1 queued");
+		expect(stripAnsi(footer.render(160)[0]!)).toContain("agents 2/4 · 1 queued");
 		overview.approvals = [
 			{
 				id: "r1",

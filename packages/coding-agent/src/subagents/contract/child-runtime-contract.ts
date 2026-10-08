@@ -17,6 +17,10 @@ export const CHILD_RUNTIME_CONTRACT_VERSION = 2;
 /** One durable child ID for the whole lifetime: `ag_` + 26 lowercase base32 chars (128 bits). */
 export const CHILD_ID_PATTERN_SOURCE = "^ag_[a-z2-7]{26}$";
 export const CHILD_ID_PATTERN = new RegExp(CHILD_ID_PATTERN_SOURCE);
+/** Optional short child name chosen by the parent; unique among the owner's children. Never contains "_", so it cannot look like an ID. */
+export const CHILD_NAME_PATTERN_SOURCE = "^[a-z0-9][a-z0-9-]{0,39}$";
+/** A child reference in tool input: its ID or its name. */
+export const CHILD_REF_PATTERN_SOURCE = "^(?:ag_[a-z2-7]{26}|[a-z0-9][a-z0-9-]{0,39})$";
 /** Display/synthesis handle for a multi-task launch; never a child identity. */
 export const CHILD_GROUP_ID_PATTERN = /^agg_[a-z2-7]{26}$/;
 

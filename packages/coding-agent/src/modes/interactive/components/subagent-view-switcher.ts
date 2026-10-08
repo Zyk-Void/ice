@@ -42,8 +42,10 @@ export interface SubagentFooterEntry {
 export interface SubagentFooterSnapshot {
 	readonly children: readonly SubagentFooterEntry[];
 	readonly liveCount: number;
-	/** Live children whose session is currently streaming; the rest of liveCount is idle. */
+	/** Live children whose session is currently streaming. */
 	readonly workingCount: number;
+	/** Live children whose turn waits for a concurrency slot; the rest of liveCount is idle. */
+	readonly queuedCount?: number;
 	readonly retainedCount: number;
 	readonly attentionCount: number;
 	readonly mainAgentDisplayed: boolean;
@@ -197,9 +199,11 @@ export function formatAgentSwitcherLabel(view: IceAgentViewDescriptor): string {
 
 /** "1 working · 2 idle"; "none live" when no child session is resident. */
 function liveCounts(snapshot: SubagentFooterSnapshot): string[] {
-	const idle = snapshot.liveCount - snapshot.workingCount;
+	const queued = snapshot.queuedCount ?? 0;
+	const idle = snapshot.liveCount - snapshot.workingCount - queued;
 	const parts = [
 		...(snapshot.workingCount > 0 ? [`${snapshot.workingCount} working`] : []),
+		...(queued > 0 ? [`${queued} queued`] : []),
 		...(idle > 0 ? [`${idle} idle`] : []),
 	];
 	return parts.length > 0 ? parts : ["none live"];
@@ -273,7 +277,12 @@ export class SubagentFooterSwitcher implements Component {
 
 	private refresh(): void {
 		const displayedId = this.bridge.getDisplayedId();
-		this.footerSnapshot = createSubagentFooterSnapshot(this.bridge.listViews(), displayedId, displayedId);
+		const snapshot = createSubagentFooterSnapshot(this.bridge.listViews(), displayedId, displayedId);
+		// Views carry no queue state; the runtime overview knows which live children wait for a slot.
+		const queuedCount =
+			this.bridge.getSubagentOverview()?.children.filter((child) => child.resident && child.state === "queued")
+				.length ?? 0;
+		this.footerSnapshot = Object.freeze({ ...snapshot, queuedCount });
 	}
 
 	private renderStrip(width: number): string[] {

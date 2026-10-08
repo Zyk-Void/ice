@@ -7,7 +7,7 @@
  * contract; that rule is enforced at preflight (P6.2), not by this schema.
  */
 import { type Static, Type } from "typebox";
-import { CHILD_ID_PATTERN_SOURCE } from "../contract/child-runtime-contract.ts";
+import { CHILD_NAME_PATTERN_SOURCE, CHILD_REF_PATTERN_SOURCE } from "../contract/child-runtime-contract.ts";
 import { AGENT_ISOLATION_MODES, AGENT_NAME_PATTERN, AGENT_THINKING_LEVELS } from "../definitions/schema.ts";
 
 export const AGENT_TOOL_LIMITS = Object.freeze({
@@ -31,7 +31,9 @@ export const AgentTaskSchema = Type.Object(
 		/** Definition name for a new child; defaults to `ice.subagents.defaultAgent`. Not allowed with `resume`. */
 		agent: Type.Optional(Type.String({ pattern: AGENT_NAME_PATTERN })),
 		/** Existing child ID to continue with a new turn. */
-		resume: Type.Optional(Type.String({ pattern: CHILD_ID_PATTERN_SOURCE })),
+		/** Short name to refer to a new child later (for example `auth-review`); unique among this session's children. */
+		name: Type.Optional(Type.String({ pattern: CHILD_NAME_PATTERN_SOURCE })),
+		resume: Type.Optional(Type.String({ pattern: CHILD_REF_PATTERN_SOURCE })),
 		description: Type.String({ minLength: 1, maxLength: AGENT_TOOL_LIMITS.maxDescriptionChars }),
 		prompt: Type.String({ minLength: 1, maxLength: AGENT_TOOL_LIMITS.maxPromptBytes }),
 		model: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),

@@ -86,7 +86,7 @@ describe("subagent V2 Agent Hub", () => {
 		const { view } = hub();
 		const text = view.render(80).join("\n");
 		expect(text).toContain("Agent Hub");
-		expect(text).toContain("2 agents · 1 running · 1 idle");
+		expect(text).toContain("2 active · 1 running · 1 idle");
 		expect(text).toContain("1 pending approval");
 		expect(text).toContain("worker (ag_b): bash: npm test");
 		expect(text).toContain("explore");
@@ -116,6 +116,23 @@ describe("subagent V2 Agent Hub", () => {
 		view.handleInput("\r");
 		expect(calls.at(-1)).toBe("focus ag_b");
 		expect(done).toHaveBeenCalledOnce();
+		view.dispose();
+	});
+
+	it("lists finished (parked) children after active ones and selects in that order", () => {
+		const { view } = hub({
+			rows: () => [
+				{ ...ROWS[0]!, id: "ag_done", description: "Old task", state: "parked" },
+				{ ...ROWS[1]!, id: "ag_live", description: "Live task" },
+			],
+		});
+		const text = view.render(80).join("\n");
+		expect(text).toContain("1 active, 1 finished");
+		expect(text.indexOf("Live task")).toBeLessThan(text.indexOf("Finished (enter resumes and opens)"));
+		expect(text.indexOf("Finished (enter resumes and opens)")).toBeLessThan(text.indexOf("Old task"));
+		expect(text).toContain("details of ag_live");
+		view.handleInput("\x1b[B");
+		expect(view.render(80).join("\n")).toContain("details of ag_done");
 		view.dispose();
 	});
 
