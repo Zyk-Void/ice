@@ -221,13 +221,14 @@ describe("subagent footer observability", () => {
 		}
 	});
 
-	it("counts live children waiting for a slot as queued, not idle", () => {
+	it("counts running and queued children from the runtime overview, not the streaming flag", () => {
 		const bridge = new IceAgentViewBridge();
 		bridge.setParentSession(session("parent"));
 		const live = new SubagentLiveSessionRegistry();
 		bridge.connectLiveSessions(live);
 		const releases = [
-			live.register({ runId: "run-a", role: "explorer", taskId: "a", session: session("a", true) }),
+			// run-a has not started streaming yet; the runtime overview already reports it running.
+			live.register({ runId: "run-a", role: "explorer", taskId: "a", session: session("a") }),
 			live.register({ runId: "run-b", role: "explorer", taskId: "b", session: session("b") }),
 			live.register({ runId: "run-c", role: "explorer", taskId: "c", session: session("c") }),
 		];

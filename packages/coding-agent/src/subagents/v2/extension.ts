@@ -621,7 +621,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 					const moved = runtime.detachToBackground(order);
 					backgroundIds.push(...order);
 					return text(
-						`Moved ${moved} running subagent${moved === 1 ? "" : "s"} to the background (${order.join(", ")}). Each completion arrives as a follow-up message; children that already finished can be read with agent_control action=output.`,
+						`Moved ${moved} running subagent${moved === 1 ? "" : "s"} to the background (${order.map((id) => (nameOf(id) ? `${nameOf(id)} (${id})` : id)).join(", ")}). Each completion arrives as a follow-up message; children that already finished can be read with agent_control action=output.`,
 						{ ids: order, detached: true },
 					);
 				}

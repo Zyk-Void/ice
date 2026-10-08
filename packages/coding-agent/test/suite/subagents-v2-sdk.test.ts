@@ -88,6 +88,52 @@ describe("subagents V2 SDK wiring", () => {
 		expect(result.content[0]!.text).toContain("child summary");
 	});
 
+	it("moves a foreground agent call to the background by name and delivers its result later", async () => {
+		const subagents = createIceSubagents({
+			agents: { summarizer: { description: "Summarize text", prompt: "Summarize what you are given." } },
+		});
+		const harness = await createHarness({ extensionFactories: [subagents.extension], persistSession: true });
+		harnesses.push(harness);
+		subagents.attach(harness.session);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		harness.setResponses([
+			fauxAssistantMessage(
+				fauxToolCall("agent", {
+					tasks: [{ agent: "summarizer", name: "scout", description: "Summarize", prompt: "Summarize: hi" }],
+				}),
+				{ stopReason: "toolUse" },
+			),
+			async () => {
+				await gate;
+				return fauxAssistantMessage("child summary");
+			},
+			fauxAssistantMessage("parent continues"),
+			fauxAssistantMessage("parent read the report"),
+		]);
+		const run = harness.session.prompt("delegate");
+		await vi.waitFor(() => expect(subagents.bridge.hasBlockingWait()).toBe(true));
+		expect(subagents.bridge.releaseBlockingWaits()).toBe(1);
+		await run;
+		const moved = harness.eventsOfType("tool_execution_end").find((event) => event.toolName === "agent")?.result as {
+			content: Array<{ text: string }>;
+		};
+		expect(moved.content[0]!.text).toMatch(/Moved 1 running subagent to the background \(scout \(ag_\w+\)\)/);
+		release();
+		await vi.waitFor(() =>
+			expect(
+				harness.session.messages.some(
+					(message) =>
+						message.role === "custom" &&
+						message.customType === "subagent_completed" &&
+						JSON.stringify(message.content).includes("child summary"),
+				),
+			).toBe(true),
+		);
+	});
+
 	it("runs a child through the inline extension and exposes it in the overview", async () => {
 		const subagents = createIceSubagents({
 			agents: { summarizer: { description: "Summarize text", prompt: "Summarize what you are given." } },

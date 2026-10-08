@@ -278,11 +278,14 @@ export class SubagentFooterSwitcher implements Component {
 	private refresh(): void {
 		const displayedId = this.bridge.getDisplayedId();
 		const snapshot = createSubagentFooterSnapshot(this.bridge.listViews(), displayedId, displayedId);
-		// Views carry no queue state; the runtime overview knows which live children wait for a slot.
-		const queuedCount =
-			this.bridge.getSubagentOverview()?.children.filter((child) => child.resident && child.state === "queued")
-				.length ?? 0;
-		this.footerSnapshot = Object.freeze({ ...snapshot, queuedCount });
+		// Views carry no queue state, and their streaming flag is only sampled on bridge events (a turn that starts
+		// later still reads idle); the runtime overview knows which live children run and which wait for a slot.
+		const overview = this.bridge.getSubagentOverview()?.children.filter((child) => child.resident);
+		const queuedCount = overview?.filter((child) => child.state === "queued").length ?? 0;
+		const workingCount = overview
+			? overview.filter((child) => child.running && child.state !== "queued").length
+			: snapshot.workingCount;
+		this.footerSnapshot = Object.freeze({ ...snapshot, workingCount, queuedCount });
 	}
 
 	private renderStrip(width: number): string[] {

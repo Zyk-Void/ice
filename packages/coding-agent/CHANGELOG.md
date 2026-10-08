@@ -234,6 +234,7 @@
 
 ### Fixed
 
+- Fixed the agent strip showing a just-started foreground subagent as idle: working and queued counts now come from the subagent runtime. Moving a foreground call to the background names the subagents it moved.
 - Fixed the agent definition field `initialPrompt` being ignored: it now opens the subagent's first turn (never repeated on resume).
 - Fixed agent definitions with `requiredMcpServers` never being callable: the check now uses the MCP servers the parent actually exposes to subagents.
 - Fixed the main agent refusing to check on subagents when asked: the delegation guidance now forbids polling loops but tells the model to check once with `agent_control` when the user asks.
