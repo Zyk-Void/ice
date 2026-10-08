@@ -145,6 +145,16 @@ export class ChildRegistry<H extends ResidentChild = ResidentChild> {
 			.sort((left, right) => left.createdAt - right.createdAt);
 	}
 
+	/**
+	 * Live records journaled under another owner: a forked session copies its source's journal. They stay with the
+	 * source session; the fork may only recognize them.
+	 */
+	inherited(ownerSessionId: string): ChildRecord[] {
+		return [...this.records.values()].filter(
+			(record) => record.ownerSessionId !== ownerSessionId && record.state !== "deleted",
+		);
+	}
+
 	resident(ownerSessionId: string, id: string): H | undefined {
 		this.get(ownerSessionId, id);
 		return this.parking.has(id) ? undefined : this.residents.get(id);

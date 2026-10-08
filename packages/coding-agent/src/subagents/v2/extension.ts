@@ -216,6 +216,8 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 	let latestCtx: ExtensionContext | undefined;
 	/** A resumed session shows the child roster once: its children may have been interrupted while it was closed. */
 	let rosterAfterResume = false;
+	/** A forked session says once that its source's subagents did not carry over. */
+	let forkNotice = false;
 	const nameOf = (id: string): string | undefined => {
 		try {
 			return runtime.registry.get(runtime.ownerSessionId(), id).name;
@@ -433,6 +435,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		const parent = options.agentViewBridge?.getParentSession();
 		if (parent) shutDownParents.delete(parent);
 		rosterAfterResume = event.reason === "startup" || event.reason === "resume";
+		forkNotice = event.reason === "fork";
 		runtime.invalidateDefinitions();
 		unsubscribeRegistry?.();
 		unsubscribeRegistry = undefined;
@@ -470,7 +473,20 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			const delta = computeAgentListingDelta(branch.state, runtime.callableAgents());
 			const roster = branch.compacted || rosterAfterResume ? renderChildRoster(runtime) : undefined;
 			rosterAfterResume = false;
-			const content = [renderAgentListingMessage(delta), roster].filter(Boolean).join("\n\n");
+			let inherited: ReturnType<SubagentV2Runtime["inheritedChildren"]> = [];
+			if (forkNotice) {
+				try {
+					inherited = runtime.inheritedChildren();
+				} catch {
+					// No parent session yet.
+				}
+			}
+			forkNotice = false;
+			const forkText =
+				inherited.length > 0
+					? `This session was forked from another session. Its ${inherited.length} subagent${inherited.length === 1 ? "" : "s"} (${inherited.map((child) => child.name ?? child.id).join(", ")}) stay with that session and cannot be resumed or read here; their reports above are what you have. Launch new subagents if you need more.`
+					: undefined;
+			const content = [renderAgentListingMessage(delta), roster, forkText].filter(Boolean).join("\n\n");
 			if (!content) return undefined;
 			return {
 				message: {

@@ -221,11 +221,19 @@ export class SubagentV2Runtime {
 
 	/** Resolve a child reference from tool input: an ID, or a name given at launch. */
 	resolveChildRef(ref: string): string {
-		if (CHILD_ID_PATTERN.test(ref)) return ref;
 		const state = this.state();
 		const records = state.registry.list(state.sessionId);
-		const match = records.find((record) => record.name === ref);
-		if (match) return match.id;
+		const inherited = state.registry
+			.inherited(state.sessionId)
+			.find((record) => record.id === ref || (record.name !== undefined && record.name === ref));
+		const owned = records.find((record) => record.id === ref || record.name === ref);
+		if (!owned && inherited)
+			throw new SubagentV2Error(
+				"preflight",
+				`"${ref}" belongs to the session this one was forked from; subagents stay with their original session. Switch back to that session to continue it, or launch a new subagent here.`,
+			);
+		if (CHILD_ID_PATTERN.test(ref)) return ref;
+		if (owned) return owned.id;
 		const names = records.flatMap((record) => (record.name ? [record.name] : []));
 		throw new SubagentV2Error(
 			"preflight",
@@ -697,10 +705,12 @@ export class SubagentV2Runtime {
 			throw new SubagentV2Error("preflight", "Subagents are disabled by ice.subagents.enabled.");
 		const parent = this.parent();
 		const state = this.state();
+		// Names stay unique across this session's children, deleted ones, and those inherited from a fork source.
 		const taken = new Set(
-			state.registry
-				.list(state.sessionId, { includeDeleted: true })
-				.flatMap((record) => (record.name ? [record.name] : [])),
+			[
+				...state.registry.list(state.sessionId, { includeDeleted: true }),
+				...state.registry.inherited(state.sessionId),
+			].flatMap((record) => (record.name ? [record.name] : [])),
 		);
 		for (const task of tasks) {
 			if (!task.name) continue;
@@ -1413,6 +1423,14 @@ export class SubagentV2Runtime {
 			});
 		// Without a turn nothing settles to flush the rest, so post every remaining batch now.
 		if (!triggerTurn) this.flushCompletions(options);
+	}
+
+	/** Subagents of the session this one was forked from: named here so the parent knows they did not carry over. */
+	inheritedChildren(): Array<{ id: string; name?: string; agent: string }> {
+		const state = this.state();
+		return state.registry
+			.inherited(state.sessionId)
+			.map((record) => ({ id: record.id, agent: record.agent, ...(record.name ? { name: record.name } : {}) }));
 	}
 
 	/** What a running child is doing: its latest tool call and target, redacted and short; display only. */

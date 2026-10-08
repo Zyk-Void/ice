@@ -235,6 +235,7 @@
 
 ### Fixed
 
+- Fixed forked sessions silently losing track of the source session's subagents: the fork is told once which subagents stayed with the source session, using one of them gives a clear "belongs to the session this one was forked from" error, and their names stay reserved. Subagents are not shared between sessions, so two sessions never write to the same subagent transcript or worktree.
 - Fixed sessions from before per-turn subagent billing undercounting cost: opening such a session adds one backfill entry per subagent for usage its existing entries do not cover (never double counted).
 - Fixed the agent strip showing a just-started foreground subagent as idle: working and queued counts now come from the subagent runtime. Moving a foreground call to the background names the subagents it moved.
 - Fixed the agent definition field `initialPrompt` being ignored: it now opens the subagent's first turn (never repeated on resume).

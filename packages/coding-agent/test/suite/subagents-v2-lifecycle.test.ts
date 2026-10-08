@@ -282,6 +282,40 @@ describe("subagents V2 across compaction and session resume", () => {
 		expect(parentCalls).toBe(2);
 	});
 
+	it("tells a forked session that its source's subagents stay behind, and refuses them clearly", async () => {
+		const { runtime, subagents, setResponses } = await createParent();
+		setResponses([
+			launchScout(),
+			fauxAssistantMessage("child one"),
+			fauxAssistantMessage("parent one"),
+			fauxAssistantMessage("parent two"),
+			fauxAssistantMessage(
+				fauxToolCall("agent", { tasks: [{ resume: "scout", description: "Again", prompt: "again" }] }),
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("fork reply"),
+			fauxAssistantMessage("fork next"),
+		]);
+		await runtime.session.prompt("delegate");
+		await runtime.session.prompt("second message");
+		const userEntry = runtime.session.sessionManager
+			.getBranch()
+			.filter((entry) => entry.type === "message" && entry.message.role === "user")
+			.at(-1)!;
+		expect((await runtime.fork(userEntry.id, { position: "at" })).cancelled).toBe(false);
+		await runtime.session.bindExtensions({});
+		expect(subagents.overview()?.children).toEqual([]);
+		await runtime.session.prompt("continue scout");
+		const notice = listings(runtime.session).find((text) => text.includes("This session was forked"));
+		expect(notice).toContain("(scout) stay with that session");
+		const refused = runtime.session.messages
+			.filter((message) => message.role === "toolResult" && message.toolName === "agent")
+			.at(-1);
+		expect(JSON.stringify(refused)).toContain("belongs to the session this one was forked from");
+		await runtime.session.prompt("again");
+		expect(listings(runtime.session).filter((text) => text.includes("This session was forked"))).toHaveLength(1);
+	});
+
 	it("shows the roster once after the parent session is resumed", async () => {
 		const { runtime, subagents, setResponses } = await createParent();
 		setResponses([
