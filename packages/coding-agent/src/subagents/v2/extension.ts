@@ -453,6 +453,15 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			// No parent session yet; connected on the next session start.
 		}
 		options.agentViewBridge?.connectLiveSessions(liveSource);
+		// Results that finished while this session was closed show up right away, without starting a turn;
+		// the model reads them with the next prompt.
+		if (event.reason === "startup" || event.reason === "resume") {
+			try {
+				runtime.flushCompletions({ triggerTurn: false });
+			} catch {
+				// No parent session yet.
+			}
+		}
 	});
 	ice.on("before_agent_start", async (_event, ctx) => {
 		latestCtx = ctx;

@@ -240,6 +240,48 @@ describe("subagents V2 across compaction and session resume", () => {
 		expect(listings(runtime.session).some((text) => text.includes("- scout ("))).toBe(true);
 	});
 
+	it("shows a result that settled while the session was closed as soon as it is resumed, without a turn", async () => {
+		const { runtime, setResponses } = await createParent();
+		const isChild = (context: Context) => JSON.stringify(context.messages[0]).includes("Summarize: a");
+		let parentCalls = 0;
+		const dispatch = async (context: Context, options: { signal?: AbortSignal } | undefined) => {
+			if (isChild(context)) {
+				// Runs until the session switch aborts it.
+				await new Promise<void>((resolve) =>
+					options?.signal?.addEventListener("abort", () => resolve(), { once: true }),
+				);
+				return fauxAssistantMessage("never");
+			}
+			parentCalls++;
+			if (parentCalls === 1)
+				return fauxAssistantMessage(
+					fauxToolCall("agent", {
+						background: true,
+						tasks: [{ agent: "summarizer", name: "scout", description: "Summarize a", prompt: "Summarize: a" }],
+					}),
+					{ stopReason: "toolUse" },
+				);
+			return fauxAssistantMessage(`parent ${parentCalls}`);
+		};
+		setResponses(Array.from({ length: 6 }, () => dispatch as FauxResponseStep));
+		await runtime.session.prompt("delegate in the background");
+		const firstFile = runtime.session.sessionFile!;
+		await runtime.newSession();
+		await runtime.session.bindExtensions({});
+
+		await runtime.switchSession(firstFile);
+		await runtime.session.bindExtensions({});
+		const session = runtime.session;
+		const completion = session.messages.find(
+			(message) => message.role === "custom" && message.customType === "subagent_completed",
+		);
+		expect(JSON.stringify(completion)).toContain('scout\\" (ag_');
+		expect(JSON.stringify(completion)).toContain("finished: interrupted.");
+		expect(session.isStreaming).toBe(false);
+		// No turn ran for it: the transcript still ends with the parent's last reply before the switch.
+		expect(parentCalls).toBe(2);
+	});
+
 	it("shows the roster once after the parent session is resumed", async () => {
 		const { runtime, subagents, setResponses } = await createParent();
 		setResponses([

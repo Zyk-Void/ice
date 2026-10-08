@@ -202,6 +202,7 @@
 
 ### Changed
 
+- Subagent results that settled while a session was closed now appear as soon as the session is resumed, without starting a turn; the model reads them with the next prompt.
 - `ice.subagents.maxDepth` is now described as reserved: subagents cannot launch subagents, so values above 0 have no effect yet. The `agent` tool description says so.
 - Compacted the footer status line: context reads `84%/272k`, the notices badge reads `⚠ 3 ↑ f2`, and the mode with elevated capabilities reads `build bash ext`.
 - While a subagent view is shown, the agent strip now starts its key hints with the interrupt key (`esc main`), which returns to the main agent.

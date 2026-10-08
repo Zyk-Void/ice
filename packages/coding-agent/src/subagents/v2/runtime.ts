@@ -1351,7 +1351,8 @@ export class SubagentV2Runtime {
 	 * dropped message is sent again on the next flush. Never queued as a follow-up: an errored or aborted turn
 	 * discards queued follow-ups.
 	 */
-	flushCompletions(): void {
+	flushCompletions(options: { triggerTurn?: boolean } = {}): void {
+		const triggerTurn = options.triggerTurn ?? true;
 		const state = this.state();
 		// A closing owner's parent is being torn down: keep completions pending for the next owner of this session.
 		if (state.closed) return;
@@ -1396,11 +1397,11 @@ export class SubagentV2Runtime {
 							: {}),
 					},
 				},
-				{ triggerTurn: true },
+				{ triggerTurn },
 			)
 			.then(
 				() => {
-					// A finished send ran the turn that carried the message: it is in the transcript.
+					// A finished send appended the message (and ran its turn, if any): it is in the transcript.
 					if (!state.closed) for (const id of deliveryIds) state.registry.claimDelivery(state.sessionId, id);
 				},
 				() => {},
@@ -1408,6 +1409,8 @@ export class SubagentV2Runtime {
 			.finally(() => {
 				for (const id of deliveryIds) state.sending.delete(id);
 			});
+		// Without a turn nothing settles to flush the rest, so post every remaining batch now.
+		if (!triggerTurn) this.flushCompletions(options);
 	}
 
 	/** What a running child is doing: its latest tool call and target, redacted and short; display only. */
