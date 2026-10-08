@@ -1720,6 +1720,64 @@ describe("subagent V2 runtime", () => {
 		}
 	});
 
+	it("opens only the first turn with the definition's initialPrompt", async () => {
+		const { harness, host } = await setup();
+		const settings = resolveSubagentsV2Settings({
+			global: {
+				agents: {
+					opener: {
+						description: "Opens with a checklist",
+						prompt: "You help.",
+						initialPrompt: "Start with the checklist.",
+					},
+				},
+			},
+			projectTrusted: false,
+		});
+		const requests: string[] = [];
+		const capture = (reply: string) => async (context: { messages: unknown[] }) => {
+			requests.push(JSON.stringify(context.messages.at(-1)));
+			return fauxAssistantMessage(reply);
+		};
+		harness.setResponses([capture("first"), capture("second")]);
+		const runtime = new SubagentV2Runtime(host({ getSettings: () => settings }));
+		try {
+			const first = await runOne(runtime, "opener", "Do the task.");
+			await runtime.continueChild(first.childId, "Do more.", { foreground: true });
+			expect(requests[0]).toContain("Start with the checklist.");
+			expect(requests[0]!.indexOf("Start with the checklist.")).toBeLessThan(requests[0]!.indexOf("Do the task."));
+			expect(requests[1]).toContain("Do more.");
+			expect(requests[1]).not.toContain("Start with the checklist.");
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("offers an agent that requires an MCP server only when the parent has that server", async () => {
+		const { host } = await setup();
+		const settings = resolveSubagentsV2Settings({
+			global: {
+				agents: { gh: { description: "GitHub helper", prompt: "Use GitHub.", requiredMcpServers: ["github"] } },
+			},
+			projectTrusted: false,
+		});
+		const withoutServer = new SubagentV2Runtime(host({ getSettings: () => settings }));
+		const withServer = new SubagentV2Runtime(
+			host({
+				getSettings: () => settings,
+				getAdapters: () => [{ name: "mcp_github_issues", mcp: { server: "github", tool: "issues" } } as never],
+			}),
+		);
+		try {
+			expect(withoutServer.callableAgents().map((agent) => agent.name)).not.toContain("gh");
+			await expect(withoutServer.launch([task("gh", "x")])).rejects.toThrow('Agent "gh" is not available');
+			expect(withServer.callableAgents().map((agent) => agent.name)).toContain("gh");
+		} finally {
+			await withoutServer.shutdown();
+			await withServer.shutdown();
+		}
+	});
+
 	it("releases an idle owner when the parent session is replaced, but not one with a running child", async () => {
 		const { harness, host, parent, sessionManager } = await setup();
 		let release!: () => void;

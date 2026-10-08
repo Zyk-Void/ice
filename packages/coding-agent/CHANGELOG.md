@@ -202,6 +202,7 @@
 
 ### Changed
 
+- `ice.subagents.maxDepth` is now described as reserved: subagents cannot launch subagents, so values above 0 have no effect yet. The `agent` tool description says so.
 - Compacted the footer status line: context reads `84%/272k`, the notices badge reads `⚠ 3 ↑ f2`, and the mode with elevated capabilities reads `build bash ext`.
 - While a subagent view is shown, the agent strip now starts its key hints with the interrupt key (`esc main`), which returns to the main agent.
 - A background subagent stopped because its parent session closed (quit, `/resume`, `/new`) now finishes as `interrupted`, not `cancelled`, so the parent knows to resume it; resuming it adds the usual interrupted-tool recovery notice.
@@ -233,6 +234,8 @@
 
 ### Fixed
 
+- Fixed the agent definition field `initialPrompt` being ignored: it now opens the subagent's first turn (never repeated on resume).
+- Fixed agent definitions with `requiredMcpServers` never being callable: the check now uses the MCP servers the parent actually exposes to subagents.
 - Fixed the main agent refusing to check on subagents when asked: the delegation guidance now forbids polling loops but tells the model to check once with `agent_control` when the user asks.
 - Fixed background subagent completions being lost when the parent turn was aborted: completions were marked delivered when queued as follow-ups, and the abort path cleared the queue. Completions now go only to an idle parent, several are combined into one message, and each counts as delivered only once its message is in the transcript; a dropped one is sent again.
 - Fixed subagents breaking after an in-app session switch (`/resume`, `/new`, fork): the next session's subagent runtime bound itself to the closed session, wrote recovery entries into its file, and then failed every call with "Shut down the previous owner before replacing the parent session", hiding the footer `agents` segment and breaking `/agents`.

@@ -261,8 +261,17 @@ export class SubagentV2Runtime {
 		this.cache.invalidate();
 	}
 
+	/** Agents the parent can launch now; one that requires an MCP server needs that server among the parent's tools. */
 	callableAgents(): ResolvedAgentDefinition[] {
-		return callableAgentDefinitions(this.definitions().active);
+		let servers: string[] = [];
+		try {
+			servers = [
+				...new Set(this.host.getAdapters().flatMap((adapter) => (adapter.mcp ? [adapter.mcp.server] : []))),
+			];
+		} catch {
+			// No parent tools yet: no MCP servers are available.
+		}
+		return callableAgentDefinitions(this.definitions().active, servers);
 	}
 
 	// --- permissions ------------------------------------------------------
@@ -408,10 +417,10 @@ export class SubagentV2Runtime {
 	): { input: ChildRuntimeContractInput; model: Model<Api> } {
 		const parent = this.parent();
 		const name = task.agent ?? settings.defaultAgent;
-		const definitions = this.definitions();
-		const definition = callableAgentDefinitions(definitions.active).find((candidate) => candidate.name === name);
+		const callable = this.callableAgents();
+		const definition = callable.find((candidate) => candidate.name === name);
 		if (!definition) {
-			const available = this.callableAgents().map((candidate) => candidate.name);
+			const available = callable.map((candidate) => candidate.name);
 			throw new SubagentV2Error(
 				"unknown_agent",
 				`Agent "${name}" is not available. Available agents: ${available.join(", ") || "none"}.`,
@@ -933,7 +942,11 @@ export class SubagentV2Runtime {
 			resident.recoveryNotice = undefined;
 			resident.pendingNote = undefined;
 			const instructions = renderV2ResultInstructions(resident.contract, acceptance);
-			const prompt = redactCredentialText([...notes, text, instructions].filter(Boolean).join("\n\n"));
+			// The definition's initialPrompt opens the child's first turn only; resumes never repeat it.
+			const initial = resident.session.messages.some((message) => message.role === "user")
+				? undefined
+				: resident.contract.prompt.initialPrompt;
+			const prompt = redactCredentialText([...notes, initial, text, instructions].filter(Boolean).join("\n\n"));
 			let outcome: ChildTurnOutcome = "completed";
 			let error: string | undefined;
 			let unsubscribe: (() => void) | undefined;

@@ -261,7 +261,8 @@ const ICE_SETTINGS: RpcSettingsDefinition[] = [
 	iceSetting({
 		key: "ice.subagents.maxDepth",
 		label: "Subagent nesting depth",
-		description: "How many levels of children may delegate further; 0 disables nesting. A project can only lower it",
+		description:
+			"Reserved for nested delegation, which is not enabled: subagents cannot launch subagents, so values above 0 have no effect yet. A project can only lower it",
 		group: "ICE · Subagents",
 		kind: "number",
 		scope: "both",

@@ -62,7 +62,7 @@ const AGENT_TOOL_DESCRIPTION =
 	"Launch subagents: independent child sessions with their own context window that return a final report. " +
 	"Each task names an agent from the agent list (default `general`), a 3-5 word description, and a self-contained prompt. " +
 	"Up to 8 tasks per call; they run concurrently up to the configured limit and the rest queue. By default the call waits and returns each report; multi-task calls also include bounded deterministic counts, evidence overlap, and possible disagreements from checked results (bookkeeping, not verification). With background=true it returns child IDs at once and each completion arrives later as a message. Large final answers are read in chunks with agent_control action=output. " +
-	"Continue a child with resume=<id> and a new prompt; it keeps its context. After budget_exhausted, also supply an explicit maxTurns/maxTokens/timeoutMs within the frozen ceiling. Child permissions never exceed yours; edits and shell commands may require approval.";
+	"Continue a child with resume=<id> and a new prompt; it keeps its context. After budget_exhausted, also supply an explicit maxTurns/maxTokens/timeoutMs within the frozen ceiling. Child permissions never exceed yours; edits and shell commands may require approval. Subagents cannot launch subagents of their own.";
 
 /** How to delegate well; rendered into the system prompt while the `agent` tool is active. */
 const AGENT_TOOL_GUIDELINES = [
