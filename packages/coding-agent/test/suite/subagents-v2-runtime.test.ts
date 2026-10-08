@@ -1635,6 +1635,44 @@ describe("subagent V2 runtime", () => {
 		}
 	});
 
+	it("releases an idle owner when the parent session is replaced, but not one with a running child", async () => {
+		const { harness, host, parent, sessionManager } = await setup();
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const waiting = vi.fn(async () => {
+			await gate;
+			return fauxAssistantMessage("late");
+		});
+		harness.setResponses([fauxAssistantMessage("done"), waiting, fauxAssistantMessage("other")]);
+		const runtime = new SubagentV2Runtime(host());
+		const first = parent.session;
+		const other = {
+			...first,
+			sessionId: "other-session",
+			sessionManager: SessionManager.create(sessionManager.getCwd(), sessionManager.getSessionDir()),
+		} as unknown as AgentSession;
+		try {
+			await runOne(runtime, "explore", "done");
+			parent.session = { ...other, sessionId: other.sessionManager.getSessionId() } as never;
+			expect(runtime.overview().children).toEqual([]);
+
+			parent.session = first;
+			const [record] = await runtime.launch([task("explore", "slow")]);
+			const run = runtime.runTurn(record!.id, "slow", { foreground: false, background: true });
+			await vi.waitFor(() => expect(waiting).toHaveBeenCalledOnce());
+			parent.session = { ...other, sessionId: other.sessionManager.getSessionId() } as never;
+			expect(() => runtime.overview()).toThrow("Shut down the previous owner");
+			parent.session = first;
+			release();
+			await run;
+		} finally {
+			parent.session = first;
+			await runtime.shutdown();
+		}
+	});
+
 	it("names unnamed children from the pool and never reuses a name, even after delete", async () => {
 		const { harness, host } = await setup();
 		harness.setResponses([fauxAssistantMessage("a"), fauxAssistantMessage("b")]);

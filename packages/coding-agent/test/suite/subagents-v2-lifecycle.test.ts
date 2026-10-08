@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -25,8 +25,11 @@ afterEach(async () => {
 	while (cleanups.length > 0) await cleanups.pop()?.();
 });
 
-/** A parent runtime with the subagent extension, re-attached on every session replacement like the interactive host. */
-async function createParent() {
+/**
+ * A parent runtime with the subagent extension. Like the interactive host, a replaced session is attached
+ * only after the new runtime exists, unless `attachOnCreate` attaches it inside the factory.
+ */
+async function createParent(attachOnCreate = true) {
 	const tempDir = join(tmpdir(), `ice-subagent-lifecycle-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(tempDir, { recursive: true });
 	const faux = registerFauxProvider({ models: [{ id: "faux-1" }] });
@@ -66,6 +69,7 @@ async function createParent() {
 			noThemes: true,
 		},
 	};
+	let attachedOnce = false;
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
 		const services = await createAgentSessionServices({ ...options, cwd });
 		const created = await createAgentSessionFromServices({
@@ -74,7 +78,8 @@ async function createParent() {
 			sessionStartEvent,
 			model: options.model,
 		});
-		subagents.attach(created.session);
+		if (attachOnCreate || !attachedOnce) subagents.attach(created.session);
+		attachedOnce = true;
 		return { ...created, services, diagnostics: services.diagnostics };
 	};
 	const runtime = await createAgentSessionRuntime(createRuntime, {
@@ -150,6 +155,38 @@ describe("subagents V2 across compaction and session resume", () => {
 		// Shown once per compaction, not on every turn.
 		await session.prompt("next");
 		expect(listings(session).filter((text) => text.includes("Current subagents in this session"))).toHaveLength(1);
+	});
+
+	it("binds the new runtime to the resumed session even when the footer renders before re-attach", async () => {
+		const { runtime, subagents, setResponses } = await createParent(false);
+		setResponses([
+			launchScout(),
+			fauxAssistantMessage("child one"),
+			fauxAssistantMessage("parent one"),
+			fauxAssistantMessage("other session reply"),
+			fauxAssistantMessage("back again"),
+		]);
+		await runtime.session.prompt("delegate");
+		const firstFile = runtime.session.sessionFile!;
+
+		await runtime.newSession();
+		// The bridge still points at the shut-down first session while the new runtime starts.
+		const closedContent = readFileSync(firstFile, "utf8");
+		subagents.overview();
+		// The new runtime must not restore (and journal into) the closed session.
+		expect(readFileSync(firstFile, "utf8")).toBe(closedContent);
+		subagents.attach(runtime.session);
+		await runtime.session.bindExtensions({});
+		expect(subagents.overview()?.children).toEqual([]);
+		await runtime.session.prompt("hello");
+
+		await runtime.switchSession(firstFile);
+		subagents.overview();
+		subagents.attach(runtime.session);
+		await runtime.session.bindExtensions({});
+		expect(subagents.overview()?.children).toMatchObject([{ name: "scout" }]);
+		await runtime.session.prompt("what ran before?");
+		expect(listings(runtime.session).some((text) => text.includes("- scout ("))).toBe(true);
 	});
 
 	it("shows the roster once after the parent session is resumed", async () => {

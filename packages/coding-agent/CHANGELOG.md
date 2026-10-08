@@ -229,6 +229,7 @@
 
 ### Fixed
 
+- Fixed subagents breaking after an in-app session switch (`/resume`, `/new`, fork): the next session's subagent runtime bound itself to the closed session, wrote recovery entries into its file, and then failed every call with "Shut down the previous owner before replacing the parent session", hiding the footer `agents` segment and breaking `/agents`.
 - Fixed subagents dropping out of the parent model's view after compaction or a session resume: the parent now gets one hidden roster of its subagents (name, ID, agent, state, last outcome) so it continues them instead of launching duplicates.
 - Fixed closing or switching sessions posting interrupted background subagent completions into the session being closed; they stay pending and are delivered after the session is resumed.
 - Fixed truncated completion hints skipping report bytes after an error prefix and failing range reads for reports retained inline; completion sibling lists remain bounded at any concurrency setting.

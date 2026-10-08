@@ -137,8 +137,22 @@ export class SubagentV2Runtime {
 	private state(): OwnerState {
 		const parent = this.parent();
 		if (this.owner?.sessionId === parent.sessionId) return this.owner;
-		if (this.owner)
-			throw new SubagentV2Error("busy", "Shut down the previous owner before replacing the parent session.");
+		if (this.owner) {
+			const previous = this.owner;
+			// A replaced parent with a child still running keeps its owner; anything idle is released.
+			if (
+				previous.registry
+					.list(previous.sessionId)
+					.some((record) => previous.registry.resident(previous.sessionId, record.id)?.running)
+			)
+				throw new SubagentV2Error("busy", "Shut down the previous owner before replacing the parent session.");
+			previous.closed = true;
+			for (const timer of previous.retireTimers.values()) clearTimeout(timer);
+			previous.retireTimers.clear();
+			previous.broker.dispose();
+			void previous.registry.disposeAll();
+			this.owner = undefined;
+		}
 		const settings = this.host.getSettings();
 		const journal = sessionJournal(parent.sessionManager);
 		const registry = new ChildRegistry<ResidentChild>(journal, this.host.now);

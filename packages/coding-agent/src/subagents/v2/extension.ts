@@ -135,6 +135,13 @@ function listingStateFromBranch(ctx: ExtensionContext): { state: AgentListingSta
 const ROSTER_LIMIT = 20;
 
 /**
+ * Parent sessions that emitted session_shutdown, shared by every extension instance in the process. A session
+ * switch loads the next instance while the host bridge still points at the closed parent; that instance must not
+ * bind an owner to it (and journal into its file).
+ */
+const shutDownParents = new WeakSet<AgentSession>();
+
+/**
  * The parent's existing children, for a context that lost them (compaction or a resumed session), so the
  * model continues them by name instead of relaunching. Bounded; descriptions are the parent's own text.
  */
@@ -200,7 +207,10 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 	let lastApprovalCount = 0;
 	const announcedApprovals = new Set<string>();
 	const runtime = new SubagentV2Runtime({
-		getParentSession: () => options.agentViewBridge?.getParentSession(),
+		getParentSession: () => {
+			const parent = options.agentViewBridge?.getParentSession();
+			return parent && !shutDownParents.has(parent) ? parent : undefined;
+		},
 		agentDir,
 		userAgentsDir: getSubagentGlobalAgentsDir(options.agentDir),
 		getSettings: () => settingsFor(latestCtx),
@@ -384,6 +394,9 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 
 	ice.on("session_start", async (event, ctx) => {
 		latestCtx = ctx;
+		// A reload keeps the same parent session object; it is live again.
+		const parent = options.agentViewBridge?.getParentSession();
+		if (parent) shutDownParents.delete(parent);
 		rosterAfterResume = event.reason === "startup" || event.reason === "resume";
 		runtime.invalidateDefinitions();
 		unsubscribeRegistry?.();
@@ -435,6 +448,8 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		}
 	});
 	ice.on("session_shutdown", async () => {
+		const parent = options.agentViewBridge?.getParentSession();
+		if (parent) shutDownParents.add(parent);
 		unsubscribeRegistry?.();
 		controls.clear();
 		await runtime.shutdown();
