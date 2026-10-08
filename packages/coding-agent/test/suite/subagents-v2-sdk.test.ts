@@ -58,6 +58,10 @@ describe("subagents V2 SDK wiring", () => {
 		expect(harness.session.getActiveToolNames()).toEqual(expect.arrayContaining(["agent", "agent_control"]));
 		// Delegation guidance reaches the system prompt with the tool.
 		expect(harness.session.systemPrompt).toContain("Do not delegate understanding");
+		// Polling is discouraged, but a user's request to check is answered.
+		expect(harness.session.systemPrompt).toContain(
+			"When the user asks about subagents, check once with agent_control action=list or status",
+		);
 		expect(harness.session.systemPrompt).toContain("agent_control action=delete");
 
 		harness.setResponses([

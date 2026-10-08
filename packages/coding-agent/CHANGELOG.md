@@ -230,6 +230,7 @@
 
 ### Fixed
 
+- Fixed the main agent refusing to check on subagents when asked: the delegation guidance now forbids polling loops but tells the model to check once with `agent_control` when the user asks.
 - Fixed background subagent completions being lost when the parent turn was aborted: completions were marked delivered when queued as follow-ups, and the abort path cleared the queue. Completions now go only to an idle parent, several are combined into one message, and each counts as delivered only once its message is in the transcript; a dropped one is sent again.
 - Fixed subagents breaking after an in-app session switch (`/resume`, `/new`, fork): the next session's subagent runtime bound itself to the closed session, wrote recovery entries into its file, and then failed every call with "Shut down the previous owner before replacing the parent session", hiding the footer `agents` segment and breaking `/agents`.
 - Fixed subagents dropping out of the parent model's view after compaction or a session resume: the parent now gets one hidden roster of its subagents (name, ID, agent, state, last outcome) so it continues them instead of launching duplicates.

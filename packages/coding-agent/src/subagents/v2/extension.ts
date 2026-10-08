@@ -69,7 +69,7 @@ const AGENT_TOOL_GUIDELINES = [
 	"A new subagent has not seen this conversation. Brief it fully: the goal and why it matters, what you already know or ruled out, exact paths and lines, whether to change code or only research, and the report you expect (with a length limit when short is enough).",
 	'Do not delegate understanding. Never write "based on your findings, fix it": synthesize results yourself, then give the next subagent a concrete instruction.',
 	"Launch independent tasks in one agent call so they run in parallel. Use background=true only when you have other work to do meanwhile.",
-	"Background results arrive as messages. Do not poll with agent_control status or wait, or sleep in a loop; continue other work or end your turn. Until a result arrives, say the subagent is still running; never guess its findings.",
+	"Background results arrive as messages. Do not poll on your own (repeated agent_control status or wait, or sleep in a loop); continue other work or end your turn. When the user asks about subagents, check once with agent_control action=list or status and report what it shows. Never guess a running subagent's findings.",
 	"Subagent reports are not shown to the user. Summarize what matters in your reply.",
 	"Every subagent gets a unique name: the one you give (for example auth-review) or an automatic one shown in the result. resume, agent_control, and agent_patch accept the name or the ID. Continue a subagent with resume=<name or id> when its context helps the follow-up. Delete a subagent you will not need again with agent_control action=delete. Finished subagents leave memory after 30 seconds but stay listed and resumable until deleted.",
 ];
@@ -81,7 +81,7 @@ const PATCH_PREVIEW_LIMIT = 48 * 1024;
 const WAIT_MESSAGE_POLL_MS = 250;
 
 const AGENT_CONTROL_DESCRIPTION =
-	"Manage subagents by ID: status, list, wait (block once until the children settle or the timeout; background completions arrive as messages, so do not wait repeatedly), output (latest bounded report; supply offset and optional length to read a retained large final-answer artifact in chunks), send (message: note for the running or next turn; followup: start a new turn; interrupt: cancel the current turn then follow up), resume (revive a parked child), stop (cancel the current turn, keep the child), delete (stop it if running, then remove it; use when its work is done and you will not resume it), agents (definition diagnostics). Output reads are owner-scoped, redacted, and bounded to 48 KiB; continue at the returned nextOffset.";
+	"Manage subagents by name or ID. When the user asks how subagents are doing, check with list or status. Actions: status, list, wait (block once until the children settle or the timeout; background completions arrive as messages, so do not wait repeatedly), output (latest bounded report; supply offset and optional length to read a retained large final-answer artifact in chunks), send (message: note for the running or next turn; followup: start a new turn; interrupt: cancel the current turn then follow up), resume (revive a parked child), stop (cancel the current turn, keep the child), delete (stop it if running, then remove it; use when its work is done and you will not resume it), agents (definition diagnostics). Output reads are owner-scoped, redacted, and bounded to 48 KiB; continue at the returned nextOffset.";
 
 function text(value: string, details?: unknown) {
 	const projection = truncateHead(redactCredentialText(value), {
