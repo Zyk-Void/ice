@@ -163,7 +163,7 @@ The loaded extension exposes all Blackhole fields in `/settings`. Changes persis
 
 If both native and Blackhole mid-run triggers are enabled, Blackhole yields to native ICE and displays a warning. Keep native `compaction.enabled` set to `true` for overflow recovery; the native 95% safety net applies regardless of which mid-run trigger owns proactive compaction.
 
-Blackhole summaries open with a `[Last Actions]` section (the most recent tool actions, failures marked) and list in-flight background subagent jobs under `[Running Agents]` (re-attach via `inspect_subagent_job`). When the Cognee extension runs with `checkpointRecall: true`, the checkpoint also carries a capped `[Relevant Memory]` section.
+Blackhole summaries open with a `[Last Actions]` section (the most recent tool actions, failures marked). A `[Subagents]` section lists the session's current V2 children from their journaled `ice-subagent-v2-child` records (latest per child, deleted ones dropped, capped at 12): name, id, agent, state, last-turn outcome, assurance, task description, the first 160 characters of the validated result marked as untrusted, and how to read the full report (`agent_control action=output` or `status`). When the Cognee extension runs with `checkpointRecall: true`, the checkpoint also carries a capped `[Relevant Memory]` section.
 
 ### Branch Summary
 
@@ -313,7 +313,7 @@ See [packages.md](packages.md) for package management details.
 
 ## ICE subagents and hooks
 
-Subagent settings live under `ice.subagents` (agents, `disabledAgents`, `defaultAgent`, `maxDepth`, `maxConcurrent`, `askTimeoutMs`, `permissions`, `compat`) and hooks under `ice.hooks`. See [subagents-v2.md](subagents-v2.md) for the schema, permission rules, hooks, and MCP tools.
+Subagent settings live under `ice.subagents` and hook definitions under `ice.hooks`. See the [Subagents V2 guide](subagents-v2.md), [settings and schema reference](subagents-v2-reference.md), and [migration guide](subagents-v2-migration.md) for supported fields, precedence, permission rules, hooks, MCP selectors, and removed legacy settings. V2 is the only current subagent system; `ice.subagents.v2` is an ignored compatibility key.
 
 ## Example
 

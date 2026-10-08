@@ -13,11 +13,11 @@ ice --observe -p "fix the tests"   # also works in print mode
 - **The tape** — a live event grid: tool calls (with arguments, result preview, duration, and error state), user and assistant messages, skill invocations, compaction runs, auto-retries, and queue updates. Every row has the same field anatomy: time, kind, subject, state, duration.
 - **The book pane** — drill-down for the selected row: full arguments as pretty JSON, full result text, timing, and streaming-update counts. Click a row, or move with the arrow keys.
 - **Status strip** — session, model, thinking level, context-window pressure, token totals, and cost, rendered as segmented readouts updated once per second.
-- **Subagent lanes** — delegation fan-out appears in the bottom rail with role, phase, elapsed time, and current tool, projected from delegation progress snapshots. Runtime attention for each child also carries bounded quality state: observed path count, the last successful action, and advisory-only repeated-failure/doom-loop signals that never stop a child by themselves.
+- **Subagent lanes** — removed with the legacy `delegate*` tools. New recordings carry an empty `lanes` list, and older recordings still show their lanes. The dashboard does not render the Subagents V2 registry or event channel; use `/agents` or `agent_control` to inspect V2 children.
 
-## Subagent quality fields
+## Legacy V1 subagent quality fields
 
-Subagent results and durable job detail views expose bounded quality metadata: the semantic quality mode (`explore`, `standard`, `strict`), the runtime-derived assurance level (`unverified_plain` through `review_verified`), the task-contract hash, and a `Quality mode` row in durable job details. A quality regression can be traced from these fields plus the quality benchmark harness (see the subagent user guide) without opening full transcripts.
+Old V1 delegation results and durable-job detail views may expose bounded quality metadata: semantic quality mode, runtime-derived assurance level, and task-contract hash. These fields describe the retired V1 delegation path, not current V2 children. See [Subagents V2](subagents-v2.md) for the current child lifecycle, evidence, and verification limits.
 
 ## Controls
 
@@ -47,4 +47,4 @@ Replay endpoints only read the database. They do not re-run prompts, tools, or s
 
 ## How it works
 
-`observe-server.ts` (plain `node:http`, no dependencies) serves the single-file dashboard and an SSE endpoint. `observe-recorder.ts` subscribes to the session's event stream and projects it into a bounded state: tool calls and messages from agent events, subagent lanes from delegation progress snapshots, skill invocations from expanded skill blocks, and model/context/usage state polled once per second.
+`observe-server.ts` (plain `node:http`, no dependencies) serves the single-file dashboard and an SSE endpoint. `observe-recorder.ts` subscribes to the session's event stream and projects it into a bounded state: tool calls and messages from agent events, legacy V1 subagent lanes from delegation progress snapshots, skill invocations from expanded skill blocks, and model/context/usage state polled once per second.

@@ -6,6 +6,8 @@
 
 ### Added
 
+- Added collapsing for `[subagent_completed]` messages: long reports show their first 4 and last 3 lines until expanded with the tool-output expand key (Ctrl+O by default).
+- Added a `[Subagents]` section to Blackhole compaction summaries built from the journaled V2 child records (name, id, agent, state, outcome, assurance, validated conclusion, output artifact), replacing the legacy `[Running Agents]` section that read removed V1 job entries.
 - Added `ice agents prune [--apply] [--json]`: lists subagent transcripts and worktrees whose parent session no longer exists in any session directory, and removes them only with `--apply`. Folders changed in the last 10 minutes, worktrees with unapplied changes (and their transcripts), unrecognized worktrees, and symlinks are kept.
 - Added live progress for foreground `agent` calls: while the call runs, the tool row shows one line per subagent (status mark, name, agent, state, tokens, and its current tool call) and how many are still running, with the key that moves them to the background.
 - Added a fullscreen jump-to-bottom pill with unseen assistant-turn counts and the configurable transcript-bottom key (`end` by default).
@@ -46,6 +48,7 @@
 - Added a keyboard shortcut overview on `?` (`app.shortcuts.show`) when the prompt is empty; `?` is typed normally otherwise.
 - Added read-only shell classification to compact tool summaries: `cat`, `sed -n`, `git diff`, `rg`, `find`, `ls`, and similar commands count as reads, searches, or listings instead of "ran N shell commands". Classification is display-only.
 - Added a running background task count to the compact footer, and `/tasks` now lists background bash commands with their elapsed time.
+- Added Agent Hub approval navigation: opening the Hub selects the first subagent waiting for approval, `tab` (`app.agents.nextApproval`) steps through pending requests across subagents, and `a` (`app.agents.approveSession`) always allows the selected request's rule for that subagent.
 
 ### Breaking Changes
 
@@ -207,6 +210,10 @@
 
 ### Changed
 
+- Changed the subagent footer strip to name the main agent `❄ ICE` instead of `[Main agent] MAIN`, and to drop the switch/manage key hints while the main agent is shown; viewing a child still shows how to return and switch.
+- Changed tool output expansion to work in batches: `app.tools.expand` (Ctrl+O) expands the newest 3 collapsed tool calls per press and collapses everything after the oldest batch, instead of expanding the whole transcript at once. In fullscreen mode, clicking a tool call's title row or its `+N lines` hint toggles just that call.
+- The Agent Hub shows each subagent's pending requests in its inspector, with a per-row `N to approve` count and a one-line summary of who is waiting; `y`/`n` answer only the selected subagent's selected request. Approval prompts, notices, and the RPC overview name the subagent.
+- `--sub-yolo` subagents read outside their task scope and the parent directory without approval prompts; Git metadata and symlinked paths stay denied, and writes stay inside the parent directory.
 - Subagent results that settled while a session was closed now appear as soon as the session is resumed, without starting a turn; the model reads them with the next prompt.
 - `ice.subagents.maxDepth` is now described as reserved: subagents cannot launch subagents, so values above 0 have no effect yet. The `agent` tool description says so.
 - Compacted the footer status line: context reads `84%/272k`, the notices badge reads `⚠ 3 ↑ f2`, and the mode with elevated capabilities reads `build bash ext`.
@@ -240,6 +247,9 @@
 
 ### Fixed
 
+- Fixed subagents interrupted by closing `ice` staying idle after the session reopened: in interactive mode the main agent now gets a turn on reopen with the interrupted children, whose notice says their task is unfinished and how to resume them (an `agent` task with `resume`), instead of pointing at a final answer that does not exist.
+- Fixed the Agent Hub repeating and leaving stale rows when a subagent asked to approve a multi-line command: approval summaries are now one redacted line (line breaks shown as ` ↵ `), and every Hub row is forced onto one terminal row.
+- Fixed background gaps in system cards such as `[subagent_completed]`: a background reset (`\x1b[49m`) inside a line no longer clears the card background for the rest of the row.
 - Fixed forked sessions silently losing track of the source session's subagents: the fork is told once which subagents stayed with the source session, using one of them gives a clear "belongs to the session this one was forked from" error, and their names stay reserved. Subagents are not shared between sessions, so two sessions never write to the same subagent transcript or worktree.
 - Fixed sessions from before per-turn subagent billing undercounting cost: opening such a session adds one backfill entry per subagent for usage its existing entries do not cover (never double counted).
 - Fixed the agent strip showing a just-started foreground subagent as idle: working and queued counts now come from the subagent runtime. Moving a foreground call to the background names the subagents it moved.

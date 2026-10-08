@@ -17,9 +17,9 @@ Common options:
 - `--no-session`: Disable session persistence
 - `--session-dir <path>`: Custom session storage directory
 
-### ICE unsafe subagent execution
+### ICE subagent execution authority (V2)
 
-The `ice` launcher supports session-wide unsafe delegated-child authorization in RPC mode when all of these flags are explicit:
+The `ice` launcher installs Subagents V2 as extension tools. RPC clients observe them with `get_subagents` and `subagents_update` events and answer background approvals with `respond_subagent_approval` (see [Subagents](#subagents)); the model drives children through the `agent` and `agent_control` tools. To authorize child mutation capabilities without an interactive per-call approval, start an explicitly trusted build session with all required flags:
 
 ```bash
 ice --mode rpc \
@@ -29,9 +29,9 @@ ice --mode rpc \
   --sub-yolo
 ```
 
-`--sub-yolo` makes a child profile's requested host/mutation capabilities eligible for the lifetime of that RPC process, intersected with the trusted parent's active scoped built-ins (`read`, `grep`, `find`, `ls`, `bash`, `edit`, and `write`). It does not automatically give every role every tool. RPC has no per-launch TUI confirmation; the startup command is the authorization. Build mode, project trust, parent Bash capability, the profile's requested capabilities, and the existing scope checks still apply. Without `--sub-yolo`, RPC delegation remains read-only by default.
+`--sub-yolo` raises only the child mutation ceiling for operations the parent is already authorized and able to perform. It requires explicit build mode, project trust, startup-authorized parent Bash, and an approval-capable RPC session. It cannot override deny rules, scope, plan/review restrictions, missing parent tools, or parent policy. Without it, child mutations follow the configured `allow`/`ask`/`deny` rules and parent approval; if no approval channel is available, an `ask` is denied. See [Subagents V2](subagents-v2.md) for the complete permission model.
 
-This is not a sandbox. Host filesystem, process, network, credentials, and detached-descendant cleanup remain outside containment. Child extensions, MCP, recursive delegation, and `delegate_write` remain disabled for delegated read/review children; normal `delegate_write` remains worktree-isolated.
+This is not a sandbox. Child processes still run with the host user's filesystem, process, network, and credential access; worktree isolation only separates files for review. MCP tools require explicit child selection and dispatch through the parent's already-authorized adapter. Recursive delegation is disabled by the default depth of zero and requires configured `spawns` plus an allowed `maxDepth`. Patches are inspected and explicitly integrated through `agent_patch`; the legacy `delegate_write` tool is not part of the current API.
 
 ### ICE external host filesystem access
 
@@ -44,9 +44,9 @@ ice --mode rpc \
   --approve
 ```
 
-The flag requires explicit build mode, an approval-capable TUI or RPC client, project trust, and no `--no-approve`. In this authorized build context, registered parent MCP tools named `mcp` or `mcp__*` are also available; they remain blocked in plan mode, ordinary builds, untrusted projects, and headless sessions. This does not imply `--sub-yolo`: delegated children and direct YOLO writers receive external scope access only when `--sub-yolo` is also explicitly authorized. Normal isolated `delegate_write` remains contained in its detached worktree even if a request carries an external-scope bit. Child MCP tools still require explicit parent-owned adapter selection.
+The flag requires explicit build mode, an approval-capable TUI or RPC client, project trust, and no `--no-approve`. In this authorized build context, registered parent MCP tools named `mcp` or `mcp__*` are also available; they remain blocked in plan mode, untrusted projects, and headless sessions. This does not imply `--sub-yolo`: child mutation authority has separate gates. V2 child path access remains bounded by the parent's tools and policy plus the task scope; worktree-isolated tasks must stay inside the repository. Child MCP tools require explicit selection and use the parent's already-authorized adapter.
 
-`--allow-external` is unrestricted host access, not a sandbox. It does not contain shell commands, processes, network access, credentials, symlinks, or descendants; a registered MCP integration may itself have external or credential-backed effects. Use this capability only in a trusted worktree with explicit user approval.
+`--allow-external` is unrestricted host access, not a sandbox. It does not contain shell commands, processes, network access, credentials, symlinks, or descendants; a registered MCP integration may itself have external or credential-backed effects. It does not imply `--sub-yolo`: V2 child access remains bounded by the parent's authority, child policy, and task scope. Child MCP tools still require explicit parent-owned adapter selection. Use this capability only in a trusted worktree with explicit user approval.
 
 ## Protocol Overview
 
@@ -864,6 +864,7 @@ Response:
         "running": true,
         "background": true,
         "resident": true,
+        "finished": false,
         "turns": 1,
         "tokens": 6648,
         "cost": 0
@@ -875,7 +876,7 @@ Response:
 }
 ```
 
-`capacity.max` is the concurrency ceiling the session started with (`ice.subagents.maxConcurrent`); `queued` counts turns waiting for a slot. `enabled` is false when `ice.subagents.enabled` is false or `diagnostics` lists invalid settings; either blocks new launches. Child `state` is the registry state (`starting`, `running`, `idle`, `parked`, `blocked`, `stopped`). `background` is true when no parent tool call waits on the running turn; `resident` is false for parked children.
+`capacity.max` is the concurrency ceiling the session started with (`ice.subagents.maxConcurrent`); `queued` counts turns waiting for a slot. `enabled` is false when `ice.subagents.enabled` is false or `diagnostics` lists invalid settings; either blocks new launches. Child `state` is `starting`, `queued` (its turn waits for a concurrency slot), `running`, `idle`, `parked`, `blocked`, or `stopped`. `tokens` and `cost` include the turn in progress. `background` is true when no parent tool call waits on the running turn; `resident` is false for parked children. A child whose turn settled is parked after 30 seconds without a new turn and reported with `finished: true`; it stays resumable until deleted. A child stopped before it ever ran is removed.
 
 #### respond_subagent_approval
 
