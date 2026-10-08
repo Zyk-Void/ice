@@ -25,8 +25,6 @@ export interface AppKeybindings {
 	"app.tasks.background": true;
 	"app.shortcuts.show": true;
 	"app.subagents.attach": true;
-	"app.subagents.expand": true;
-	"app.subagents.inspect": true;
 	"app.subagents.open": true;
 	"app.subagents.parent": true;
 	"app.subagents.next": true;
@@ -112,8 +110,6 @@ export const KEYBINDINGS = {
 		description: "Move a running subagent wait to the background (falls through when nothing can be backgrounded)",
 	},
 	"app.subagents.attach": { defaultKeys: "right", description: "Attach to live subagent" },
-	"app.subagents.expand": { defaultKeys: "space", description: "Expand subagent details" },
-	"app.subagents.inspect": { defaultKeys: "ctrl+enter", description: "Inspect durable subagent job" },
 	"app.subagents.open": { defaultKeys: "ctrl+shift+a", description: "Open the Agent Hub" },
 	"app.subagents.parent": { defaultKeys: "shift+alt+left", description: "Return to the main agent view" },
 	"app.subagents.next": {
