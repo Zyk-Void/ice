@@ -129,6 +129,7 @@
 
 ### Removed
 
+- Removed the legacy subagent job registry (`subagents/registry/jobs.ts`) and Observatory (`subagents/ui/observatory.ts`), which no V2 code path used, plus the observability recorder's subagent progress lanes they fed; recordings still carry an empty `lanes` list.
 - Removed the expandable agent list in the bottom dock. The Agent Hub (`/agents`, `left` on an empty editor, `ctrl+shift+a`) is the one place to browse and open subagents; the one-line agent strip remains.
 - Removed caller/profile child and writer final-answer `maxOutputBytes`, batch/review `totalBudgetBytes` and output-byte reservation admission, durable planned/reserved output admission, and the synchronous `background: false` launch path. New calls reject removed inputs, and historical durable records are normalized without replaying work. Final-answer size does not stop execution; fixed host-owned artifact storage/read/presentation limits, provider/tool/hook/startup controls, queue/concurrency limits, explicit cancellation, and shutdown remain separate. Active aggregate token-budget controls and per-child `maxTurns`/`maxToolCalls` were also removed; provider usage remains observational telemetry.
 

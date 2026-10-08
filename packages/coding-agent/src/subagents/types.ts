@@ -28,7 +28,6 @@ import type {
 } from "./runtime/supervisor.ts";
 import type { IceHookDispatchRecord } from "./settings.ts";
 import type { IceResolvedDelegableTool } from "./tools/adapters.ts";
-import type { ObservatoryPhase } from "./ui/observatory.ts";
 
 const DELEGATED_SHELL_ENV_KEYS = new Set([
 	"LANG",
@@ -1292,27 +1291,6 @@ export interface ManagedSubagentBatchRecord {
 	state: "queued" | "running" | "completed" | "partial" | "failed" | "cancelled";
 	completion?: Promise<SubagentBatchResult | ReviewBatchResult>;
 	result?: SubagentBatchResult | ReviewBatchResult;
-}
-
-export type ManagedWriterInspection = {
-	runId: string;
-	state: "starting" | "running" | WriterResultStatus;
-	waitExpired?: boolean;
-	acceptedAt: number;
-	baseCommit: string;
-	workspaceIsolation: "worktree" | "parent";
-	phase: ObservatoryPhase;
-	currentTool?: string;
-	currentPath?: string;
-	lastProgressAt?: number;
-	checkIn?: SubagentCheckInState;
-	result?: WriterResult;
-};
-
-export interface ManagedWriterRecord extends ManagedWriterInspection {
-	ownerSessionId: string;
-	controller: AbortController;
-	completion?: Promise<WriterResult>;
 }
 
 export interface SubagentBatchRunOptions {

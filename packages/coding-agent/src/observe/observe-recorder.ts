@@ -3,7 +3,8 @@
  *
  * Subscribes to the session event stream and projects it into a bounded, redacted
  * snapshot: an activity feed (tool calls, messages, compaction, retries, skills) plus
- * subagent lanes and periodic session state (model, context usage, token totals).
+ * periodic session state (model, context usage, token totals). The snapshot keeps an empty `lanes` list for
+ * recordings made before subagent progress lanes were removed.
  * Read-only: nothing here mutates the session.
  */
 
@@ -11,11 +12,6 @@ import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import { parseSkillBlock } from "../core/agent-session.ts";
 import type { ContextUsage } from "../core/extensions/types.ts";
-import {
-	getProgressSnapshot,
-	OBSERVATORY_TOOL_NAMES,
-	type SubagentProgressSnapshot,
-} from "../subagents/ui/observatory.ts";
 
 /** Max activity items kept in the ring buffer. */
 const MAX_ITEMS = 500;
@@ -25,8 +21,6 @@ const MAX_ITEMS = 500;
  * event from retaining unbounded memory in the 500-item ring buffer.
  */
 const MAX_PAYLOAD_LENGTH = 1024 * 1024;
-/** Max lanes kept after they turn terminal. */
-const MAX_TERMINAL_LANES = 50;
 /** Default poll interval for session header state (model, thinking, context, usage). */
 const DEFAULT_POLL_MS = 1000;
 
@@ -221,52 +215,6 @@ function resultText(result: unknown): string {
 	return JSON.stringify(result);
 }
 
-function isSubagentSnapshot(value: unknown): value is SubagentProgressSnapshot {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		(value as { schemaVersion?: unknown }).schemaVersion === 1 &&
-		typeof (value as { streamKey?: unknown }).streamKey === "string"
-	);
-}
-
-function getSubagentSnapshot(partialResult: unknown): SubagentProgressSnapshot | undefined {
-	if (isSubagentSnapshot(partialResult)) return partialResult;
-	if (typeof partialResult !== "object" || partialResult === null) return undefined;
-	const record = partialResult as { details?: unknown };
-	const fromDetails = getProgressSnapshot(record.details);
-	if (isSubagentSnapshot(fromDetails)) return fromDetails;
-	const direct = getProgressSnapshot(partialResult);
-	return isSubagentSnapshot(direct) ? direct : undefined;
-}
-
-const THREAD_COLOR_PALETTE: readonly ObserveThreadColor[] = [
-	"blue",
-	"violet",
-	"cyan",
-	"green",
-	"amber",
-	"rose",
-	"orange",
-	"indigo",
-];
-
-function threadColorFor(threadKey: string, profileColor?: string): ObserveThreadColor {
-	const preferred: Record<string, ObserveThreadColor> = {
-		accent: "blue",
-		success: "green",
-		warning: "amber",
-		error: "rose",
-		muted: "slate",
-		dim: "slate",
-		text: "cyan",
-	};
-	if (profileColor && preferred[profileColor]) return preferred[profileColor];
-	let hash = 0;
-	for (const character of threadKey) hash = (hash * 31 + character.charCodeAt(0)) | 0;
-	return THREAD_COLOR_PALETTE[Math.abs(hash) % THREAD_COLOR_PALETTE.length];
-}
-
 function shortThreadId(value: string): string {
 	return value.length > 10 ? value.slice(0, 10) : value;
 }
@@ -280,7 +228,6 @@ export function startObserveRecorder(session: ObserveSessionLike, options?: Obse
 	const runId = `${session.sessionId}:${startedAt}:${randomUUID()}`;
 	const items: ObserveItem[] = [];
 	const lanes = new Map<string, ObserveLane>();
-	const terminalLaneOrder: string[] = [];
 	const listeners = new Set<(event: ObserveRecorderEvent) => void>();
 	let nextId = 1;
 	let usageTotals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
@@ -314,56 +261,6 @@ export function startObserveRecorder(session: ObserveSessionLike, options?: Obse
 	};
 	const threads = new Map<string, ObserveThread>([[mainThread.threadKey, mainThread]]);
 
-	function registerThread(thread: ObserveThread): ObserveThread {
-		const previous = threads.get(thread.threadKey);
-		threads.set(thread.threadKey, thread);
-		if (
-			!previous ||
-			previous.threadName !== thread.threadName ||
-			previous.threadColor !== thread.threadColor ||
-			previous.role !== thread.role ||
-			previous.profileColor !== thread.profileColor
-		) {
-			emit({ type: "thread", thread });
-		}
-		return thread;
-	}
-
-	function ensureParentThread(parentThreadId: string): ObserveThread {
-		for (const thread of threads.values()) {
-			if (thread.threadId === parentThreadId) return thread;
-		}
-		return registerThread({
-			runId,
-			threadKey: parentThreadId,
-			threadId: parentThreadId,
-			mainThreadId: parentThreadId,
-			threadKind: "main",
-			threadName: `main · ${shortThreadId(parentThreadId)}`,
-			threadColor: threadColorFor(parentThreadId),
-		});
-	}
-
-	function ensureSubagentThread(snapshot: SubagentProgressSnapshot): ObserveThread {
-		const parentThreadId = snapshot.parentSessionId ?? mainThread.threadId;
-		const parent = ensureParentThread(parentThreadId);
-		const childThreadId = snapshot.childSessionId ?? snapshot.runId ?? snapshot.streamKey;
-		const threadKey = `${parent.threadKey}::${childThreadId}`;
-		const role = snapshot.role || snapshot.toolName;
-		return registerThread({
-			runId,
-			threadKey,
-			threadId: childThreadId,
-			parentThreadId: parent.threadId,
-			mainThreadId: parent.mainThreadId,
-			threadKind: "subagent",
-			threadName: `${role} · ${shortThreadId(snapshot.taskId ?? childThreadId)}`,
-			threadColor: threadColorFor(threadKey, snapshot.color),
-			...(snapshot.role ? { role: snapshot.role } : {}),
-			...(snapshot.color ? { profileColor: snapshot.color } : {}),
-		});
-	}
-
 	function pushItem(item: ObserveItemInput, thread: ObserveThread = mainThread): ObserveItem {
 		const full: ObserveItem = {
 			runId,
@@ -392,136 +289,6 @@ export function startObserveRecorder(session: ObserveSessionLike, options?: Obse
 			if (item.threadKind === "main" && item.toolCallId === toolCallId) return item;
 		}
 		return undefined;
-	}
-
-	function subagentTransition(
-		previous: ObserveLane | undefined,
-		snapshot: SubagentProgressSnapshot,
-		thread: ObserveThread,
-	): ObserveItemInput | undefined {
-		const changed =
-			!previous ||
-			previous.phase !== snapshot.phase ||
-			previous.status !== snapshot.status ||
-			previous.currentTool !== snapshot.currentTool ||
-			previous.currentPath !== snapshot.currentPath ||
-			previous.terminal !== snapshot.terminal;
-		const eventType = snapshot.eventType;
-		if (previous && eventType === "subagent_progress" && !changed) return undefined;
-		if (previous && !eventType && !changed) return undefined;
-
-		const isCompaction =
-			snapshot.phase === "compacting" ||
-			eventType === "subagent_compaction_start" ||
-			eventType === "subagent_compaction_end";
-		const isRetry = snapshot.phase === "retrying" || eventType === "subagent_retry";
-		const kind: ObserveItemKind = isCompaction ? "compaction" : isRetry ? "retry" : "subagent";
-		const failure = [
-			"failed",
-			"cancelled",
-			"timed_out",
-			"verification_failed",
-			"integration_conflict",
-			"rollback_conflict",
-		].includes(snapshot.status);
-		const state: ObserveItem["state"] = failure ? "error" : snapshot.terminal ? "done" : "running";
-		const childTool = snapshot.currentTool ? ` · ${snapshot.currentTool}` : "";
-		let text: string;
-		switch (eventType) {
-			case "subagent_created":
-				text = `${thread.threadName} created`;
-				break;
-			case "subagent_started":
-				text = `${thread.threadName} started`;
-				break;
-			case "subagent_tool_start":
-				text = `${thread.threadName} tool start${childTool}`;
-				break;
-			case "subagent_tool_end":
-				text = `${thread.threadName} tool end${childTool}`;
-				break;
-			case "subagent_compaction_start":
-				text = `${thread.threadName} compaction started`;
-				break;
-			case "subagent_compaction_end":
-				text = `${thread.threadName} compaction finished${snapshot.compactionWillRetry ? " · will retry" : ""}`;
-				break;
-			case "subagent_retry":
-				text = `${thread.threadName} retrying${snapshot.retry?.attempt ? ` · attempt ${snapshot.retry.attempt}` : ""}`;
-				break;
-			case "subagent_wrap_up":
-				text = `${thread.threadName} wrapping up`;
-				break;
-			case "subagent_completed":
-				text = `${thread.threadName} completed`;
-				break;
-			case "subagent_failed":
-				text = `${thread.threadName} failed`;
-				break;
-			case "subagent_cancelled":
-				text = `${thread.threadName} cancelled`;
-				break;
-			case "subagent_timed_out":
-				text = `${thread.threadName} timed out`;
-				break;
-			case "subagent_progress":
-				text = `${thread.threadName} progress${childTool}`;
-				break;
-			default:
-				text = `${thread.threadName} ${snapshot.phase}${childTool}`;
-				break;
-		}
-		return {
-			kind,
-			eventType: eventType ?? `subagent_${snapshot.phase}`,
-			state,
-			text: retainPayload(text),
-			delegationToolName: snapshot.toolName,
-			...(snapshot.currentTool ? { toolName: snapshot.currentTool } : {}),
-			...(snapshot.toolCallId ? { toolCallId: snapshot.toolCallId } : {}),
-			...(snapshot.summary ? { result: retainPayload(snapshot.summary) } : {}),
-			raw: serializePayload(snapshot),
-		};
-	}
-
-	function applyLane(snapshot: SubagentProgressSnapshot): void {
-		const thread = ensureSubagentThread(snapshot);
-		const existing = lanes.get(snapshot.streamKey);
-		const lane: ObserveLane = {
-			threadKey: thread.threadKey,
-			threadId: thread.threadId,
-			...(thread.parentThreadId ? { parentThreadId: thread.parentThreadId } : {}),
-			mainThreadId: thread.mainThreadId,
-			threadKind: thread.threadKind,
-			threadName: thread.threadName,
-			threadColor: thread.threadColor,
-			streamKey: snapshot.streamKey,
-			runId: snapshot.runId,
-			role: snapshot.role,
-			toolName: snapshot.toolName,
-			status: snapshot.status,
-			phase: snapshot.phase,
-			terminal: snapshot.terminal,
-			startedAtMs: snapshot.startedAtMs,
-			elapsedMs: snapshot.elapsedMs,
-			currentTool: snapshot.currentTool,
-			currentPath: snapshot.currentPath,
-			model: snapshot.model,
-			attempt: snapshot.attempt,
-			eventType: snapshot.eventType,
-			summary: snapshot.summary,
-		};
-		if (existing?.terminal && !lane.terminal) return;
-		if (!existing && lane.terminal && terminalLaneOrder.length >= MAX_TERMINAL_LANES) {
-			const evicted = terminalLaneOrder.shift();
-			if (evicted) lanes.delete(evicted);
-		}
-		const activity = subagentTransition(existing, snapshot, thread);
-		if (activity) pushItem(activity, thread);
-		lanes.set(lane.streamKey, lane);
-		if (lane.terminal && !existing?.terminal) {
-			terminalLaneOrder.push(lane.streamKey);
-		}
 	}
 
 	function handleEvent(event: unknown): void {
@@ -588,14 +355,6 @@ export function startObserveRecorder(session: ObserveSessionLike, options?: Obse
 				break;
 			}
 			case "tool_execution_update": {
-				const toolName = String(e.toolName);
-				const snapshot = getSubagentSnapshot(e.partialResult);
-				if ((OBSERVATORY_TOOL_NAMES as readonly string[]).includes(toolName) && snapshot) {
-					applyLane(snapshot);
-					const lane = lanes.get(snapshot.streamKey);
-					if (lane) emit({ type: "lane", lane });
-					break;
-				}
 				const item = findToolItem(String(e.toolCallId));
 				if (item) {
 					item.updates = (item.updates ?? 0) + 1;

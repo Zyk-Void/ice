@@ -14,7 +14,6 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getAgentDir } from "../../config.ts";
-import type { IceVerifierState } from "../../ice-safe-verify.ts";
 import { hashSource } from "../definitions/legacy-profiles.ts";
 import { isRecord } from "../results/report.ts";
 import { SubagentError } from "../runtime/helpers.ts";
@@ -29,7 +28,6 @@ import {
 	type WriterResult,
 	type WriterWorkspace,
 } from "../types.ts";
-import type { SubagentProgressSnapshot } from "../ui/observatory.ts";
 
 function runWriterGit(cwd: string, args: readonly string[]): string {
 	try {
@@ -523,19 +521,6 @@ export type WriterWorkflowStatus =
 	| "rollback_conflict"
 	| "artifact_invalid"
 	| "verifier_unavailable";
-
-export interface WriterWorkflowToolResult {
-	status: WriterWorkflowStatus;
-	progress?: SubagentProgressSnapshot;
-	artifact?: ReadonlyWriterPatchArtifact;
-	parentRoot?: string;
-	changedPaths?: readonly string[];
-	preview?: string;
-	previewBytes?: number;
-	previewTruncated?: boolean;
-	verification?: IceVerifierState;
-	message?: string;
-}
 
 function resolveProductionWriterPatchPath(artifact: WriterPatchArtifact, agentDir: string): string {
 	const expectedPatchPath = resolve(agentDir, "artifacts", "writer", artifact.runId, "proposal.patch");
