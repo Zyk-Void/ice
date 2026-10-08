@@ -1,12 +1,14 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { visibleWidth } from "@zykairotis/ice-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { parseNativeAgentMarkdown } from "../src/subagents/definitions/parse.ts";
 import type { ApprovalAnswer, PendingApproval } from "../src/subagents/permissions/approval.ts";
 import { AgentHubView, type HubRow, type HubSource } from "../src/subagents/ui/hub.ts";
 import { createAgentDefinitionFile } from "../src/subagents/v2/agent-manager.ts";
+import { approvalSummary } from "../src/subagents/v2/runtime-support.ts";
 
 const theme = {
 	fg: (_color: string, text: string) => text,
@@ -29,7 +31,7 @@ const ROWS: HubRow[] = [
 	},
 ];
 
-function approval(childId: string, id: string): PendingApproval {
+function approval(childId: string, id: string, summary = "bash: npm test", queuedAt = 0): PendingApproval {
 	return {
 		request: {
 			id,
@@ -37,10 +39,11 @@ function approval(childId: string, id: string): PendingApproval {
 			childId,
 			agent: "worker",
 			tool: "bash",
-			summary: "bash: npm test",
+			summary,
+			sessionRule: "bash(npm test*)",
 			foreground: false,
 		},
-		queuedAt: 0,
+		queuedAt,
 		deadline: 1,
 	};
 }
@@ -83,12 +86,10 @@ function hub(overrides: Partial<HubSource> = {}) {
 
 describe("subagent V2 Agent Hub", () => {
 	it("renders counts, pending approvals, the roster, and the selected child's inspector", () => {
-		const { view } = hub();
+		const { view } = hub({ approvals: () => [] });
 		const text = view.render(80).join("\n");
 		expect(text).toContain("Agent Hub");
 		expect(text).toContain("2 active · 1 running · 1 idle");
-		expect(text).toContain("1 pending approval");
-		expect(text).toContain("worker (ag_b): bash: npm test");
 		expect(text).toContain("explore");
 		expect(text).toContain("1.5k tok");
 		expect(text).toContain("patch open");
@@ -96,8 +97,102 @@ describe("subagent V2 Agent Hub", () => {
 		view.dispose();
 	});
 
+	it("opens on the child that asks and shows its own requests by name", () => {
+		const rows: HubRow[] = [
+			{ ...ROWS[0]!, name: "atlas" },
+			{ ...ROWS[1]!, name: "basil" },
+		];
+		const { view } = hub({ rows: () => rows });
+		const text = view.render(80).join("\n");
+		expect(text).toContain("1 pending approval");
+		expect(text).toContain("Waiting for approval: basil");
+		expect(text).not.toContain("(ag_b)");
+		expect(text).toMatch(/basil\s+worker\s+idle\s+1 to approve/);
+		expect(text).toContain("details of ag_b");
+		expect(text).toContain("Waiting for approval (1)");
+		expect(text).toContain("› bash: npm test");
+		// Key names come from the user's keybindings; the descriptions are fixed.
+		expect(text).toMatch(/allow once · \S* ?always allow bash\(npm test\*\) · \S* ?deny/);
+		view.dispose();
+	});
+
+	it("never answers another child's request from the selected child", () => {
+		const { view, responses } = hub();
+		view.handleInput("\x1b[A");
+		expect(view.render(80).join("\n")).toContain("details of ag_a");
+		view.handleInput("y");
+		view.handleInput("n");
+		expect(responses).toEqual([]);
+		expect(view.render(80).join("\n")).toMatch(/ag_a has nothing to approve; \S* ?selects the next request\./);
+		view.dispose();
+	});
+
+	it("steps through requests across children with tab and answers the selected one", () => {
+		let pending = [
+			approval("ag_a", "r1", "ls: /one", 1),
+			approval("ag_b", "r2", "ls: /two", 2),
+			approval("ag_a", "r3", "ls: /three", 3),
+		];
+		const { view, responses } = hub({
+			approvals: () => pending,
+			respond: (id, answer) => {
+				responses.push([id, answer]);
+				pending = pending.filter((candidate) => candidate.request.id !== id);
+				return true;
+			},
+		});
+		let text = view.render(80).join("\n");
+		expect(text).toContain("Waiting for approval: ag_a (2), ag_b");
+		expect(text).toContain("› ls: /one");
+		view.handleInput("\t");
+		text = view.render(80).join("\n");
+		expect(text).toContain("details of ag_a");
+		expect(text).toContain("› ls: /three");
+		view.handleInput("y");
+		expect(responses).toEqual([["r3", "allow-once"]]);
+		view.handleInput("\t");
+		text = view.render(80).join("\n");
+		expect(text).toContain("details of ag_b");
+		view.handleInput("a");
+		expect(responses.at(-1)).toEqual(["r2", "allow-session"]);
+		expect(view.render(80).join("\n")).toContain("Always allowing bash(npm test*) for ag_b: ls: /two");
+		view.dispose();
+	});
+
+	it("keeps every rendered line on one terminal row when child text has line breaks", () => {
+		const multiline = "bash: cat << 'EOF' > /tmp/x.mjs\nimport fs from 'node:fs';\r\nconsole.log(1)";
+		const { view } = hub({
+			rows: () => [{ ...ROWS[1]!, description: "Fix\nbug" }],
+			approvals: () => [approval("ag_b", "r1", multiline)],
+			details: () => ["Task: one\ntwo"],
+		});
+		for (const width of [80, 140]) {
+			const lines = view.render(width);
+			for (const line of lines) {
+				expect(line).not.toMatch(/[\r\n]/);
+				expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+			}
+			expect(lines.join("\n")).toContain("import fs from");
+		}
+		view.dispose();
+	});
+
+	it("builds approval summaries as one redacted, bounded line", () => {
+		const summary = approvalSummary(
+			"bash",
+			"cat << 'EOF' > /tmp/x.mjs\n  curl -H 'Authorization: Bearer abc.def'\r\n\tEOF",
+		);
+		expect(summary).not.toMatch(/[\r\n\t]/);
+		expect(summary.startsWith("bash: cat << 'EOF' > /tmp/x.mjs ↵ curl -H ")).toBe(true);
+		expect(summary.endsWith("' ↵ EOF")).toBe(true);
+		expect(summary).toContain("[REDACTED]");
+		expect(summary).not.toContain("abc.def");
+		expect(approvalSummary("bash", "x".repeat(500))).toHaveLength("bash: ".length + 300);
+		expect(approvalSummary("write", "inbox.txt")).toBe("write: inbox.txt");
+	});
+
 	it("lays out roster and inspector side by side on wide terminals", () => {
-		const { view } = hub();
+		const { view } = hub({ approvals: () => [] });
 		const line = view.render(140).find((candidate) => candidate.includes("│"));
 		expect(line).toBeDefined();
 		expect(line).toContain("explore");

@@ -35,6 +35,8 @@ export interface AppKeybindings {
 	"app.agents.delete": true;
 	"app.agents.approve": true;
 	"app.agents.deny": true;
+	"app.agents.approveSession": true;
+	"app.agents.nextApproval": true;
 	"app.thinking.toggle": true;
 	"app.session.toggleNamedFilter": true;
 	"app.editor.external": true;
@@ -127,8 +129,19 @@ export const KEYBINDINGS = {
 	},
 	"app.agents.stop": { defaultKeys: "s", description: "Agent Hub: stop the selected subagent's current turn" },
 	"app.agents.delete": { defaultKeys: "shift+d", description: "Agent Hub: delete the selected stopped subagent" },
-	"app.agents.approve": { defaultKeys: "y", description: "Agent Hub: approve the pending subagent request" },
-	"app.agents.deny": { defaultKeys: "n", description: "Agent Hub: deny the pending subagent request" },
+	"app.agents.approve": {
+		defaultKeys: "y",
+		description: "Agent Hub: approve the selected pending subagent request once",
+	},
+	"app.agents.deny": { defaultKeys: "n", description: "Agent Hub: deny the selected pending subagent request" },
+	"app.agents.approveSession": {
+		defaultKeys: "a",
+		description: "Agent Hub: always allow the selected request's rule for that subagent",
+	},
+	"app.agents.nextApproval": {
+		defaultKeys: "tab",
+		description: "Agent Hub: select the next pending subagent request and its subagent",
+	},
 
 	"app.thinking.toggle": {
 		defaultKeys: "ctrl+t",
