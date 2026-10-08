@@ -145,6 +145,7 @@ import { FooterComponent, formatCwdForFooter, formatTokens } from "./components/
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
+import { NewMessagesPill } from "./components/new-messages-pill.ts";
 import { NoticesViewComponent } from "./components/notices-view.ts";
 import {
 	type AuthSelectorProvider,
@@ -982,7 +983,20 @@ export class InteractiveMode {
 			this.agentSwitcher.setAppearance(this.effectiveAppearance().subagentChrome);
 			this.agentSwitcherContainer.addChild(this.agentSwitcher);
 		}
+		const newMessagesPill = new NewMessagesPill(
+			this.transcriptScrollView,
+			() => {
+				const messages = this.displayView?.messages ?? this.renderSession.messages;
+				return this.streamingMessage ? [...messages, this.streamingMessage] : messages;
+			},
+			theme,
+			{
+				isVisible: () => this.renderer.mode === "fullscreen",
+				getTranscriptId: () => `${this.displayedViewId}:${this.renderSession.sessionId}`,
+			},
+		);
 		const dock = new TuiLayouts.VStack([
+			{ component: newMessagesPill, shrink: 1, minSize: 0 },
 			{ component: this.pendingMessagesContainer, shrink: 1, minSize: 0 },
 			{ component: this.statusContainer, shrink: 1, minSize: 0 },
 			{ component: this.widgetContainerAbove, shrink: 1, minSize: 0 },
