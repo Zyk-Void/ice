@@ -566,7 +566,6 @@ export class IceAgentViewBridge {
 	private unsubscribeLiveSource: (() => void) | undefined;
 	private readonly historical = new Map<string, IceAgentViewDescriptor>();
 	private readonly listeners = new Set<() => void>();
-	private readonly switcherRequestListeners = new Set<() => void>();
 	private readonly uiState = new Map<string, AgentViewUiState>();
 	private readonly interactionModes = new Map<string, IceAgentViewInteractionMode>();
 	private displayedId = "parent";
@@ -692,23 +691,6 @@ export class IceAgentViewBridge {
 			this.uiState.delete(oldestId);
 		}
 		this.publish();
-	}
-
-	requestAgentSwitcher(): boolean {
-		if (this.switcherRequestListeners.size === 0) return false;
-		for (const listener of this.switcherRequestListeners) {
-			try {
-				listener();
-			} catch {
-				// UI-intent observers must not affect bridge state or runtime execution.
-			}
-		}
-		return true;
-	}
-
-	subscribeAgentSwitcherRequests(listener: () => void): () => void {
-		this.switcherRequestListeners.add(listener);
-		return () => this.switcherRequestListeners.delete(listener);
 	}
 
 	listViews(): readonly IceAgentViewDescriptor[] {

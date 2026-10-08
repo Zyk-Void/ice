@@ -1,13 +1,7 @@
 import { visibleWidth } from "@zykairotis/ice-tui";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
-import { KeybindingsManager } from "../src/core/keybindings.ts";
-import {
-	IceAgentViewBridge,
-	type IceAgentViewDescriptor,
-	type IceAgentViewLiveSession,
-	type IceAgentViewLiveSessionSource,
-} from "../src/ice-agent-view-bridge.ts";
+import { IceAgentViewBridge, type IceAgentViewDescriptor } from "../src/ice-agent-view-bridge.ts";
 import {
 	createSubagentFooterSnapshot,
 	SubagentFooterSwitcher,
@@ -60,27 +54,6 @@ function fakeTheme() {
 	return {
 		fg: (_color: string, text: string) => text,
 		bg: (_color: string, text: string) => text,
-	};
-}
-
-function source(): {
-	source: IceAgentViewLiveSessionSource;
-	set: (sessions: readonly IceAgentViewLiveSession[]) => void;
-} {
-	let sessions: readonly IceAgentViewLiveSession[] = [];
-	const listeners = new Set<() => void>();
-	return {
-		source: {
-			list: () => sessions,
-			subscribe: (listener) => {
-				listeners.add(listener);
-				return () => listeners.delete(listener);
-			},
-		},
-		set: (next) => {
-			sessions = next;
-			for (const listener of listeners) listener();
-		},
 	};
 }
 
@@ -232,14 +205,7 @@ describe("subagent footer observability", () => {
 			taskId: "second-task",
 			session: session("second", true),
 		});
-		const switcher = new SubagentFooterSwitcher(
-			{ requestRender: vi.fn() } as never,
-			fakeTheme() as never,
-			{ matches: () => false } as never,
-			bridge,
-			vi.fn(),
-			false,
-		);
+		const switcher = new SubagentFooterSwitcher({ requestRender: vi.fn() } as never, fakeTheme() as never, bridge);
 
 		try {
 			const text = switcher.render(120).join("\n");
@@ -300,14 +266,7 @@ describe("subagent footer observability", () => {
 			messages: [],
 		});
 		bridge.requestDisplay("run-attention");
-		const switcher = new SubagentFooterSwitcher(
-			{ requestRender: vi.fn() } as never,
-			fakeTheme() as never,
-			{ matches: () => false } as never,
-			bridge,
-			vi.fn(),
-			false,
-		);
+		const switcher = new SubagentFooterSwitcher({ requestRender: vi.fn() } as never, fakeTheme() as never, bridge);
 
 		try {
 			const wide = switcher.render(120);
@@ -352,14 +311,7 @@ describe("subagent footer observability", () => {
 			finishedAt: 11,
 			messages: [],
 		});
-		const switcher = new SubagentFooterSwitcher(
-			{ requestRender: vi.fn() } as never,
-			fakeTheme() as never,
-			{ matches: () => false } as never,
-			bridge,
-			vi.fn(),
-			false,
-		);
+		const switcher = new SubagentFooterSwitcher({ requestRender: vi.fn() } as never, fakeTheme() as never, bridge);
 
 		try {
 			const text = switcher.render(120).join("\n");
@@ -370,92 +322,6 @@ describe("subagent footer observability", () => {
 
 			bridge.requestDisplay("run-failed");
 			expect(switcher.render(120).join("\n")).toContain("FAILED");
-		} finally {
-			switcher.dispose();
-		}
-	});
-
-	it("uses configured next and previous actions to switch views while the footer has focus", () => {
-		const bridge = new IceAgentViewBridge();
-		bridge.setParentSession(session("parent"));
-		const live = new SubagentLiveSessionRegistry();
-		bridge.connectLiveSessions(live);
-		const releaseFirst = live.register({
-			runId: "run-first",
-			role: "explorer",
-			taskId: "first-task",
-			session: session("first"),
-		});
-		const releaseSecond = live.register({
-			runId: "run-second",
-			role: "reviewer",
-			taskId: "second-task",
-			session: session("second"),
-		});
-		const keybindings = new KeybindingsManager({ "app.subagents.previous": "alt+p" });
-		const switcher = new SubagentFooterSwitcher(
-			{ requestRender: vi.fn() } as never,
-			fakeTheme() as never,
-			keybindings,
-			bridge,
-			vi.fn(),
-			true,
-		);
-
-		try {
-			expect(keybindings.matches("\x1bF", "app.subagents.next")).toBe(true);
-			switcher.handleInput("\x1bF");
-			expect(bridge.getDisplayedId()).toBe("run-first");
-			expect(switcher.render(100).join("\n")).toContain("explorer · first-task");
-
-			switcher.handleInput("\x1bF");
-			expect(bridge.getDisplayedId()).toBe("run-second");
-			switcher.handleInput("\x1bp");
-			expect(bridge.getDisplayedId()).toBe("run-first");
-		} finally {
-			switcher.dispose();
-			releaseFirst();
-			releaseSecond();
-		}
-	});
-
-	it("preserves selection through reordering and chooses the nearest child after removal", () => {
-		const bridge = new IceAgentViewBridge();
-		bridge.setParentSession(session("parent"));
-		const live = source();
-		bridge.connectLiveSessions(live.source);
-		const first = session("first", true);
-		const second = session("second", true);
-		const firstEntry: IceAgentViewLiveSession = {
-			runId: "run-first",
-			role: "first",
-			taskId: "first",
-			session: first,
-		};
-		const secondEntry: IceAgentViewLiveSession = {
-			runId: "run-second",
-			role: "second",
-			taskId: "second",
-			session: second,
-		};
-		live.set([firstEntry, secondEntry]);
-		bridge.requestDisplay("run-first");
-		const requestRender = vi.fn();
-		const switcher = new SubagentFooterSwitcher(
-			{ requestRender } as never,
-			fakeTheme() as never,
-			{ matches: () => false } as never,
-			bridge,
-			vi.fn(),
-			true,
-		);
-
-		try {
-			live.set([secondEntry, firstEntry]);
-			expect(requestRender).toHaveBeenCalled();
-			expect(switcher.render(100).join("\n")).toMatch(/> ● first · first/);
-			live.set([secondEntry]);
-			expect(switcher.render(100).join("\n")).toMatch(/> ● second · second/);
 		} finally {
 			switcher.dispose();
 		}

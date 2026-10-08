@@ -428,7 +428,6 @@ export class InteractiveMode {
 	private footerContainer: Container;
 	private agentSwitcherContainer: Container;
 	private agentSwitcher?: SubagentFooterSwitcher;
-	private agentSwitcherRequestUnsubscribe?: () => void;
 	private footerDataProvider: FooterDataProvider;
 	/** Safety, update, and extension-console notices shown as a footer badge instead of transcript rows. */
 	private readonly noticeCenter = new NoticeCenter();
@@ -628,9 +627,6 @@ export class InteractiveMode {
 		this.widgetContainerAbove = new Container();
 		this.widgetContainerBelow = new Container();
 		this.agentSwitcherContainer = new Container();
-		this.agentSwitcherRequestUnsubscribe = this.agentViewBridge?.subscribeAgentSwitcherRequests(() => {
-			this.openAgentSwitcherDock();
-		});
 		this.keybindings = KeybindingsManager.create();
 		setKeybindings(this.keybindings);
 		const editorPaddingX = this.settingsManager.getEditorPaddingX();
@@ -982,14 +978,7 @@ export class InteractiveMode {
 			scrollbarTrackStyle: getInteractiveScrollbarTrackStyle(),
 		});
 		if (this.agentViewBridge && !this.agentSwitcher) {
-			this.agentSwitcher = new SubagentFooterSwitcher(
-				this.ui,
-				theme,
-				this.keybindings,
-				this.agentViewBridge,
-				() => this.closeAgentSwitcherDock(),
-				false,
-			);
+			this.agentSwitcher = new SubagentFooterSwitcher(this.ui, theme, this.agentViewBridge);
 			this.agentSwitcher.setAppearance(this.effectiveAppearance().subagentChrome);
 			this.agentSwitcherContainer.addChild(this.agentSwitcher);
 		}
@@ -2445,38 +2434,6 @@ export class InteractiveMode {
 		});
 	}
 
-	private openAgentSwitcherDock(): void {
-		if (!this.agentViewBridge || !this.isInitialized) return;
-		if (this.agentSwitcher) {
-			this.saveDisplayedViewState();
-			this.agentSwitcher.setExpanded(true);
-			this.ui.setFocus(this.agentSwitcher);
-			return;
-		}
-		this.saveDisplayedViewState();
-		const switcher = new SubagentFooterSwitcher(
-			this.ui,
-			theme,
-			this.keybindings,
-			this.agentViewBridge,
-			() => this.closeAgentSwitcherDock(),
-			true,
-		);
-		switcher.setAppearance(this.effectiveAppearance().subagentChrome);
-		this.agentSwitcher = switcher;
-		this.agentSwitcherContainer.addChild(switcher);
-		this.ui.setFocus(switcher);
-		this.ui.requestRender();
-	}
-
-	private closeAgentSwitcherDock(): void {
-		const switcher = this.agentSwitcher;
-		if (!switcher) return;
-		switcher.setExpanded(false);
-		if (this.isInitialized) this.ui.setFocus(this.editor);
-		this.ui.requestRender();
-	}
-
 	private cycleSubagentView(delta: -1 | 1): void {
 		if (!this.agentViewBridge?.cycleDisplayed(delta)) return;
 	}
@@ -2760,7 +2717,6 @@ export class InteractiveMode {
 	}
 
 	private resetExtensionUI(): void {
-		this.closeAgentSwitcherDock();
 		if (this.extensionSelector) {
 			this.hideExtensionSelector();
 		}
@@ -7729,7 +7685,6 @@ export class InteractiveMode {
 		setDefaultTableStyle(this.previousDefaultTableStyle);
 		setDiffAppearance(undefined);
 		setInteractiveChromeThemeOverride(undefined);
-		this.closeAgentSwitcherDock();
 		this.agentSwitcher?.dispose();
 		this.agentSwitcher = undefined;
 		this.agentSwitcherContainer.clear();
@@ -7752,8 +7707,6 @@ export class InteractiveMode {
 		this.displayedSessionUnsubscribe = undefined;
 		this.agentViewUnsubscribe?.();
 		this.agentViewUnsubscribe = undefined;
-		this.agentSwitcherRequestUnsubscribe?.();
-		this.agentSwitcherRequestUnsubscribe = undefined;
 		if (this.isInitialized) {
 			this.stopInteractiveTui();
 			this.isInitialized = false;

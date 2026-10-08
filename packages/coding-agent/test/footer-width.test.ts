@@ -306,6 +306,26 @@ describe("FooterComponent width handling", () => {
 		}
 	});
 
+	it("shows subagent capacity on the first row of the legacy footer, beside the notices badge", () => {
+		const footer = new FooterComponent(createSession({ sessionName: "" }), createFooterData(1));
+		footer.setStyle("legacy");
+		footer.setSubagentSource(() => ({
+			enabled: true,
+			capacity: { running: 1, queued: 0, max: 4 },
+			maxDepth: 0,
+			children: [],
+			approvals: [],
+			diagnostics: [],
+		}));
+		expect(stripAnsi(footer.render(120)[0]!).trimEnd().endsWith("agents 1/4")).toBe(true);
+		footer.setNoticeSource(
+			() => ({ warning: 1, error: 0, update: 0 }),
+			() => "f2",
+		);
+		expect(stripAnsi(footer.render(120)[0]!)).toMatch(/agents 1\/4 · ⚠ 1 · f2\s*$/);
+		for (const line of footer.render(50)) expect(visibleWidth(line)).toBeLessThanOrEqual(50);
+	});
+
 	it("omits the badge when there are no notices", () => {
 		const session = createSession({ sessionName: "" });
 		const footer = new FooterComponent(session, createFooterData(1));

@@ -154,7 +154,12 @@ export class FooterComponent implements Component {
 		// Color-only customization must not switch the compact footer to a multi-row layout.
 		if (!customLayout && this.style === "compact") return this.renderStatusLine(width, customized);
 		const lines = customized ? this.renderCustomized(width, customized) : this.renderLegacy(width);
-		const badge = this.renderNoticesBadge();
+		const subagents = this.renderSubagentSegment(customized)?.text;
+		const notices = this.renderNoticesBadge();
+		const badge =
+			subagents && notices
+				? `${subagents}${theme.fg("dim", ` ${sym("separator")} `)}${notices}`
+				: (subagents ?? notices);
 		if (!badge || lines.length === 0) return lines;
 		return [placeRight(lines[0]!, badge, width), ...lines.slice(1)];
 	}
@@ -222,26 +227,35 @@ export class FooterComponent implements Component {
 		if (backgroundTasks > 0) {
 			right.push({ text: primary(`${backgroundTasks} in background`), priority: 95 });
 		}
-		const subagents = this.getSubagentOverview();
-		if (subagents) {
-			const { running, queued, max } = subagents.capacity;
-			const approvals = subagents.approvals.length;
-			const parts = [
-				subagents.enabled ? `agents ${running}/${max}` : "agents off",
-				...(queued > 0 ? [`${queued} queued`] : []),
-			];
-			const label = running > 0 || queued > 0 ? primary(parts.join(" ")) : dim(parts.join(" "));
-			const approvalLabel =
-				approvals > 0 ? theme.fg("warning", `${approvals} approval${approvals === 1 ? "" : "s"}`) : "";
-			right.push({
-				text: approvalLabel ? `${label}${separator}${approvalLabel}` : label,
-				// Capacity outranks the working directory; activity and approvals outrank the model.
-				priority: approvals > 0 ? REQUIRED_PRIORITY : running > 0 || queued > 0 ? 96 : 65,
-			});
-		}
+		const subagents = this.renderSubagentSegment(appearance);
+		if (subagents) right.push(subagents);
 		const badge = this.renderNoticesBadge(appearance);
 		if (badge) right.push({ text: badge, priority: REQUIRED_PRIORITY });
 		return layoutStatusLine(left, right, width);
+	}
+
+	/** `agents running/max`, queued turns, and pending approvals; undefined without a subagent runtime. */
+	private renderSubagentSegment(appearance?: FooterAppearance | null): StatusSegment | undefined {
+		const subagents = this.getSubagentOverview();
+		if (!subagents) return undefined;
+		const dim = (text: string) =>
+			appearance ? applyTextPresentation(appearance.secondary, text) : theme.fg("dim", text);
+		const primary = (text: string) =>
+			appearance ? applyTextPresentation(appearance.primary, text) : theme.fg("accent", text);
+		const { running, queued, max } = subagents.capacity;
+		const approvals = subagents.approvals.length;
+		const parts = [
+			subagents.enabled ? `agents ${running}/${max}` : "agents off",
+			...(queued > 0 ? [`${queued} queued`] : []),
+		];
+		const label = running > 0 || queued > 0 ? primary(parts.join(" ")) : dim(parts.join(" "));
+		const approvalLabel =
+			approvals > 0 ? theme.fg("warning", `${approvals} approval${approvals === 1 ? "" : "s"}`) : "";
+		return {
+			text: approvalLabel ? `${label}${dim(` ${sym("separator")} `)}${approvalLabel}` : label,
+			// Capacity outranks the working directory; activity and approvals outrank the model.
+			priority: approvals > 0 ? REQUIRED_PRIORITY : running > 0 || queued > 0 ? 96 : 65,
+		};
 	}
 
 	private renderNoticesBadge(appearance?: FooterAppearance | null): string | undefined {

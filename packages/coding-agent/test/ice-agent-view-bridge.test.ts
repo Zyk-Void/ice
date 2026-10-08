@@ -156,21 +156,6 @@ describe("ICE agent view bridge", () => {
 		expect(bridge.getDisplayedId()).toBe("parent");
 	});
 
-	it("publishes native switcher requests without mutating the selected agent view", () => {
-		const bridge = new IceAgentViewBridge();
-		bridge.setParentSession(fakeSession("parent"));
-		const listener = vi.fn();
-		const unsubscribe = bridge.subscribeAgentSwitcherRequests(listener);
-
-		expect(bridge.requestAgentSwitcher()).toBe(true);
-		expect(listener).toHaveBeenCalledOnce();
-		expect(bridge.getDisplayedId()).toBe("parent");
-
-		unsubscribe();
-		expect(bridge.requestAgentSwitcher()).toBe(false);
-		expect(listener).toHaveBeenCalledOnce();
-	});
-
 	it("preserves an explicit verification state in bounded historical presentation", () => {
 		const bridge = new IceAgentViewBridge();
 		bridge.registerHistoricalSnapshot({
