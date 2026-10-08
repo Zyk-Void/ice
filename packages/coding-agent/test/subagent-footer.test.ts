@@ -212,6 +212,8 @@ describe("subagent footer observability", () => {
 			expect(text).toContain("2 working");
 			expect(text).toContain("[Main agent] MAIN");
 			expect(text).not.toContain("[1/2 explorer · first-task]");
+			expect(text).toMatch(/switch · \S* ?manage/);
+			expect(text).not.toMatch(/ main · /);
 		} finally {
 			switcher.dispose();
 			releaseFirst();
@@ -319,6 +321,8 @@ describe("subagent footer observability", () => {
 			expect(text).toContain("1 retained");
 			expect(text).toContain("1 needs attention");
 			expect(text).toContain("[2/3 reviewer · api-review] IDLE");
+			// A child view leads with the key back to the main agent.
+			expect(text).toMatch(/IDLE · \S* ?main · /);
 			expect(text).toContain("! bash src/api.ts");
 			expect(text).toContain("45s elapsed");
 			expect(text).not.toContain("secret-token");

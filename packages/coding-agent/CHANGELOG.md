@@ -202,6 +202,7 @@
 
 ### Changed
 
+- While a subagent view is shown, the agent strip now starts its key hints with the interrupt key (`esc main`), which returns to the main agent.
 - A background subagent stopped because its parent session closed (quit, `/resume`, `/new`) now finishes as `interrupted`, not `cancelled`, so the parent knows to resume it; resuming it adds the usual interrupted-tool recovery notice.
 - Subagents launched without a name now get a unique automatic name from a pool of 100 (suffixed once the pool is used up). A name is never reused in a session, even after the subagent is deleted. `agent` tool results and completion messages refer to subagents by name.
 - Improved the Agent Hub: rows lead with a status mark and the name, finished subagents show how their last turn ended, long lists scroll with the selection, the selection stays on its subagent when rows reorder, notices use names, and the header counts queued turns once.

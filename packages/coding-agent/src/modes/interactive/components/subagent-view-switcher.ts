@@ -302,7 +302,12 @@ export class SubagentFooterSwitcher implements Component {
 			: selected
 				? ` · [${selectedPosition} ${selected.label}] ${selected.status}`
 				: "";
-		const summary = `Agents ${counts}${selectedSummary} · ${keyText("app.subagents.previous")}/${keyText("app.subagents.next")} switch · ${keyText("app.agents.hub")} manage`;
+		const switchKeys = `${keyText("app.subagents.previous")}/${keyText("app.subagents.next")} switch`;
+		// In a child view, Escape (the interrupt key) returns to the main agent; say so first.
+		const navigation = snapshot.mainAgentDisplayed
+			? `${switchKeys} · ${keyText("app.agents.hub")} manage`
+			: `${keyText("app.interrupt")} main · ${switchKeys}`;
+		const summary = `Agents ${counts}${selectedSummary} · ${navigation}`;
 		const countOnly = [
 			`Agents ${snapshot.children.length}`,
 			snapshot.attentionCount > 0 ? `!${snapshot.attentionCount} attention` : undefined,
