@@ -911,6 +911,43 @@ describe("subagent V2 runtime", () => {
 		expect(parent.sent).toHaveLength(1);
 	});
 
+	it.each(["x".repeat(20 * 1024), "界".repeat(7 * 1024)])(
+		"bounds a long background report and gives its retained byte offset",
+		async (report) => {
+			const { harness, parent, host } = await setup();
+			harness.setResponses([fauxAssistantMessage(report)]);
+			const runtime = new SubagentV2Runtime(host());
+			try {
+				const result = await runOne(runtime, "explore", "Summarize", true);
+				const content = String(parent.sent[0]!.content);
+				const summary = content.split("Untrusted child report:\n")[1]!.split("\n\nFull result:")[0]!;
+				const kept = summary.split("\n[Report truncated")[0]!;
+				expect(summary).toContain(
+					`[Report truncated at 16 KiB; read the full report with agent_control action=output id=${result.childId} offset=${Buffer.byteLength(kept)}]`,
+				);
+				expect(Buffer.byteLength(summary)).toBeLessThanOrEqual(16 * 1024);
+				expect(report.startsWith(kept)).toBe(true);
+				expect(kept).not.toContain("�");
+			} finally {
+				await runtime.shutdown();
+			}
+		},
+	);
+
+	it("delivers a 10 KiB background report intact", async () => {
+		const { harness, parent, host } = await setup();
+		const report = "x".repeat(10 * 1024);
+		harness.setResponses([fauxAssistantMessage(report)]);
+		const runtime = new SubagentV2Runtime(host());
+		try {
+			await runOne(runtime, "explore", "Summarize", true);
+			expect(parent.sent[0]!.content).toContain(report);
+			expect(parent.sent[0]!.content).not.toContain("[Report truncated");
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
 	it("lists still-running siblings in a completion message", async () => {
 		const { harness, parent, host } = await setup();
 		let release!: () => void;

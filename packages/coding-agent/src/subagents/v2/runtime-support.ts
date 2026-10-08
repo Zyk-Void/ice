@@ -27,7 +27,7 @@ import type { ChildTurnBudget } from "./turn-budget.ts";
 
 export const SUBAGENT_COMPLETED_CUSTOM_TYPE = "subagent_completed";
 export const RESULT_TEXT_LIMIT = 48 * 1024;
-export const COMPLETION_SUMMARY_LIMIT = 4 * 1024;
+export const COMPLETION_SUMMARY_LIMIT = 16 * 1024;
 
 export function durableOutputReferenceId(childId: string): string {
 	return `durable:v2:${childId}`;

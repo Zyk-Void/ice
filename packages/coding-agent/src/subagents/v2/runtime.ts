@@ -1249,10 +1249,18 @@ export class SubagentV2Runtime {
 
 	private deliverCompletion(state: OwnerState, result: ChildTurnResult): void {
 		const deliveryId = `${result.id}:${state.registry.get(state.sessionId, result.id).usage.turns}`;
-		const summary = boundedText(
-			result.error ? `${result.error}\n\n${result.text}` : result.text,
-			COMPLETION_SUMMARY_LIMIT,
-		).text;
+		const text = result.error ? `${result.error}\n\n${result.text}` : result.text;
+		const marker = `\n[Report truncated at 16 KiB; read the full report with agent_control action=output id=${result.id} offset=${COMPLETION_SUMMARY_LIMIT}]`;
+		const bounded = boundedText(
+			text,
+			Buffer.byteLength(text) > COMPLETION_SUMMARY_LIMIT
+				? COMPLETION_SUMMARY_LIMIT - Buffer.byteLength(marker) + Buffer.byteLength("\n[truncated]")
+				: COMPLETION_SUMMARY_LIMIT,
+		);
+		const kept = bounded.truncated ? bounded.text.slice(0, -"\n[truncated]".length) : bounded.text;
+		const summary = bounded.truncated
+			? `${kept}\n[Report truncated at 16 KiB; read the full report with agent_control action=output id=${result.id} offset=${Buffer.byteLength(kept)}]`
+			: kept;
 		state.registry.recordCompletion({
 			deliveryId,
 			childId: result.id,
