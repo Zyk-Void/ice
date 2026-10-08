@@ -51,7 +51,10 @@ const ROSTER_WINDOW = 14;
 const NAME_WIDTH = 14;
 
 /** One-cell status glyph and its theme color. */
-function statusMark(row: HubRow): { glyph: string; color: "accent" | "warning" | "error" | "success" | "muted" } {
+export function statusMark(row: Pick<HubRow, "state" | "lastTurnOutcome">): {
+	glyph: string;
+	color: "accent" | "warning" | "error" | "success" | "muted";
+} {
 	if (row.state === "running") return { glyph: "●", color: "accent" };
 	if (row.state === "queued") return { glyph: "◌", color: "warning" };
 	if (row.state === "blocked") return { glyph: "!", color: "warning" };
@@ -68,7 +71,7 @@ function label(row: HubRow): string {
 	return row.name ?? row.id;
 }
 
-function formatTokens(tokens: number): string {
+export function formatTokens(tokens: number): string {
 	return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens);
 }
 

@@ -6,6 +6,7 @@
 
 ### Added
 
+- Added live progress for foreground `agent` calls: while the call runs, the tool row shows one line per subagent (status mark, name, agent, state, tokens, and its current tool call) and how many are still running, with the key that moves them to the background.
 - Added a fullscreen jump-to-bottom pill with unseen assistant-turn counts and the configurable transcript-bottom key (`end` by default).
 - Added subagent names: an `agent` task may set `name` (for example `auth-review`), unique among the session's subagents; `resume`, `agent_control`, and `agent_patch` accept the name wherever an ID is accepted, and names show in the Agent Hub, the agent strip, `agent_control list`, and completion messages.
 - Added subagents V2, which replaces the legacy delegation tools with `agent`, `agent_control`, and `agent_patch`: Claude Code-style agent files discovered from `.ice/agents` up to the git root plus `~/.ice/agents` and settings, built-in `general`/`explore`/`plan`/`review`/`worker` agents, an allow/ask/deny permission model in which a child never exceeds its parent and repository rules can only narrow, durable child sessions that survive restarts, worktree isolation that starts from uncommitted work with conflict-safe patch apply, an Agent Hub (`/agents`) with an approval inbox, `ice agents list|validate`, the `--agents` JSON flag, lifecycle events on `ice:subagent`, and the existing `ice.hooks` subagent hooks (launch, tool, and accept decisions plus lifecycle observations). See `docs/subagents-v2.md`.

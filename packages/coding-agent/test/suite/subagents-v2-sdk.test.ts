@@ -46,6 +46,48 @@ describe("subagents V2 SDK wiring", () => {
 		expect(subagents.overview()?.capacity.max).toBe(2);
 	});
 
+	it("streams live child rows while a foreground agent call runs", async () => {
+		const subagents = createIceSubagents({
+			agents: { summarizer: { description: "Summarize text", prompt: "Summarize what you are given." } },
+		});
+		const harness = await createHarness({ extensionFactories: [subagents.extension], persistSession: true });
+		harnesses.push(harness);
+		subagents.attach(harness.session);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		harness.setResponses([
+			fauxAssistantMessage(
+				fauxToolCall("agent", {
+					tasks: [{ agent: "summarizer", name: "scout", description: "Summarize", prompt: "Summarize: hi" }],
+				}),
+				{ stopReason: "toolUse" },
+			),
+			async () => {
+				await gate;
+				return fauxAssistantMessage("child summary");
+			},
+			fauxAssistantMessage("parent done"),
+		]);
+		const run = harness.session.prompt("delegate");
+		const updates = () =>
+			harness
+				.eventsOfType("tool_execution_update")
+				.filter((event) => event.toolName === "agent")
+				.map((event) => (event.partialResult as { content: Array<{ text: string }> }).content[0]!.text);
+		await vi.waitFor(() =>
+			expect(updates().some((text) => text.includes("● scout · summarizer · running"))).toBe(true),
+		);
+		expect(updates().at(-1)).toMatch(/● scout · summarizer · running · \d+ tok\n1 of 1 running/);
+		release();
+		await run;
+		const result = harness.eventsOfType("tool_execution_end").find((event) => event.toolName === "agent")?.result as {
+			content: Array<{ text: string }>;
+		};
+		expect(result.content[0]!.text).toContain("child summary");
+	});
+
 	it("runs a child through the inline extension and exposes it in the overview", async () => {
 		const subagents = createIceSubagents({
 			agents: { summarizer: { description: "Summarize text", prompt: "Summarize what you are given." } },

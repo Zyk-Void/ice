@@ -1397,6 +1397,27 @@ export class SubagentV2Runtime {
 			});
 	}
 
+	/** What a running child is doing: its latest tool call and target, redacted and short; display only. */
+	currentActivity(id: string): string | undefined {
+		const state = this.owner;
+		const resident = state?.registry.resident(state.sessionId, id);
+		if (!resident?.running) return undefined;
+		const messages = resident.session.messages;
+		for (let index = messages.length - 1; index >= 0; index--) {
+			const message = messages[index]!;
+			if (message.role !== "assistant") continue;
+			const call = [...message.content].reverse().find((part) => part.type === "toolCall");
+			if (!call || call.type !== "toolCall") return undefined;
+			const args = call.arguments as Record<string, unknown>;
+			const target = ["path", "command", "pattern", "query"]
+				.map((key) => args[key])
+				.find((value) => typeof value === "string");
+			const text = redactCredentialText(`${call.name}${target ? ` ${String(target).replace(/\s+/g, " ")}` : ""}`);
+			return text.length > 60 ? `${text.slice(0, 59)}…` : text;
+		}
+		return undefined;
+	}
+
 	/** Mark completions delivered when their message reaches the parent transcript (message_end). */
 	confirmDelivery(message: { role: string; customType?: string; details?: unknown }): void {
 		const state = this.owner;

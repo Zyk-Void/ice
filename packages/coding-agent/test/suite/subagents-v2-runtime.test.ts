@@ -1694,6 +1694,32 @@ describe("subagent V2 runtime", () => {
 		}
 	});
 
+	it("reports a running child's latest tool call as its activity", async () => {
+		const { harness, host } = await setup();
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const waiting = vi.fn(async () => {
+			await gate;
+			return fauxAssistantMessage("done");
+		});
+		harness.setResponses([unfinished(), waiting]);
+		const runtime = new SubagentV2Runtime(host());
+		try {
+			const [record] = await runtime.launch([task("explore", "look")]);
+			expect(runtime.currentActivity(record!.id)).toBeUndefined();
+			const run = runtime.runTurn(record!.id, "look", { foreground: true });
+			await vi.waitFor(() => expect(waiting).toHaveBeenCalledOnce());
+			expect(runtime.currentActivity(record!.id)).toBe("read missing.txt");
+			release();
+			await run;
+			expect(runtime.currentActivity(record!.id)).toBeUndefined();
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
 	it("releases an idle owner when the parent session is replaced, but not one with a running child", async () => {
 		const { harness, host, parent, sessionManager } = await setup();
 		let release!: () => void;

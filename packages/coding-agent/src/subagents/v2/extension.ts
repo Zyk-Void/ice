@@ -23,6 +23,7 @@ import type {
 	IceAgentViewLiveSessionSource,
 } from "../../ice-agent-view-bridge.ts";
 import { parseVerifierArgv, runVerifier } from "../../ice-safe-verify.ts";
+import { keyText } from "../../modes/interactive/components/keybinding-hints.ts";
 import { redactCredentialText } from "../../utils/redact.ts";
 import { type AgentToolParameters, AgentToolParametersSchema } from "../api/agent.ts";
 import type { AgentControlParameters } from "../api/agent-control.ts";
@@ -50,7 +51,7 @@ import { isSubagentOutputArtifactRef } from "../results/output-artifacts.ts";
 import { createSubagentLiveSessionControl } from "../runtime/live-session.ts";
 import { getIceDelegableTools } from "../tools/adapters.ts";
 import { parentMcpAdapters, SUBAGENT_PRESENTATION_LIMIT_BYTES } from "../types.ts";
-import { AgentHubView, type HubSource } from "../ui/hub.ts";
+import { AgentHubView, formatTokens, type HubSource, statusMark } from "../ui/hub.ts";
 import { createAgentDefinitionFile, formatAgentDefinitions } from "./agent-manager.ts";
 import { completionEvent, lifecycleEvents, SUBAGENT_EVENT_CHANNEL } from "./events.ts";
 import { SubagentV2Runtime } from "./runtime.ts";
@@ -133,6 +134,40 @@ function listingStateFromBranch(ctx: ExtensionContext): { state: AgentListingSta
 }
 
 const ROSTER_LIMIT = 20;
+/** How often a foreground agent call refreshes its live child rows. */
+const PROGRESS_INTERVAL_MS = 500;
+
+/**
+ * Live rows for a foreground agent call: finished children first, running ones last, then a summary with the
+ * background key. The tool view shows the tail while running, so the summary and running rows stay visible.
+ */
+function foregroundProgress(runtime: SubagentV2Runtime, ids: readonly string[]): string | undefined {
+	let children: ReturnType<SubagentV2Runtime["overview"]>["children"];
+	try {
+		children = runtime.overview().children;
+	} catch {
+		return undefined;
+	}
+	const rows = ids.flatMap((id) => children.filter((child) => child.id === id));
+	if (rows.length === 0) return undefined;
+	const ordered = [...rows.filter((child) => !child.running), ...rows.filter((child) => child.running)];
+	const lines = ordered.map((child) => {
+		const status = child.running
+			? child.state === "queued"
+				? "queued"
+				: "running"
+			: (child.lastTurnOutcome ?? child.state);
+		const activity = child.running ? runtime.currentActivity(child.id) : undefined;
+		return `${statusMark({ state: child.running && child.state !== "queued" ? "running" : child.state, ...(child.lastTurnOutcome ? { lastTurnOutcome: child.lastTurnOutcome } : {}) }).glyph} ${child.name ?? child.id} · ${child.agent} · ${status} · ${formatTokens(child.tokens)} tok${activity ? ` · ${activity}` : ""}`;
+	});
+	const running = rows.filter((child) => child.running).length;
+	const backgroundKey = keyText("app.tasks.background");
+	const summary =
+		running > 0
+			? `${running} of ${rows.length} running${backgroundKey ? ` · ${backgroundKey} moves them to the background` : ""}`
+			: `${rows.length} finished`;
+	return [...lines, summary].join("\n");
+}
 
 /**
  * Parent sessions that emitted session_shutdown, shared by every extension instance in the process. A session
@@ -473,7 +508,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		promptSnippet: "Launch or continue subagents",
 		promptGuidelines: AGENT_TOOL_GUIDELINES,
 		parameters: AgentToolParametersSchema,
-		execute: async (_toolCallId, params: AgentToolParameters, signal, _onUpdate, ctx) => {
+		execute: async (_toolCallId, params: AgentToolParameters, signal, onUpdate, ctx) => {
 			latestCtx = ctx;
 			const background = params.background === true;
 			for (const task of params.tasks) {
@@ -571,6 +606,15 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			// Keyed like count()/release(): the bridge's current parent session.
 			const wait = { ownerSessionId: options.agentViewBridge?.getParentSession()?.sessionId ?? "", release };
 			blockingWaits.add(wait);
+			let lastProgress: string | undefined;
+			const publishProgress = () => {
+				const progress = foregroundProgress(runtime, order);
+				if (!progress || progress === lastProgress) return;
+				lastProgress = progress;
+				onUpdate?.(text(progress, { progress: true }));
+			};
+			publishProgress();
+			const progressTimer = onUpdate ? setInterval(publishProgress, PROGRESS_INTERVAL_MS) : undefined;
 			try {
 				const settled = await Promise.race([Promise.all(runs), released]);
 				if (settled === "released") {
@@ -599,6 +643,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 					},
 				);
 			} finally {
+				if (progressTimer) clearInterval(progressTimer);
 				blockingWaits.delete(wait);
 				signal?.removeEventListener("abort", abort);
 			}
