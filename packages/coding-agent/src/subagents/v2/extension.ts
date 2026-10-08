@@ -71,7 +71,7 @@ const AGENT_TOOL_GUIDELINES = [
 	"Launch independent tasks in one agent call so they run in parallel. Use background=true only when you have other work to do meanwhile.",
 	"Background results arrive as messages. Do not poll with agent_control status or wait, or sleep in a loop; continue other work or end your turn. Until a result arrives, say the subagent is still running; never guess its findings.",
 	"Subagent reports are not shown to the user. Summarize what matters in your reply.",
-	"Give a subagent a short name (for example auth-review) when you may refer to it later; resume, agent_control, and agent_patch accept the name or the ID. Continue a subagent with resume=<name or id> when its context helps the follow-up. Delete a subagent you will not need again with agent_control action=delete. Finished subagents leave memory after 30 seconds but stay listed and resumable until deleted.",
+	"Every subagent gets a unique name: the one you give (for example auth-review) or an automatic one shown in the result. resume, agent_control, and agent_patch accept the name or the ID. Continue a subagent with resume=<name or id> when its context helps the follow-up. Delete a subagent you will not need again with agent_control action=delete. Finished subagents leave memory after 30 seconds but stay listed and resumable until deleted.",
 ];
 
 const AGENT_PATCH_DESCRIPTION =
@@ -92,8 +92,8 @@ function text(value: string, details?: unknown) {
 	return { content: [{ type: "text" as const, text: content }], details };
 }
 
-function formatTurn(result: ChildTurnResult): string {
-	const header = `## ${result.agent} (${result.id}): ${result.outcome}`;
+function formatTurn(result: ChildTurnResult, name?: string): string {
+	const header = `## ${result.agent}${name ? ` "${name}"` : ""} (${result.id}): ${result.outcome}`;
 	const error = result.error ? `\nError: ${result.error}` : "";
 	const assurance = result.validation
 		? `\n\n${renderSubagentAssuranceSection(result.validation.assurance, {})}\n${result.validation.reason}`
@@ -112,17 +112,50 @@ function formatTurn(result: ChildTurnResult): string {
 	return `${header}${error}\n\n${result.text || "(no final message)"}${assurance}${artifactNotice}${truncation}`;
 }
 
-/** Last listing state shown in the current branch, or undefined when a full re-list is needed. */
-function listingStateFromBranch(ctx: ExtensionContext): AgentListingState | undefined {
+/**
+ * Last listing state shown in the current branch (undefined when a full re-list is needed), and whether a
+ * compaction removed the child roster from context since it was last shown.
+ */
+function listingStateFromBranch(ctx: ExtensionContext): { state: AgentListingState | undefined; compacted: boolean } {
 	let state: AgentListingState | undefined;
+	let compacted = false;
 	for (const entry of ctx.sessionManager.getBranch()) {
-		if (entry.type === "compaction") state = undefined;
-		else if (entry.type === "custom_message" && entry.customType === AGENT_LISTING_CUSTOM_TYPE) {
-			const details = entry.details as { state?: Array<[string, string]> } | undefined;
+		if (entry.type === "compaction") {
+			state = undefined;
+			compacted = true;
+		} else if (entry.type === "custom_message" && entry.customType === AGENT_LISTING_CUSTOM_TYPE) {
+			const details = entry.details as { state?: Array<[string, string]>; roster?: boolean } | undefined;
 			if (details?.state) state = new Map(details.state);
+			if (details?.roster) compacted = false;
 		}
 	}
-	return state;
+	return { state, compacted };
+}
+
+const ROSTER_LIMIT = 20;
+
+/**
+ * The parent's existing children, for a context that lost them (compaction or a resumed session), so the
+ * model continues them by name instead of relaunching. Bounded; descriptions are the parent's own text.
+ */
+function renderChildRoster(runtime: SubagentV2Runtime): string | undefined {
+	let all: ReturnType<SubagentV2Runtime["overview"]>["children"];
+	try {
+		all = runtime.overview().children;
+	} catch {
+		return undefined;
+	}
+	const children = all.filter((child) => child.depth === 0 && child.state !== "deleted").slice(-ROSTER_LIMIT);
+	if (children.length === 0) return undefined;
+	const lines = children.map((child) => {
+		const description = child.description.length > 80 ? `${child.description.slice(0, 79)}…` : child.description;
+		const status = child.running ? (child.state === "queued" ? "queued" : "running") : child.state;
+		return `- ${child.name ?? child.id}${child.name ? ` (${child.id})` : ""} · ${child.agent} · ${status}${child.lastTurnOutcome ? ` · last turn ${child.lastTurnOutcome}` : ""} · ${description}`;
+	});
+	return [
+		"Current subagents in this session (shown after compaction or a resume). Continue one with agent resume=<name or id> instead of launching a duplicate; agent_control action=status or output reads one. Results of running ones still arrive as messages.",
+		...lines,
+	].join("\n");
 }
 
 export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsOptions = {}): void {
@@ -139,6 +172,16 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		});
 	}
 	let latestCtx: ExtensionContext | undefined;
+	/** A resumed session shows the child roster once: its children may have been interrupted while it was closed. */
+	let rosterAfterResume = false;
+	const nameOf = (id: string): string | undefined => {
+		try {
+			return runtime.registry.get(runtime.ownerSessionId(), id).name;
+		} catch {
+			return undefined;
+		}
+	};
+	const formatNamedTurn = (result: ChildTurnResult) => formatTurn(result, nameOf(result.id));
 	const agentDir = options.agentDir ?? getAgentDir();
 	const settingsFor = (ctx: ExtensionContext | undefined) => {
 		// The footer can initialize the owner before session_start provides an extension context.
@@ -339,8 +382,9 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 		},
 	});
 
-	ice.on("session_start", async (_event, ctx) => {
+	ice.on("session_start", async (event, ctx) => {
 		latestCtx = ctx;
+		rosterAfterResume = event.reason === "startup" || event.reason === "resume";
 		runtime.invalidateDefinitions();
 		unsubscribeRegistry?.();
 		unsubscribeRegistry = undefined;
@@ -365,15 +409,18 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 	ice.on("before_agent_start", async (_event, ctx) => {
 		latestCtx = ctx;
 		try {
-			const delta = computeAgentListingDelta(listingStateFromBranch(ctx), runtime.callableAgents());
-			const content = renderAgentListingMessage(delta);
+			const branch = listingStateFromBranch(ctx);
+			const delta = computeAgentListingDelta(branch.state, runtime.callableAgents());
+			const roster = branch.compacted || rosterAfterResume ? renderChildRoster(runtime) : undefined;
+			rosterAfterResume = false;
+			const content = [renderAgentListingMessage(delta), roster].filter(Boolean).join("\n\n");
 			if (!content) return undefined;
 			return {
 				message: {
 					customType: AGENT_LISTING_CUSTOM_TYPE,
 					content,
 					display: false,
-					details: { state: [...delta.next] },
+					details: { state: [...delta.next], ...(roster ? { roster: true } : {}) },
 				},
 			};
 		} catch {
@@ -482,7 +529,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 				const ids = order.filter((_id, index) => started[index]);
 				const rejected = await Promise.all(runs.filter((_run, index) => !started[index]));
 				return text(
-					`${ids.length ? `Started ${ids.length} subagent${ids.length === 1 ? "" : "s"} in the background: ${ids.join(", ")}. Each completion arrives as a follow-up message.` : "No subagents started."}${rejected.length ? `\n\nCould not start:\n${rejected.map(formatTurn).join("\n\n")}` : ""}`,
+					`${ids.length ? `Started ${ids.length} subagent${ids.length === 1 ? "" : "s"} in the background: ${ids.map((id) => (nameOf(id) ? `${nameOf(id)} (${id})` : id)).join(", ")}. Each completion arrives as a follow-up message.` : "No subagents started."}${rejected.length ? `\n\nCould not start:\n${rejected.map(formatNamedTurn).join("\n\n")}` : ""}`,
 					{ ids, rejected: rejected.map(({ text: _text, ...rest }) => rest) },
 				);
 			}
@@ -518,7 +565,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 									"Criterion coverage summarizes report-claim/evidence consistency only; it is not semantic verification or independent review approval.",
 								]
 							: []),
-						...results.map(formatTurn),
+						...results.map(formatNamedTurn),
 					].join("\n\n"),
 					{
 						results: results.map(({ text: _text, ...rest }) => rest),
@@ -637,7 +684,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 										return `${"artifactId" in chunk ? `Artifact ${chunk.artifactId}` : `Inline report ${id}`} · bytes ${chunk.offset}-${chunk.nextOffset}/${chunk.totalBytes} · nextOffset=${chunk.nextOffset} · eof=${chunk.eof} · ${chunk.contentType} · sha256=${chunk.sha256} · truncated=${chunk.truncated}\n\n${chunk.text}`;
 									}
 									const result = runtime.outputOf(id);
-									return result ? formatTurn(result) : `${id}: no final message yet.`;
+									return result ? formatNamedTurn(result) : `${id}: no final message yet.`;
 								})
 								.join("\n\n"),
 						);

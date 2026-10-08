@@ -46,6 +46,27 @@ export interface HubSource {
 }
 
 const WIDE_WIDTH = 110;
+/** Roster rows shown at once; the window follows the selection. */
+const ROSTER_WINDOW = 14;
+const NAME_WIDTH = 14;
+
+/** One-cell status glyph and its theme color. */
+function statusMark(row: HubRow): { glyph: string; color: "accent" | "warning" | "error" | "success" | "muted" } {
+	if (row.state === "running") return { glyph: "●", color: "accent" };
+	if (row.state === "queued") return { glyph: "◌", color: "warning" };
+	if (row.state === "blocked") return { glyph: "!", color: "warning" };
+	if (row.lastTurnOutcome === "failed" || row.lastTurnOutcome === "budget_exhausted")
+		return { glyph: "✗", color: "error" };
+	if (row.lastTurnOutcome === "interrupted" || row.lastTurnOutcome === "cancelled")
+		return { glyph: "■", color: "muted" };
+	if (row.lastTurnOutcome === "completed") return { glyph: "✓", color: "success" };
+	return { glyph: "○", color: "muted" };
+}
+
+/** The name a person reads: the child's name, else its ID. */
+function label(row: HubRow): string {
+	return row.name ?? row.id;
+}
 
 function formatTokens(tokens: number): string {
 	return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens);
@@ -73,7 +94,8 @@ export class AgentHubView implements Component {
 	private readonly source: HubSource;
 	private readonly done: () => void;
 	private readonly unsubscribe: () => void;
-	private selected = 0;
+	/** Selected child by ID, so the selection stays on the same child when rows move. */
+	private selectedId: string | undefined;
 	private notice: string | undefined;
 
 	constructor(tui: TUI, theme: Theme, keybindings: KeybindingsManager, source: HubSource, done: () => void) {
@@ -91,11 +113,16 @@ export class AgentHubView implements Component {
 
 	invalidate(): void {}
 
+	private selectedIndex(rows: readonly HubRow[]): number {
+		const index = rows.findIndex((row) => row.id === this.selectedId);
+		return index >= 0 ? index : 0;
+	}
+
 	private selectedRow(): HubRow | undefined {
 		const rows = orderedRows(this.source.rows());
-		if (rows.length === 0) return undefined;
-		this.selected = Math.min(Math.max(0, this.selected), rows.length - 1);
-		return rows[this.selected];
+		const row = rows[this.selectedIndex(rows)];
+		this.selectedId = row?.id;
+		return row;
 	}
 
 	/** The approval the approve/deny keys act on: the selected child's first request, else the oldest. */
@@ -125,9 +152,10 @@ export class AgentHubView implements Component {
 			this.done();
 			return;
 		}
-		if (this.keybindings.matches(data, "tui.select.up")) this.selected = Math.max(0, this.selected - 1);
+		if (this.keybindings.matches(data, "tui.select.up"))
+			this.selectedId = rows[Math.max(0, this.selectedIndex(rows) - 1)]?.id;
 		else if (this.keybindings.matches(data, "tui.select.down"))
-			this.selected = Math.min(Math.max(0, rows.length - 1), this.selected + 1);
+			this.selectedId = rows[Math.min(rows.length - 1, this.selectedIndex(rows) + 1)]?.id;
 		else if (
 			row &&
 			(this.keybindings.matches(data, "tui.select.confirm") ||
@@ -139,11 +167,11 @@ export class AgentHubView implements Component {
 			}
 			const resume = this.source.resume;
 			if (row.state === "parked" && resume) {
-				this.notice = `Resuming ${row.id}…`;
+				this.notice = `Resuming ${label(row)}…`;
 				resume(row.id).then(
 					() => {
 						if (this.source.focus(row.id)) this.done();
-						else this.notice = `${row.id} was resumed but cannot be shown.`;
+						else this.notice = `${label(row)} was resumed but cannot be shown.`;
 						this.tui.requestRender();
 					},
 					(error: unknown) => {
@@ -151,11 +179,11 @@ export class AgentHubView implements Component {
 						this.tui.requestRender();
 					},
 				);
-			} else this.notice = `${row.id} has no live session to show.`;
+			} else this.notice = `${label(row)} has no live session to show.`;
 		} else if (row && this.keybindings.matches(data, "app.agents.stop"))
-			this.act(this.source.stop(row.id), `Stopped the current turn of ${row.id}.`);
+			this.act(this.source.stop(row.id), `Stopped the current turn of ${label(row)}.`);
 		else if (row && this.keybindings.matches(data, "app.agents.delete"))
-			this.act(this.source.delete(row.id), `Deleted ${row.id}.`);
+			this.act(this.source.delete(row.id), `Deleted ${label(row)}.`);
 		else if (
 			this.keybindings.matches(data, "app.agents.approve") ||
 			this.keybindings.matches(data, "app.agents.deny")
@@ -182,7 +210,9 @@ export class AgentHubView implements Component {
 						`${capacity.running}/${capacity.max} slots in use${capacity.queued > 0 ? `, ${capacity.queued} queued` : ""}`,
 					]
 				: []),
+			// With a capacity line, its queued count already covers queued rows.
 			...(["running", "queued", "idle", "blocked"] as const)
+				.filter((state) => !(capacity && state === "queued"))
 				.map((state) => [state, count(state)] as const)
 				.filter(([, value]) => value > 0)
 				.map(([state, value]) => `${value} ${state}`),
@@ -196,28 +226,32 @@ export class AgentHubView implements Component {
 	private rosterLines(rows: readonly HubRow[], width: number): string[] {
 		if (rows.length === 0)
 			return [this.theme.fg("muted", "No subagents in this session. Use the agent tool to start one.")];
+		const selected = this.selectedIndex(rows);
+		const start = Math.max(0, Math.min(selected - Math.floor(ROSTER_WINDOW / 2), rows.length - ROSTER_WINDOW));
+		const end = Math.min(rows.length, start + ROSTER_WINDOW);
 		const firstFinished = rows.findIndex(isFinished);
-		const lines = rows.map((row, index) => {
-			const marker = index === this.selected ? this.theme.fg("accent", "›") : " ";
-			const stateColor =
-				row.state === "running"
-					? "accent"
-					: row.state === "blocked" || row.state === "queued"
-						? "warning"
-						: "muted";
+		const lines: string[] = [];
+		if (start > 0) lines.push(this.theme.fg("dim", `  ↑ ${start} more`));
+		for (let index = start; index < end; index++) {
+			const row = rows[index]!;
+			if (index === firstFinished)
+				lines.push(this.theme.fg("dim", `Finished (${keyText("tui.select.confirm")} resumes and opens)`));
+			const isSelected = index === selected;
+			const mark = statusMark(row);
+			const name = pad(label(row), NAME_WIDTH);
+			// A finished child shows how its last turn ended instead of the internal "parked".
+			const state = row.state === "parked" ? (row.lastTurnOutcome ?? "finished") : row.state;
 			const extra = [
-				row.lastTurnOutcome && row.state !== "running" ? row.lastTurnOutcome : "",
+				row.state !== "parked" && row.state !== "running" ? (row.lastTurnOutcome ?? "") : "",
 				row.patchState ? `patch ${row.patchState}` : "",
 				`${formatTokens(row.tokens)} tok`,
 			]
 				.filter(Boolean)
 				.join(" · ");
-			const fixed = `${marker} ${pad(row.agent, 10)} ${this.theme.fg(stateColor, pad(row.state, 8))} `;
-			const rest = `${row.name ? `${this.theme.bold(row.name)} ` : ""}${row.description}  ${this.theme.fg("dim", extra)}`;
-			return truncateToWidth(fixed + rest, width, "…");
-		});
-		if (firstFinished >= 0)
-			lines.splice(firstFinished, 0, this.theme.fg("dim", "Finished (enter resumes and opens)"));
+			const fixed = `${isSelected ? this.theme.fg("accent", "›") : " "} ${this.theme.fg(mark.color, mark.glyph)} ${isSelected ? this.theme.bold(name) : name} ${this.theme.fg("muted", pad(row.agent, 9))} ${this.theme.fg(mark.color, pad(state, 10))} `;
+			lines.push(truncateToWidth(`${fixed}${row.description}  ${this.theme.fg("dim", extra)}`, width, "…"));
+		}
+		if (end < rows.length) lines.push(this.theme.fg("dim", `  ↓ ${rows.length - end} more`));
 		return lines;
 	}
 
@@ -240,7 +274,7 @@ export class AgentHubView implements Component {
 	private inspectorLines(row: HubRow | undefined, width: number): string[] {
 		if (!row) return [];
 		const lines = [
-			this.theme.bold(`${row.agent} · ${row.name ? `${row.name} · ` : ""}${row.id}`),
+			this.theme.bold(`${label(row)} · ${row.agent}${row.name ? ` · ${row.id}` : ""}`),
 			...this.source.details(row.id),
 		];
 		if (row.blockedReasons?.length) lines.push(this.theme.fg("warning", `Blocked: ${row.blockedReasons.join("; ")}`));

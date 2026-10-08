@@ -101,7 +101,7 @@ describe("subagent V2 Agent Hub", () => {
 		const line = view.render(140).find((candidate) => candidate.includes("│"));
 		expect(line).toBeDefined();
 		expect(line).toContain("explore");
-		expect(line).toContain("explore · ag_a");
+		expect(line).toContain("ag_a · explore");
 		view.dispose();
 	});
 
@@ -133,6 +133,57 @@ describe("subagent V2 Agent Hub", () => {
 		expect(text).toContain("details of ag_live");
 		view.handleInput("\x1b[B");
 		expect(view.render(80).join("\n")).toContain("details of ag_done");
+		view.dispose();
+	});
+
+	it("keeps the selection on the same child when it moves to the finished group", () => {
+		let rows: HubRow[] = [
+			{ ...ROWS[0]!, id: "ag_one", name: "atlas", description: "First" },
+			{ ...ROWS[0]!, id: "ag_two", name: "basil", description: "Second" },
+		];
+		const { view } = hub({ rows: () => rows });
+		view.handleInput("\x1b[A");
+		view.render(80);
+		// The first child finishes and moves below the second; the selection follows it.
+		rows = [{ ...rows[1]! }, { ...rows[0]!, state: "parked", lastTurnOutcome: "completed" }];
+		const text = view.render(80).join("\n");
+		expect(text).toContain("details of ag_one");
+		expect(text).toContain("atlas · explore · ag_one");
+		expect(text).toMatch(/› ✓ atlas\s+explore\s+completed/);
+		view.dispose();
+	});
+
+	it("windows a long roster around the selection and names children in notices", async () => {
+		const rows: HubRow[] = Array.from({ length: 30 }, (_, index) => ({
+			...ROWS[0]!,
+			id: `ag_${index}`,
+			name: `child-${index}`,
+			description: `Task ${index}`,
+		}));
+		const { view } = hub({ rows: () => rows });
+		let text = view.render(80).join("\n");
+		expect(text).toContain("Task 0");
+		expect(text).not.toContain("Task 20");
+		expect(text).toContain("↓ 16 more");
+		for (let step = 0; step < 20; step++) view.handleInput("\x1b[B");
+		text = view.render(80).join("\n");
+		expect(text).toContain("Task 20");
+		expect(text).not.toContain("Task 0 ");
+		expect(text).toMatch(/↑ \d+ more/);
+		view.handleInput("s");
+		expect(view.render(80).join("\n")).toContain("details of ag_20");
+		await vi.waitFor(() => expect(view.render(80).join("\n")).toContain("Stopped the current turn of child-20."));
+		view.dispose();
+	});
+
+	it("counts queued children once when the header shows capacity", () => {
+		const { view } = hub({
+			rows: () => [{ ...ROWS[0]!, state: "queued" }],
+			capacity: () => ({ running: 0, queued: 1, max: 1 }),
+		});
+		const header = view.render(80)[0]!;
+		expect(header).toContain("0/1 slots in use, 1 queued");
+		expect(header.match(/queued/g)).toHaveLength(1);
 		view.dispose();
 	});
 

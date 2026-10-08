@@ -78,6 +78,7 @@ import {
 import { resolveSubagentResources, revalidateSubagentResources } from "../runtime/resources.ts";
 import { ICE_BUILTIN_CHILD_TOOLS } from "../tools/adapters.ts";
 import { resolveChildTools } from "../tools/resolve.ts";
+import { pickChildName } from "./child-names.ts";
 import {
 	boundedText,
 	CHILD_PROMPT_SUFFIX,
@@ -669,7 +670,9 @@ export class SubagentV2Runtime {
 		const parent = this.parent();
 		const state = this.state();
 		const taken = new Set(
-			state.registry.list(state.sessionId).flatMap((record) => (record.name ? [record.name] : [])),
+			state.registry
+				.list(state.sessionId, { includeDeleted: true })
+				.flatMap((record) => (record.name ? [record.name] : [])),
 		);
 		for (const task of tasks) {
 			if (!task.name) continue;
@@ -680,8 +683,15 @@ export class SubagentV2Runtime {
 				);
 			taken.add(task.name);
 		}
+		// Unnamed children get a pool name; names are never reused in a session, even after delete.
+		const named = tasks.map((task) => {
+			if (task.name) return task;
+			const name = pickChildName(taken);
+			taken.add(name);
+			return { ...task, name };
+		});
 		// Preflight every task before persisting any, so a bad batch launches nothing.
-		const prepared = tasks.map((task) => ({ task, ...this.preflight(task, settings) }));
+		const prepared = named.map((task) => ({ task, ...this.preflight(task, settings) }));
 		for (const { input } of prepared) {
 			const subject: PermissionSubject = {
 				tool: "agent",
@@ -1306,6 +1316,8 @@ export class SubagentV2Runtime {
 	/** Deliver pending completions to the parent as follow-ups, each at most once. */
 	flushCompletions(): void {
 		const state = this.state();
+		// A closing owner's parent is being torn down: keep completions pending for the next owner of this session.
+		if (state.closed) return;
 		const parent = this.parent();
 		for (const completion of state.registry.pendingCompletions(state.sessionId)) {
 			const claimed = state.registry.claimDelivery(state.sessionId, completion.deliveryId);
@@ -1349,9 +1361,10 @@ export class SubagentV2Runtime {
 			working.length > 0
 				? `${working.length} other subagent${working.length === 1 ? " is" : "s are"} still running (${working.slice(0, 8).join(", ")}${working.length > 8 ? `, and ${working.length - 8} more; agent_control action=list shows all` : ""}); their results arrive as separate messages.`
 				: "No other subagents are running.";
+		const ref = state.registry.get(state.sessionId, childId).name ?? childId;
 		return [
-			`Full result: agent_control action=output id=${childId}.`,
-			`Next: continue it with resume=${childId} if its context helps, or delete it with agent_control action=delete id=${childId} when you no longer need it.`,
+			`Full result: agent_control action=output id=${ref}.`,
+			`Next: continue it with resume=${ref} if its context helps, or delete it with agent_control action=delete id=${ref} when you no longer need it.`,
 			siblings,
 		].join("\n");
 	}

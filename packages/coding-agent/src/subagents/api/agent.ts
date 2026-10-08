@@ -31,7 +31,7 @@ export const AgentTaskSchema = Type.Object(
 		/** Definition name for a new child; defaults to `ice.subagents.defaultAgent`. Not allowed with `resume`. */
 		agent: Type.Optional(Type.String({ pattern: AGENT_NAME_PATTERN })),
 		/** Existing child ID to continue with a new turn. */
-		/** Short name to refer to a new child later (for example `auth-review`); unique among this session's children. */
+		/** Short name to refer to a new child later (for example `auth-review`); unique among this session's children, never reused. Omitted: an automatic name. */
 		name: Type.Optional(Type.String({ pattern: CHILD_NAME_PATTERN_SOURCE })),
 		resume: Type.Optional(Type.String({ pattern: CHILD_REF_PATTERN_SOURCE })),
 		description: Type.String({ minLength: 1, maxLength: AGENT_TOOL_LIMITS.maxDescriptionChars }),

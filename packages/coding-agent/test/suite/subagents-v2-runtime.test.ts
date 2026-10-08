@@ -6,10 +6,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../../src/core/agent-session.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/core/extensions/index.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
+import { CHILD_NAME_PATTERN_SOURCE } from "../../src/subagents/contract/child-runtime-contract.ts";
 import { worktreeSnapshotRef } from "../../src/subagents/isolation/worktree.ts";
 import { CHILD_INIT_ENTRY_TYPE } from "../../src/subagents/registry/child-sessions.ts";
 import { CHILD_RECORD_ENTRY_TYPE } from "../../src/subagents/registry/registry.ts";
 import { type IceSubagentMcpAdapter, subagentMcpToolName } from "../../src/subagents/types.ts";
+import { CHILD_NAME_POOL, pickChildName } from "../../src/subagents/v2/child-names.ts";
 import iceSubagentsV2 from "../../src/subagents/v2/extension.ts";
 import { MAX_RESIDENT_CHILDREN, RETIRE_GRACE_MS, SubagentV2Runtime } from "../../src/subagents/v2/runtime.ts";
 import { type ChildTurnResult, mcpDelegableTools, type V2RuntimeHost } from "../../src/subagents/v2/runtime-support.ts";
@@ -973,8 +975,11 @@ describe("subagent V2 runtime", () => {
 		expect(parent.sent).toHaveLength(1);
 		expect(parent.sent[0]).toMatchObject({ customType: "subagent_completed" });
 		const content = String(parent.sent[0]!.content);
-		expect(content).toContain(`continue it with resume=${result.childId}`);
-		expect(content).toContain(`agent_control action=delete id=${result.childId}`);
+		// The trailer refers to the child by its (automatic) name.
+		const name = runtime.registry.get(runtime.ownerSessionId(), result.childId).name!;
+		expect(content).toContain(`Full result: agent_control action=output id=${name}.`);
+		expect(content).toContain(`continue it with resume=${name}`);
+		expect(content).toContain(`agent_control action=delete id=${name}`);
 		expect(content).toContain("No other subagents are running.");
 		runtime.flushCompletions();
 		expect(parent.sent).toHaveLength(1);
@@ -1074,7 +1079,7 @@ describe("subagent V2 runtime", () => {
 		await runtime.runTurn(quick!.id, "quick", { foreground: false, background: true });
 		await Promise.resolve();
 		const content = String(parent.sent.find((message) => String(message.content).includes(quick!.id))!.content);
-		expect(content).toContain(`1 other subagent is still running (${slow!.id})`);
+		expect(content).toContain(`1 other subagent is still running (${slow!.name})`);
 		release();
 		await slowRun;
 		await runtime.shutdown();
@@ -1587,5 +1592,81 @@ describe("subagent V2 runtime", () => {
 			/Agent "nope" is not available. Available agents: explore, general, plan, review/,
 		);
 		expect(runtime.registry.list(sessionManager.getSessionId())).toEqual([]);
+	});
+
+	it("keeps a background completion pending through shutdown and delivers it after a restart", async () => {
+		const { harness, host, parent, sessionManager } = await setup();
+		const waiting = vi.fn(async (_context: unknown, options: { signal?: AbortSignal } | undefined) => {
+			await new Promise<void>((resolve) =>
+				options?.signal?.addEventListener("abort", () => resolve(), { once: true }),
+			);
+			return fauxAssistantMessage("never");
+		});
+		harness.setResponses([waiting as never, fauxAssistantMessage("resumed answer")]);
+		const runtime = new SubagentV2Runtime(host());
+		const [record] = await runtime.launch([{ ...task("explore", "long"), name: "scout" }]);
+		const run = runtime.runTurn(record!.id, "long", { foreground: false, background: true });
+		await vi.waitFor(() => expect(waiting).toHaveBeenCalledOnce());
+		// Closing the session must not post into the parent being torn down.
+		await runtime.shutdown();
+		await run.catch(() => {});
+		expect(parent.sent).toEqual([]);
+
+		parent.session = {
+			...parent.session,
+			sessionManager: SessionManager.open(sessionManager.getSessionFile()!),
+		} as never;
+		const restarted = new SubagentV2Runtime(host());
+		try {
+			expect(restarted.overview().children).toMatchObject([{ name: "scout", state: "parked" }]);
+			restarted.flushCompletions();
+			expect(parent.sent).toHaveLength(1);
+			expect(String(parent.sent[0]!.content)).toContain(
+				`Subagent explore "scout" (${record!.id}) finished: cancelled.`,
+			);
+			restarted.flushCompletions();
+			expect(parent.sent).toHaveLength(1);
+			const continued = await restarted.continueChild(restarted.resolveChildRef("scout"), "go on", {
+				foreground: true,
+			});
+			expect(continued).toMatchObject({ outcome: "completed", text: "resumed answer" });
+		} finally {
+			await restarted.shutdown();
+		}
+	});
+
+	it("names unnamed children from the pool and never reuses a name, even after delete", async () => {
+		const { harness, host } = await setup();
+		harness.setResponses([fauxAssistantMessage("a"), fauxAssistantMessage("b")]);
+		const runtime = new SubagentV2Runtime(host());
+		try {
+			const [first, second] = await runtime.launch([task("explore", "a"), task("explore", "b")]);
+			await runtime.runTurn(first!.id, "a", { foreground: true });
+			await runtime.runTurn(second!.id, "b", { foreground: true });
+			expect(CHILD_NAME_POOL).toContain(first!.name);
+			expect(CHILD_NAME_POOL).toContain(second!.name);
+			expect(first!.name).not.toBe(second!.name);
+			expect(runtime.resolveChildRef(first!.name!)).toBe(first!.id);
+			await runtime.delete(first!.id);
+			await expect(runtime.launch([{ ...task("explore", "c"), name: first!.name }])).rejects.toThrow(
+				`The name "${first!.name}" is already used`,
+			);
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+});
+
+describe("pickChildName", () => {
+	it("picks unused pool names, then suffixed ones once the pool is used up", () => {
+		expect(new Set(CHILD_NAME_POOL).size).toBe(100);
+		for (const name of CHILD_NAME_POOL) expect(name).toMatch(new RegExp(CHILD_NAME_PATTERN_SOURCE));
+		const taken = new Set<string>(CHILD_NAME_POOL.filter((name) => name !== "otter"));
+		expect(pickChildName(taken)).toBe("otter");
+		taken.add("otter");
+		expect(pickChildName(taken, () => 0)).toBe(`${CHILD_NAME_POOL[0]}-2`);
+		const all = new Set<string>(taken);
+		for (let index = 0; index < 150; index++) all.add(pickChildName(all));
+		expect(all.size).toBe(250);
 	});
 });

@@ -201,6 +201,8 @@
 
 ### Changed
 
+- Subagents launched without a name now get a unique automatic name from a pool of 100 (suffixed once the pool is used up). A name is never reused in a session, even after the subagent is deleted. `agent` tool results and completion messages refer to subagents by name.
+- Improved the Agent Hub: rows lead with a status mark and the name, finished subagents show how their last turn ended, long lists scroll with the selection, the selection stays on its subagent when rows reorder, notices use names, and the header counts queued turns once.
 - Session token and cost totals include durable subagent usage, with a separate Subagents cost bucket and a footer cost annotation when space permits; parent context usage remains unchanged.
 - Background completion messages carry up to 16 KiB of the child's report and include a byte offset for reading the remainder with `agent_control action=output`.
 - Removed the upper limit of 24 on `ice.subagents.maxConcurrent`; any integer of at least 1 is accepted and extra turns queue. The agent strip now counts queued subagents separately from idle ones.
@@ -227,6 +229,8 @@
 
 ### Fixed
 
+- Fixed subagents dropping out of the parent model's view after compaction or a session resume: the parent now gets one hidden roster of its subagents (name, ID, agent, state, last outcome) so it continues them instead of launching duplicates.
+- Fixed closing or switching sessions posting interrupted background subagent completions into the session being closed; they stay pending and are delivered after the session is resumed.
 - Fixed truncated completion hints skipping report bytes after an error prefix and failing range reads for reports retained inline; completion sibling lists remain bounded at any concurrency setting.
 - Fixed early Agent Hub and footer initialization ignoring the parent's subagent concurrency setting, including trusted project limits that lower the global value.
 - Fixed running subagents showing `0 tok` until their turn ended, queued subagents showing `starting`, and the footer hiding idle subagents (`agents 0/4 · 2 idle`).
