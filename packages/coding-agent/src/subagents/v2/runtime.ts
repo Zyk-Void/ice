@@ -1117,6 +1117,8 @@ export class SubagentV2Runtime {
 		error: string | undefined,
 		resultContext: TurnResultContext,
 	): Promise<ChildTurnResult> {
+		// Closing the parent session stopped this turn, not the user: report it resumable, like a restart.
+		if (state.closed && outcome === "cancelled") outcome = "interrupted";
 		// The turn usage moves into the record below; drop the live view so it is not counted twice.
 		resident.liveUsage = undefined;
 		resident.admitted = undefined;

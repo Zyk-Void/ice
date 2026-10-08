@@ -1622,7 +1622,7 @@ describe("subagent V2 runtime", () => {
 			restarted.flushCompletions();
 			expect(parent.sent).toHaveLength(1);
 			expect(String(parent.sent[0]!.content)).toContain(
-				`Subagent explore "scout" (${record!.id}) finished: cancelled.`,
+				`Subagent explore "scout" (${record!.id}) finished: interrupted.`,
 			);
 			restarted.flushCompletions();
 			expect(parent.sent).toHaveLength(1);
