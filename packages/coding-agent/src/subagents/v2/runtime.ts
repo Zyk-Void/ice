@@ -80,6 +80,7 @@ import { ICE_BUILTIN_CHILD_TOOLS } from "../tools/adapters.ts";
 import { resolveChildTools } from "../tools/resolve.ts";
 import { pickChildName } from "./child-names.ts";
 import {
+	backfillSubagentUsage,
 	boundedText,
 	CHILD_PROMPT_SUFFIX,
 	type ChildTurnResult,
@@ -160,6 +161,7 @@ export class SubagentV2Runtime {
 		const registry = new ChildRegistry<ResidentChild>(journal, this.host.now);
 		registry.restore();
 		reconcileTerminalWorktrees(registry, parent.sessionId);
+		backfillSubagentUsage(registry, journal, parent.sessionId);
 		for (const record of registry.list(parent.sessionId)) {
 			const output = record.lastResult?.output;
 			if (!output?.artifact || !isSubagentOutputArtifactRef(output.artifact)) continue;

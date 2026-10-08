@@ -142,6 +142,46 @@ describe("subagent V2 runtime", () => {
 		}
 	});
 
+	it("backfills billing for turns recorded before usage entries existed, once", async () => {
+		const { harness, sessionManager, host, parent } = await setup();
+		harness.setResponses([fauxAssistantMessage("report"), fauxAssistantMessage("second report")]);
+		const runtime = new SubagentV2Runtime(host());
+		const first = await runOne(runtime, "explore", "report", true);
+		const second = await runtime.continueChild(first.childId, "again", { foreground: true });
+		runtime.flushCompletions();
+		await runtime.shutdown();
+		// An older session: keep only the first turn's usage entry.
+		const file = sessionManager.getSessionFile()!;
+		let usageSeen = 0;
+		const lines = readFileSync(file, "utf8")
+			.trim()
+			.split("\n")
+			.filter((line) => !(line.includes('"customType":"subagent_usage"') && usageSeen++ > 0));
+		writeFileSync(file, `${lines.join("\n")}\n`);
+		const usageEntries = () =>
+			SessionManager.open(file)
+				.getEntries()
+				.flatMap((entry) => (entry.type === "custom" && entry.customType === "subagent_usage" ? [entry.data] : []));
+		expect(usageEntries()).toHaveLength(1);
+
+		for (let open = 0; open < 2; open++) {
+			parent.session = { ...parent.session, sessionManager: SessionManager.open(file) } as never;
+			const restarted = new SubagentV2Runtime(host());
+			restarted.overview();
+			await restarted.shutdown();
+		}
+		const entries = usageEntries() as Array<{
+			usage: { input: number; output: number; cost: number };
+			backfill?: boolean;
+		}>;
+		expect(entries).toHaveLength(2);
+		expect(entries[1]).toMatchObject({
+			childId: first.childId,
+			backfill: true,
+			usage: { input: second.usage.inputTokens, output: second.usage.outputTokens },
+		});
+	});
+
 	it("skips parent billing entries for zero-usage turns", async () => {
 		const { harness, sessionManager, host } = await setup();
 		const runtime = new SubagentV2Runtime(host());

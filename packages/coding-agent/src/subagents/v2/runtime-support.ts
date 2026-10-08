@@ -290,6 +290,49 @@ export function boundedText(text: string, limit: number): { text: string; trunca
  * this owner's records are considered, removal stays ownership-checked, and
  * failures are left for inspection rather than forced.
  */
+/**
+ * Parent billing entries for usage recorded before turns wrote their own `subagent_usage` entries: for each child,
+ * the part of its cumulative record usage that existing entries do not cover. Never double counts; a no-op once
+ * every child is covered.
+ */
+export function backfillSubagentUsage(
+	registry: ChildRegistry<ResidentChild>,
+	journal: ParentJournal,
+	ownerSessionId: string,
+): void {
+	const covered = new Map<
+		string,
+		{ input: number; output: number; cacheRead: number; cacheWrite: number; cost: number }
+	>();
+	for (const entry of journal.entries()) {
+		if (entry.customType !== "subagent_usage") continue;
+		const data = entry.data as { childId?: unknown; usage?: Record<string, unknown> } | undefined;
+		if (typeof data?.childId !== "string" || !data.usage) continue;
+		const sum = covered.get(data.childId) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+		for (const key of ["input", "output", "cacheRead", "cacheWrite", "cost"] as const) {
+			const value = data.usage[key];
+			if (typeof value === "number" && Number.isFinite(value)) sum[key] += value;
+		}
+		covered.set(data.childId, sum);
+	}
+	let appended = false;
+	for (const record of registry.list(ownerSessionId, { includeDeleted: true })) {
+		const sum = covered.get(record.id) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+		const usage = {
+			input: Math.max(0, record.usage.inputTokens - sum.input),
+			output: Math.max(0, record.usage.outputTokens - sum.output),
+			cacheRead: Math.max(0, (record.usage.cacheReadTokens ?? 0) - sum.cacheRead),
+			cacheWrite: Math.max(0, (record.usage.cacheWriteTokens ?? 0) - sum.cacheWrite),
+			// Sub-micro-dollar remainders are float noise, not missing billing.
+			cost: record.usage.cost - sum.cost > 1e-9 ? record.usage.cost - sum.cost : 0,
+		};
+		if (!usage.input && !usage.output && !usage.cacheRead && !usage.cacheWrite && !usage.cost) continue;
+		journal.append("subagent_usage", { childId: record.id, agent: record.agent, usage, backfill: true });
+		appended = true;
+	}
+	if (appended) journal.flush();
+}
+
 export function reconcileTerminalWorktrees(registry: ChildRegistry<ResidentChild>, ownerSessionId: string): void {
 	for (const record of registry.list(ownerSessionId, { includeDeleted: true })) {
 		const terminal =
