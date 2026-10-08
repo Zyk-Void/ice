@@ -998,6 +998,25 @@ function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): s
 }
 
 /**
+ * True when an SGR parameter list clears the background: full reset (empty or
+ * 0) or default background (49). Extended color arguments (38/48;5;n and
+ * 38/48;2;r;g;b) are skipped so color indexes are not mistaken for codes.
+ */
+function sgrResetsBackground(params: string): boolean {
+	if (params === "") return true;
+	const codes = params.split(";");
+	for (let i = 0; i < codes.length; i++) {
+		const code = codes[i];
+		if (code === "38" || code === "48") {
+			i += codes[i + 1] === "2" ? 4 : 2;
+			continue;
+		}
+		if (code === "" || code === "0" || code === "49") return true;
+	}
+	return false;
+}
+
+/**
  * Apply background color to a line, padding to full width.
  *
  * @param line - Line of text (may contain ANSI codes)
@@ -1013,7 +1032,16 @@ export function applyBackgroundToLine(line: string, width: number, bgFn: (text: 
 
 	// Apply background to content + padding
 	const withPadding = line + padding;
-	return bgFn(withPadding);
+	const sgrPattern = /\x1b\[([0-9;]*)m/g;
+	let result = "";
+	let lastIndex = 0;
+	for (const match of withPadding.matchAll(sgrPattern)) {
+		if (!sgrResetsBackground(match[1])) continue;
+		const resetIndex = match.index;
+		result += bgFn(withPadding.slice(lastIndex, resetIndex)) + match[0];
+		lastIndex = resetIndex + match[0].length;
+	}
+	return result + bgFn(withPadding.slice(lastIndex));
 }
 
 /**
