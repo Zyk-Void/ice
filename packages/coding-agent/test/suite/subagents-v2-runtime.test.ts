@@ -8,6 +8,7 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../src/c
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { worktreeSnapshotRef } from "../../src/subagents/isolation/worktree.ts";
 import { CHILD_INIT_ENTRY_TYPE } from "../../src/subagents/registry/child-sessions.ts";
+import { CHILD_RECORD_ENTRY_TYPE } from "../../src/subagents/registry/registry.ts";
 import { type IceSubagentMcpAdapter, subagentMcpToolName } from "../../src/subagents/types.ts";
 import iceSubagentsV2 from "../../src/subagents/v2/extension.ts";
 import { MAX_RESIDENT_CHILDREN, RETIRE_GRACE_MS, SubagentV2Runtime } from "../../src/subagents/v2/runtime.ts";
@@ -122,6 +123,17 @@ describe("subagent V2 runtime", () => {
 						},
 					},
 				});
+			}
+			// Billing must be journaled before the durable record that settles its turn.
+			const all = restored.getEntries();
+			for (const [index, usage] of entries.entries()) {
+				const settled = all.findIndex(
+					(entry) =>
+						entry.type === "custom" &&
+						entry.customType === CHILD_RECORD_ENTRY_TYPE &&
+						(entry.data as { usage: { turns: number } }).usage.turns === index + 1,
+				);
+				expect(all.indexOf(usage)).toBeLessThan(settled);
 			}
 		} finally {
 			await runtime.shutdown();

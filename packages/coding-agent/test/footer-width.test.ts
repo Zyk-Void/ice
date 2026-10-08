@@ -222,6 +222,20 @@ describe("FooterComponent width handling", () => {
 		}
 	});
 
+	it.each(["legacy", "customized"])("places child cost before the subscription marker in the %s footer", (style) => {
+		const footer = new FooterComponent(
+			createSession({
+				sessionName: "",
+				provider: "kimi-coding",
+				usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: { total: 0.5 } },
+				subagentUsage: { input: 200, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0.25 },
+			}),
+			createFooterData(1),
+		);
+		if (style === "customized") footer.setAppearance(createDefaultAppearance().footer);
+		expect(stripAnsi(footer.render(160)[1]!)).toContain("$0.750 (+$0.250 subagents) (sub)");
+	});
+
 	it("shows the latest cache hit rate when cache usage is present", () => {
 		const session = createSession({
 			sessionName: "",

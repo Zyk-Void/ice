@@ -333,7 +333,7 @@ export class FooterComponent implements Component {
 		}
 
 		// Build stats line
-		const statsParts = [];
+		const statsParts: string[] = [];
 		if (usageTotals.input) statsParts.push(`↑${formatTokens(usageTotals.input)}`);
 		if (usageTotals.output) statsParts.push(`↓${formatTokens(usageTotals.output)}`);
 		if (usageTotals.cacheRead) statsParts.push(`R${formatTokens(usageTotals.cacheRead)}`);
@@ -380,7 +380,8 @@ export class FooterComponent implements Component {
 			visibleWidth(statsLeft) + visibleWidth(childCostHint) + visibleWidth(modelName) + 2 <= width
 		) {
 			const costIndex = statsParts.findIndex((part) => part.startsWith("$"));
-			statsParts[costIndex] += childCostHint;
+			// Keep the hint beside the amount it explains, before any "(sub)" marker.
+			statsParts[costIndex] = statsParts[costIndex]!.replace(/^\$[\d.]+/, (total) => total + childCostHint);
 			statsLeft = statsParts.join(" ");
 		}
 
@@ -539,7 +540,11 @@ export class FooterComponent implements Component {
 				visibleWidth(parts.map((part) => part.text).join(appearance.separator)) + visibleWidth(childCostHint) <=
 					width
 			) {
-				costPart.text = renderField("cost", fields.cost! + childCostHint, secondary);
+				costPart.text = renderField(
+					"cost",
+					fields.cost!.replace(/^\$[\d.]+/, (total) => total + childCostHint),
+					secondary,
+				);
 			}
 			while (parts.length > 1 && visibleWidth(parts.map((part) => part.text).join(appearance.separator)) > width)
 				parts.pop();

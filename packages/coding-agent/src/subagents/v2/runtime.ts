@@ -1138,6 +1138,20 @@ export class SubagentV2Runtime {
 			record.state === "starting" || record.state === "running" || record.state === "stopping"
 				? "idle"
 				: record.state;
+		// Billing precedes the durable transition so its flush covers both; a crash cannot drop spent usage.
+		if (inputTokens || outputTokens || cacheReadTokens || cacheWriteTokens || cost) {
+			state.journal.append("subagent_usage", {
+				childId: id,
+				agent: result.agent,
+				usage: {
+					input: inputTokens,
+					output: outputTokens,
+					cacheRead: cacheReadTokens,
+					cacheWrite: cacheWriteTokens,
+					cost,
+				},
+			});
+		}
 		try {
 			if (record.state === "starting") {
 				const running = state.registry.transition(state.sessionId, id, record.generation, "running");
@@ -1164,20 +1178,6 @@ export class SubagentV2Runtime {
 			throw caught;
 		}
 		this.releaseOutputArtifact(state.sessionId, id, previousOutput);
-		if (inputTokens || outputTokens || cacheReadTokens || cacheWriteTokens || cost) {
-			state.journal.append("subagent_usage", {
-				childId: id,
-				agent: result.agent,
-				usage: {
-					input: inputTokens,
-					output: outputTokens,
-					cacheRead: cacheReadTokens,
-					cacheWrite: cacheWriteTokens,
-					cost,
-				},
-			});
-			state.journal.flush();
-		}
 		if (resident.contract.isolation.mode === "worktree") {
 			const { repoRoot, worktreePath } = resident.contract.isolation;
 			try {
