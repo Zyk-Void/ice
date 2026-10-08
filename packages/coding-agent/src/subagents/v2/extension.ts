@@ -634,7 +634,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 											...(params.offset !== undefined ? { offset: params.offset } : {}),
 											...(params.length !== undefined ? { length: params.length } : {}),
 										});
-										return `Artifact ${chunk.artifactId} · bytes ${chunk.offset}-${chunk.nextOffset}/${chunk.totalBytes} · nextOffset=${chunk.nextOffset} · eof=${chunk.eof} · ${chunk.contentType} · sha256=${chunk.sha256} · truncated=${chunk.truncated}\n\n${chunk.text}`;
+										return `${"artifactId" in chunk ? `Artifact ${chunk.artifactId}` : `Inline report ${id}`} · bytes ${chunk.offset}-${chunk.nextOffset}/${chunk.totalBytes} · nextOffset=${chunk.nextOffset} · eof=${chunk.eof} · ${chunk.contentType} · sha256=${chunk.sha256} · truncated=${chunk.truncated}\n\n${chunk.text}`;
 									}
 									const result = runtime.outputOf(id);
 									return result ? formatTurn(result) : `${id}: no final message yet.`;

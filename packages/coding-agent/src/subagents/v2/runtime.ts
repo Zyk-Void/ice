@@ -1274,8 +1274,12 @@ export class SubagentV2Runtime {
 				: COMPLETION_SUMMARY_LIMIT,
 		);
 		const kept = bounded.truncated ? bounded.text.slice(0, -"\n[truncated]".length) : bounded.text;
+		const reportOffset = Math.max(
+			0,
+			Buffer.byteLength(kept) - (result.error ? Buffer.byteLength(`${result.error}\n\n`) : 0),
+		);
 		const summary = bounded.truncated
-			? `${kept}\n[Report truncated at 16 KiB; read the full report with agent_control action=output id=${result.id} offset=${Buffer.byteLength(kept)}]`
+			? `${kept}\n[Report truncated at 16 KiB; read the full report with agent_control action=output id=${result.id} offset=${reportOffset}]`
 			: kept;
 		state.registry.recordCompletion({
 			deliveryId,
@@ -1343,7 +1347,7 @@ export class SubagentV2Runtime {
 			.map((record) => record.name ?? record.id);
 		const siblings =
 			working.length > 0
-				? `${working.length} other subagent${working.length === 1 ? " is" : "s are"} still running (${working.join(", ")}); their results arrive as separate messages.`
+				? `${working.length} other subagent${working.length === 1 ? " is" : "s are"} still running (${working.slice(0, 8).join(", ")}${working.length > 8 ? `, and ${working.length - 8} more; agent_control action=list shows all` : ""}); their results arrive as separate messages.`
 				: "No other subagents are running.";
 		return [
 			`Full result: agent_control action=output id=${childId}.`,
@@ -1776,11 +1780,53 @@ export class SubagentV2Runtime {
 		return undefined;
 	}
 
-	readOutput(id: string, range: { offset?: number; length?: number } = {}): SubagentOutputRead {
+	readOutput(
+		id: string,
+		range: { offset?: number; length?: number } = {},
+	): SubagentOutputRead | Omit<SubagentOutputRead, "artifactId"> {
 		const state = this.state();
 		const result = this.outputOf(id);
-		if (!result?.output?.artifact || !isSubagentOutputArtifactRef(result.output.artifact)) {
+		if (!result) {
 			throw new SubagentOutputArtifactError("artifact_not_found", "Subagent output artifact was not found.");
+		}
+		if (!result.output?.artifact || !isSubagentOutputArtifactRef(result.output.artifact)) {
+			const offset = range.offset ?? 0;
+			const length = range.length ?? SUBAGENT_OUTPUT_ARTIFACT_LIMITS.defaultReadBytes;
+			if (
+				!Number.isSafeInteger(offset) ||
+				offset < 0 ||
+				!Number.isSafeInteger(length) ||
+				length < 1 ||
+				length > SUBAGENT_OUTPUT_ARTIFACT_LIMITS.maxReadBytes
+			) {
+				throw new SubagentOutputArtifactError("artifact_offset_invalid", "Output read range is invalid.");
+			}
+			const bytes = Buffer.from(result.text);
+			if (offset > bytes.length || (offset < bytes.length && (bytes[offset]! & 0xc0) === 0x80)) {
+				throw new SubagentOutputArtifactError(
+					"artifact_offset_invalid",
+					"Output offset must be on a UTF-8 boundary.",
+				);
+			}
+			let end = Math.min(bytes.length, offset + length);
+			while (end > offset && end < bytes.length && (bytes[end]! & 0xc0) === 0x80) end--;
+			if (end === offset && end < bytes.length) {
+				throw new SubagentOutputArtifactError(
+					"artifact_offset_invalid",
+					"Read length is too small for a UTF-8 code point.",
+				);
+			}
+			return {
+				offset,
+				bytesRead: end - offset,
+				totalBytes: bytes.length,
+				nextOffset: end,
+				eof: end === bytes.length,
+				contentType: "text/plain",
+				text: bytes.subarray(offset, end).toString("utf8"),
+				sha256: createHash("sha256").update(bytes).digest("hex"),
+				truncated: result.truncated,
+			};
 		}
 		return this.outputArtifacts.read({
 			ownerSessionId: state.sessionId,

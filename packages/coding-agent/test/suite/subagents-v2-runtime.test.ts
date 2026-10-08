@@ -1005,6 +1005,45 @@ describe("subagent V2 runtime", () => {
 		}
 	});
 
+	it.each([
+		{ report: "x".repeat(20 * 1024), error: undefined },
+		{ report: "界".repeat(20 * 1024), error: "失敗: partial response" },
+		{ report: "界".repeat(7 * 1024), error: "失敗: partial response" },
+		{ report: "x".repeat(20 * 1024), error: "failure ".repeat(3 * 1024) },
+	])("reads the remainder at the completion hint for inline and artifact reports", async ({ report, error }) => {
+		const { harness, parent, host } = await setup();
+		harness.setResponses([fauxAssistantMessage(report, error ? { stopReason: "error", errorMessage: error } : {})]);
+		const runtime = new SubagentV2Runtime(host());
+		try {
+			const result = await runOne(runtime, "explore", "Summarize", true);
+			const summary = String(parent.sent[0]!.content)
+				.split("Untrusted child report:\n")[1]!
+				.split("\n\nFull result:")[0]!;
+			const offset = Number(summary.match(/offset=(\d+)\]/)![1]);
+			const kept = summary.split("\n[Report truncated")[0]!;
+			const prefix = error ? `${error}\n\n` : "";
+			const retainedReport = kept.startsWith(prefix) ? kept.slice(prefix.length) : "";
+			expect(offset).toBe(Buffer.byteLength(retainedReport));
+			const remainder = runtime.readOutput(result.childId, { offset, length: 64 * 1024 });
+			expect(retainedReport + remainder.text).toBe(report);
+			expect(remainder.eof).toBe(true);
+			expect(Buffer.byteLength(summary)).toBeLessThanOrEqual(16 * 1024);
+			if (!result.output?.artifact) {
+				expect(() => runtime.readOutput(result.childId, { offset: -1 })).toThrow(/range/);
+				expect(() => runtime.readOutput(result.childId, { offset: Buffer.byteLength(report) + 1 })).toThrow(
+					/boundary/,
+				);
+				expect(() => runtime.readOutput(result.childId, { length: 65 * 1024 })).toThrow(/range/);
+				if (report.startsWith("界")) {
+					expect(() => runtime.readOutput(result.childId, { offset: 1 })).toThrow(/boundary/);
+					expect(() => runtime.readOutput(result.childId, { length: 1 })).toThrow(/code point/);
+				}
+			}
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
 	it("lists still-running siblings in a completion message", async () => {
 		const { harness, parent, host } = await setup();
 		let release!: () => void;
@@ -1027,6 +1066,45 @@ describe("subagent V2 runtime", () => {
 		release();
 		await slowRun;
 		await runtime.shutdown();
+	});
+
+	it("bounds the completion trailer with many long-named running siblings", async () => {
+		const { harness, parent, host } = await setup();
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const slowResponse = vi.fn(async () => {
+			await gate;
+			return fauxAssistantMessage("slow report");
+		});
+		harness.setResponses([...Array.from({ length: 9 }, () => slowResponse), fauxAssistantMessage("quick report")]);
+		const runtime = new SubagentV2Runtime(
+			host({
+				getSettings: () => resolveSubagentsV2Settings({ global: { maxConcurrent: 10 }, projectTrusted: false }),
+			}),
+		);
+		const records = await runtime.launch(
+			Array.from({ length: 10 }, (_, index) => ({
+				...task("explore", "read"),
+				name: `reader-${index}-${"x".repeat(31)}`,
+			})),
+		);
+		const running = records
+			.slice(0, 9)
+			.map((record) => runtime.runTurn(record.id, "slow", { foreground: false, background: true }));
+		try {
+			await vi.waitFor(() => expect(slowResponse).toHaveBeenCalledTimes(9));
+			await runtime.runTurn(records[9]!.id, "quick", { foreground: false, background: true });
+			const trailer = String(parent.sent[0]!.content).split("\n\nFull result:")[1]!;
+			expect(trailer).toContain("9 other subagents are still running");
+			expect(trailer).toContain("and 1 more; agent_control action=list shows all");
+			expect(Buffer.byteLength(trailer)).toBeLessThan(1024);
+		} finally {
+			release();
+			await Promise.all(running);
+			await runtime.shutdown();
+		}
 	});
 
 	it("restores after a restart, revives under the frozen contract, and blocks when authority was revoked", async () => {
