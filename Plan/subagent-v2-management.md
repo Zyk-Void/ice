@@ -1,6 +1,6 @@
 # Subagent V2 Management Improvements
 
-Status: Phases 0-4 implemented (2026-10-08, uncommitted). Deferred items remain.
+Status: Phases 0-4 committed (2026-10-08, a014a175a). Follow-ups 3-5 implemented; live concurrency verification remains partial. Deferred items remain.
 
 ## Problem
 
@@ -113,7 +113,7 @@ Acceptance: `maxConcurrent: 50` is accepted and enforced.
 - Slimmer common `agent` schema (advanced fields grouped or documented as optional).
 - Fork (inherit parent context and prompt cache).
 - Child-to-parent messages during a turn.
-- Child usage folded into parent session totals.
+- Child usage folded into parent session totals: completed in handoff Task 5 (see Follow-ups).
 - Parent-session cascade cleanup on session deletion (plan P5.8).
 
 ## Verification per phase
@@ -121,3 +121,9 @@ Acceptance: `maxConcurrent: 50` is accepted and enforced.
 - Focused unit and faux-provider suite tests listed per phase.
 - `corepack npm@12.0.2 run check`.
 - Rebuild `coding-agent` and smoke-test in tmux with `cx/gpt-6-luna`: launch background children, watch live tokens, queued labels, retirement after 30 s, resume by name.
+
+## Follow-ups
+
+- Task 3 — done (`e75542224`): background reports carry up to 16 KiB with a byte-offset continuation hint; ASCII/multibyte truncation and intact-report tests pass.
+- Task 4 — done (`5cb1169f9`): fullscreen unseen-message pill uses the configured transcript-bottom key; component/integration tests and live scroll/count/End check pass.
+- Task 5 — done (`4de4c6815`): durable child usage enters parent billing totals and the Subagents cost bucket; context accounting stays unchanged; persistence, validation, and footer tests pass.
