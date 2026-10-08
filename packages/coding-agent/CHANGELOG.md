@@ -202,6 +202,7 @@
 
 ### Changed
 
+- Compacted the footer status line: context reads `84%/272k`, the notices badge reads `⚠ 3 ↑ f2`, and the mode with elevated capabilities reads `build bash ext`.
 - While a subagent view is shown, the agent strip now starts its key hints with the interrupt key (`esc main`), which returns to the main agent.
 - A background subagent stopped because its parent session closed (quit, `/resume`, `/new`) now finishes as `interrupted`, not `cancelled`, so the parent knows to resume it; resuming it adds the usual interrupted-tool recovery notice.
 - Subagents launched without a name now get a unique automatic name from a pool of 100 (suffixed once the pool is used up). A name is never reused in a session, even after the subagent is deleted. `agent` tool results and completion messages refer to subagents by name.

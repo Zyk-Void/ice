@@ -170,7 +170,6 @@ export class FooterComponent implements Component {
 			appearance ? applyTextPresentation(appearance.secondary, text) : theme.fg("dim", text);
 		const primary = (text: string) =>
 			appearance ? applyTextPresentation(appearance.primary, text) : theme.fg("accent", text);
-		const separator = dim(` ${sym("separator")} `);
 		const statuses = this.footerData.getExtensionStatuses();
 		const left: StatusSegment[] = [];
 		const right: StatusSegment[] = [];
@@ -178,11 +177,12 @@ export class FooterComponent implements Component {
 		const mode = statuses.get("ice-mode");
 		const capabilities = this.getCapabilities();
 		if (mode || capabilities.length > 0) {
+			// Space-joined and abbreviated: the risk color, not the separator, marks the capabilities.
 			const parts = [
 				...(mode ? [primary(sanitizeStatusText(mode))] : []),
-				...capabilities.map((capability) => theme.fg("error", capability)),
+				...capabilities.map((capability) => theme.fg("error", capability === "external" ? "ext" : capability)),
 			];
-			left.push({ text: parts.join(separator), priority: REQUIRED_PRIORITY });
+			left.push({ text: parts.join(" "), priority: REQUIRED_PRIORITY });
 		}
 
 		const cwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
@@ -213,7 +213,7 @@ export class FooterComponent implements Component {
 		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
 		if (contextWindow > 0) {
 			const percent = contextUsage?.percent;
-			const label = `${typeof percent === "number" ? `${Math.round(percent)}%` : "?"} of ${formatTokens(contextWindow)}`;
+			const label = `${typeof percent === "number" ? `${Math.round(percent)}%` : "?"}/${formatTokens(contextWindow)}`;
 			const color =
 				typeof percent === "number" && percent > 90
 					? "error"
@@ -270,16 +270,15 @@ export class FooterComponent implements Component {
 			parts.push(theme.fg(counts.error > 0 ? "error" : "warning", `${sym("warning")} ${problems}`));
 		}
 		if (counts.update > 0) {
-			const label = `${sym("update")} update`;
+			const label = sym("update");
 			parts.push(appearance ? applyTextPresentation(appearance.primary, label) : theme.fg("accent", label));
 		}
 		if (parts.length === 0) return undefined;
 		const secondary = (text: string) =>
 			appearance ? applyTextPresentation(appearance.secondary, text) : theme.fg("dim", text);
-		const separator = secondary(` ${sym("separator")} `);
 		const hint = this.getNoticesHint();
 		if (hint) parts.push(secondary(hint));
-		return parts.join(separator);
+		return parts.join(" ");
 	}
 
 	private renderLegacy(width: number): string[] {

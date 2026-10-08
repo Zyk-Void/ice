@@ -282,7 +282,7 @@ describe("FooterComponent width handling", () => {
 		for (const width of [40, 93]) {
 			const lines = footer.render(width);
 			for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
-			expect(stripAnsi(lines[0]!).endsWith("⚠ 2 · ↑ update · f2")).toBe(true);
+			expect(stripAnsi(lines[0]!).endsWith("⚠ 2 ↑ f2")).toBe(true);
 		}
 	});
 
@@ -366,7 +366,7 @@ describe("FooterComponent width handling", () => {
 			() => ({ warning: 1, error: 0, update: 0 }),
 			() => "f2",
 		);
-		expect(stripAnsi(footer.render(120)[0]!)).toMatch(/agents 1\/4 · ⚠ 1 · f2\s*$/);
+		expect(stripAnsi(footer.render(120)[0]!)).toMatch(/agents 1\/4 · ⚠ 1 f2\s*$/);
 		for (const line of footer.render(50)) expect(visibleWidth(line)).toBeLessThanOrEqual(50);
 	});
 

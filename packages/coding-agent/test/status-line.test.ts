@@ -91,15 +91,27 @@ describe("compact footer", () => {
 			.map((line) => stripAnsi(line));
 		expect(lines).toHaveLength(1);
 		expect(lines[0]).toMatch(
-			/^build · bash {2}\/tmp\/project {2}⎇ main {2}MCP: 3 servers +gpt-test high {2}12% of 200k {2}⚠ 1 · f2$/,
+			/^build bash {2}\/tmp\/project {2}⎇ main {2}MCP: 3 servers +gpt-test high {2}12%\/200k {2}⚠ 1 f2$/,
 		);
+	});
+
+	it("abbreviates the external capability and the update notice", () => {
+		const footer = createFooter();
+		footer.setCapabilitySource(() => ["bash", "external"]);
+		footer.setNoticeSource(
+			() => ({ warning: 3, error: 0, update: 1 }),
+			() => "f2",
+		);
+		const line = stripAnsi(footer.render(160)[0]!);
+		expect(line.startsWith("build bash ext  ")).toBe(true);
+		expect(line.endsWith("12%/200k  ⚠ 3 ↑ f2")).toBe(true);
 	});
 
 	it("shows running background tasks next to the notices badge", () => {
 		const footer = createFooter();
 		footer.setBackgroundTaskSource(() => 2);
 		const [line] = footer.render(140).map((rendered) => stripAnsi(rendered));
-		expect(line).toContain("2 in background  ⚠ 1 · f2");
+		expect(line).toContain("2 in background  ⚠ 1 f2");
 	});
 
 	it("keeps mode and notices visible on narrow terminals", () => {
@@ -107,8 +119,8 @@ describe("compact footer", () => {
 			.render(30)
 			.map((line) => stripAnsi(line));
 		expect(lines).toHaveLength(1);
-		expect(lines[0]).toContain("build · bash");
-		expect(lines[0]).toContain("⚠ 1 · f2");
+		expect(lines[0]).toContain("build bash");
+		expect(lines[0]).toContain("⚠ 1 f2");
 		expect(visibleWidth(lines[0]!)).toBeLessThanOrEqual(30);
 	});
 });
