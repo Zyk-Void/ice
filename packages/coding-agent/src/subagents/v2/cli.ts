@@ -3,16 +3,18 @@
  *
  *   ice agents list [--json]          every definition with source, shadowing, and diagnostics
  *   ice agents validate [path...]     validate files, or every discovered definition; exit 1 on invalid
+ *   ice agents prune [--apply] [--json]   list (or remove) subagent data whose parent session was deleted
  *
- * Read-only: it never writes definition files or settings.
+ * list and validate are read-only: they never write definition files or settings. prune deletes only with --apply.
  */
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { SettingsManager } from "../../core/settings-manager.ts";
 import { getSubagentGlobalAgentsDir } from "../definitions/legacy-profiles.ts";
 import { type LoadedAgentDefinitions, loadAgentDefinitions } from "../definitions/load.ts";
 import { parseNativeAgentMarkdown } from "../definitions/parse.ts";
 import { formatAgentDefinitions } from "./agent-manager.ts";
+import { formatPruneResult, pruneOrphanedSubagents } from "./prune.ts";
 import { resolveSubagentsV2Settings, type SubagentsV2Settings } from "./settings.ts";
 
 export interface AgentsCliResult {
@@ -50,6 +52,8 @@ export function runAgentsCli(
 		agentDir: string;
 		load?: () => LoadedAgentDefinitions;
 		settings?: () => SubagentsV2Settings;
+		/** Root holding one directory per session directory; default `<agentDir>/sessions`. */
+		sessionsRoot?: string;
 	},
 ): AgentsCliResult {
 	const [command, ...rest] = args;
@@ -112,8 +116,21 @@ export function runAgentsCli(
 		});
 		return { exitCode: failed ? 1 : 0, stdout: `${lines.join("\n")}\n` };
 	}
+	if (command === "prune") {
+		const result = pruneOrphanedSubagents({
+			sessionsRoot: options.sessionsRoot ?? join(options.agentDir, "sessions"),
+			apply: rest.includes("--apply"),
+		});
+		const failed =
+			result.applied &&
+			result.folders.some((folder) => folder.reasons.some((reason) => reason.startsWith("removal failed")));
+		return {
+			exitCode: failed ? 1 : 0,
+			stdout: `${rest.includes("--json") ? JSON.stringify(result, null, 2) : formatPruneResult(result)}\n`,
+		};
+	}
 	return {
 		exitCode: 2,
-		stdout: "Usage: ice agents list [--json] | ice agents validate [path...]\n",
+		stdout: "Usage: ice agents list [--json] | ice agents validate [path...] | ice agents prune [--apply] [--json]\n",
 	};
 }

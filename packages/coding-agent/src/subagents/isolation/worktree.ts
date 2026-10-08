@@ -266,7 +266,7 @@ export function captureWorktreeBaseline(cwd: string): WorktreeBaseline {
 	return { repoRoot, headCommit, baselineCommit, baselineTree, cwdOffset: offset.split(sep).join("/") };
 }
 
-interface WorktreeOwner {
+export interface WorktreeOwner {
 	repoRoot: string;
 	worktreePath: string;
 	baselineCommit: string;
@@ -326,6 +326,28 @@ export function assertOwnedWorktree(repoRoot: string, worktreePath: string): voi
 	const listed = splitZ(worktreeGit(repoRoot, ["worktree", "list", "--porcelain", "-z"]).stdout);
 	if (!listed.includes(`worktree ${resolve(worktreePath)}`))
 		throw new WorktreeIsolationError("ownership", "Worktree is not registered to its owning repository.");
+}
+
+/** The ownership marker of a host-owned isolated worktree; undefined when it is missing or malformed. */
+export function readWorktreeOwner(worktreePath: string): WorktreeOwner | undefined {
+	try {
+		const owner = JSON.parse(readFileSync(ownerFile(worktreePath), "utf8")) as Partial<WorktreeOwner>;
+		return typeof owner.repoRoot === "string" &&
+			typeof owner.worktreePath === "string" &&
+			typeof owner.baselineCommit === "string"
+			? { repoRoot: owner.repoRoot, worktreePath: owner.worktreePath, baselineCommit: owner.baselineCommit }
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** True when an owned worktree differs from the baseline it started from, i.e. it holds work not yet applied. */
+export function worktreeHasChanges(worktreePath: string, owner: WorktreeOwner): boolean {
+	return (
+		snapshotWorktree(worktreePath) !==
+		worktreeGitText(owner.repoRoot, ["rev-parse", `${owner.baselineCommit}^{tree}`])
+	);
 }
 
 /** Shared GC root, keyed by the exact owned path rather than a model-selected name. */

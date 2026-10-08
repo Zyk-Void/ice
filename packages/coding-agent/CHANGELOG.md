@@ -6,6 +6,7 @@
 
 ### Added
 
+- Added `ice agents prune [--apply] [--json]`: lists subagent transcripts and worktrees whose parent session no longer exists in any session directory, and removes them only with `--apply`. Folders changed in the last 10 minutes, worktrees with unapplied changes (and their transcripts), unrecognized worktrees, and symlinks are kept.
 - Added live progress for foreground `agent` calls: while the call runs, the tool row shows one line per subagent (status mark, name, agent, state, tokens, and its current tool call) and how many are still running, with the key that moves them to the background.
 - Added a fullscreen jump-to-bottom pill with unseen assistant-turn counts and the configurable transcript-bottom key (`end` by default).
 - Added subagent names: an `agent` task may set `name` (for example `auth-review`), unique among the session's subagents; `resume`, `agent_control`, and `agent_patch` accept the name wherever an ID is accepted, and names show in the Agent Hub, the agent strip, `agent_control list`, and completion messages.
