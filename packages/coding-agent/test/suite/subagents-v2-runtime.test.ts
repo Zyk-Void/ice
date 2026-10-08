@@ -1635,6 +1635,65 @@ describe("subagent V2 runtime", () => {
 		}
 	});
 
+	it("holds completions while the parent is busy and delivers them as one message once it is idle", async () => {
+		const { harness, host, parent, sessionManager } = await setup();
+		harness.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two"), fauxAssistantMessage("three")]);
+		const busy = parent.session as unknown as { isStreaming: boolean };
+		busy.isStreaming = true;
+		const runtime = new SubagentV2Runtime(host());
+		try {
+			const records = await runtime.launch([task("explore", "a"), task("explore", "b"), task("explore", "c")]);
+			for (const record of records) await runtime.runTurn(record.id, "go", { foreground: false, background: true });
+			runtime.flushCompletions();
+			expect(parent.sent).toEqual([]);
+
+			busy.isStreaming = false;
+			runtime.flushCompletions();
+			expect(parent.sent).toHaveLength(1);
+			const content = String(parent.sent[0]!.content);
+			expect(content.startsWith("3 subagents finished.")).toBe(true);
+			for (const record of records)
+				expect(content).toContain(`"${record.name}" (${record.id}) finished: completed.`);
+			// Delivered once the send finished; later flushes send nothing.
+			await vi.waitFor(() =>
+				expect(
+					SessionManager.open(sessionManager.getSessionFile()!)
+						.getEntries()
+						.filter((entry) => entry.type === "custom" && entry.customType === "ice-subagent-v2-delivered"),
+				).toHaveLength(3),
+			);
+			runtime.flushCompletions();
+			expect(parent.sent).toHaveLength(1);
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("sends a completion again when its message never reached the transcript", async () => {
+		const { harness, host, parent } = await setup();
+		harness.setResponses([fauxAssistantMessage("report")]);
+		const send = parent.session.sendCustomMessage as unknown as ReturnType<typeof vi.fn>;
+		// The first send is lost (rejected before persisting); the second succeeds.
+		send.mockImplementationOnce(async (message: { customType: string; content: unknown }) => {
+			parent.sent.push(message);
+			throw new Error("dropped");
+		});
+		const runtime = new SubagentV2Runtime(host());
+		try {
+			await runOne(runtime, "explore", "go", true);
+			await vi.waitFor(() => expect(parent.sent).toHaveLength(1));
+			await Promise.resolve();
+			runtime.flushCompletions();
+			await vi.waitFor(() => expect(parent.sent).toHaveLength(2));
+			expect(parent.sent[1]!.content).toEqual(parent.sent[0]!.content);
+			runtime.flushCompletions();
+			await Promise.resolve();
+			expect(parent.sent).toHaveLength(2);
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
 	it("releases an idle owner when the parent session is replaced, but not one with a running child", async () => {
 		const { harness, host, parent, sessionManager } = await setup();
 		let release!: () => void;

@@ -131,6 +131,8 @@ export interface OwnerState {
 	waiters: Array<() => void>;
 	/** Pending retirement (parking) of children whose last turn settled. */
 	retireTimers: Map<string, ReturnType<typeof setTimeout>>;
+	/** Completion delivery IDs whose message is being sent; claimed once it reaches the transcript. */
+	sending: Set<string>;
 	closed: boolean;
 }
 

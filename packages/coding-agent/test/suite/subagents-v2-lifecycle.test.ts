@@ -1,13 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Context } from "@zykairotis/ice-ai";
 import {
 	type FauxResponseStep,
 	fauxAssistantMessage,
 	fauxToolCall,
 	registerFauxProvider,
 } from "@zykairotis/ice-ai/compat";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../../src/core/agent-session.ts";
 import {
 	type CreateAgentSessionRuntimeFactory,
@@ -155,6 +156,56 @@ describe("subagents V2 across compaction and session resume", () => {
 		// Shown once per compaction, not on every turn.
 		await session.prompt("next");
 		expect(listings(session).filter((text) => text.includes("Current subagents in this session"))).toHaveLength(1);
+	});
+
+	it("delivers a completion that arrived while the parent turn was then aborted", async () => {
+		const { runtime, subagents, setResponses } = await createParent();
+		const session = runtime.session;
+		let releaseChild!: () => void;
+		const childGate = new Promise<void>((resolve) => {
+			releaseChild = resolve;
+		});
+		const isChild = (context: Context) => JSON.stringify(context.messages[0]).includes("Summarize: a");
+		let parentCalls = 0;
+		const dispatch = async (context: Context) => {
+			if (isChild(context)) {
+				await childGate;
+				return fauxAssistantMessage("child report");
+			}
+			parentCalls++;
+			if (parentCalls === 1)
+				return fauxAssistantMessage(
+					fauxToolCall("agent", {
+						background: true,
+						tasks: [{ agent: "summarizer", name: "scout", description: "Summarize a", prompt: "Summarize: a" }],
+					}),
+					{ stopReason: "toolUse" },
+				);
+			if (parentCalls === 2) {
+				// The child finishes while this parent response is still streaming; then the user aborts, and the
+				// interactive abort path clears the queues (restoreQueuedMessagesToEditor -> clearQueue).
+				releaseChild();
+				await vi.waitFor(() => expect(subagents.overview()?.children[0]?.lastTurnOutcome).toBe("completed"));
+				session.clearQueue();
+				return fauxAssistantMessage("partial", { stopReason: "aborted", errorMessage: "aborted" });
+			}
+			return fauxAssistantMessage("got the report");
+		};
+		setResponses(Array.from({ length: 6 }, () => dispatch));
+		session.settingsManager.applyOverrides({ retry: { enabled: false } });
+		await session.prompt("delegate in the background");
+		await vi.waitFor(() =>
+			expect(
+				session.messages.filter(
+					(message) => message.role === "custom" && message.customType === "subagent_completed",
+				),
+			).toHaveLength(1),
+		);
+		const completion = session.messages.find(
+			(message) => message.role === "custom" && message.customType === "subagent_completed",
+		);
+		expect(JSON.stringify(completion)).toContain('scout\\" (ag_');
+		await vi.waitFor(() => expect(session.isStreaming).toBe(false));
 	});
 
 	it("binds the new runtime to the resumed session even when the footer renders before re-attach", async () => {

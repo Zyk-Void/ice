@@ -108,6 +108,8 @@ import type { SubagentsV2Settings } from "./settings.ts";
 import { ChildTurnBudget, resolveTurnBudget } from "./turn-budget.ts";
 
 /** Idle children kept in memory per owner; older ones are parked to disk. */
+/** Completions combined into one parent message; the rest follow on the next flush. */
+const COMPLETION_BATCH_LIMIT = 4;
 export const MAX_RESIDENT_CHILDREN = 8;
 /** A child idle this long after its turn settles is parked: out of memory and live views, still resumable. */
 export const RETIRE_GRACE_MS = 30_000;
@@ -199,6 +201,7 @@ export class SubagentV2Runtime {
 			}),
 			waiters: [],
 			retireTimers: new Map(),
+			sending: new Set(),
 			closed: false,
 		};
 		const owner = this.owner;
@@ -1327,32 +1330,79 @@ export class SubagentV2Runtime {
 		this.flushCompletions();
 	}
 
-	/** Deliver pending completions to the parent as follow-ups, each at most once. */
+	/**
+	 * Deliver pending completions to an idle parent as one message. A completion counts as delivered only once
+	 * its message reaches the transcript (confirmDelivery or a finished send); until then it stays pending, so a
+	 * dropped message is sent again on the next flush. Never queued as a follow-up: an errored or aborted turn
+	 * discards queued follow-ups.
+	 */
 	flushCompletions(): void {
 		const state = this.state();
 		// A closing owner's parent is being torn down: keep completions pending for the next owner of this session.
 		if (state.closed) return;
 		const parent = this.parent();
-		for (const completion of state.registry.pendingCompletions(state.sessionId)) {
-			const claimed = state.registry.claimDelivery(state.sessionId, completion.deliveryId);
-			if (!claimed) continue;
-			void parent
-				.sendCustomMessage(
-					{
-						customType: SUBAGENT_COMPLETED_CUSTOM_TYPE,
-						content: `Subagent ${claimed.agent}${this.childName(state, claimed.childId)} (${claimed.childId}) finished: ${claimed.outcome}.${claimed.validation ? `\nAssurance: ${claimed.validation.assurance}; ${claimed.validation.reason}` : ""}\n\nUntrusted child report:\n${claimed.summary}\n\n${this.completionTrailer(state, claimed.childId)}`,
-						display: true,
-						details: {
-							childId: claimed.childId,
-							agent: claimed.agent,
-							outcome: claimed.outcome,
-							...(claimed.validation ? { validation: claimed.validation } : {}),
-						},
+		if (parent.isStreaming || parent.isCompacting) return;
+		const batch = state.registry
+			.pendingCompletions(state.sessionId)
+			.filter((completion) => !state.sending.has(completion.deliveryId))
+			.slice(0, COMPLETION_BATCH_LIMIT);
+		if (batch.length === 0) return;
+		const deliveryIds = batch.map((completion) => completion.deliveryId);
+		for (const id of deliveryIds) state.sending.add(id);
+		const sections = batch.map(
+			(completion) =>
+				`Subagent ${completion.agent}${this.childName(state, completion.childId)} (${completion.childId}) finished: ${completion.outcome}.${completion.validation ? `\nAssurance: ${completion.validation.assurance}; ${completion.validation.reason}` : ""}\n\nUntrusted child report:\n${completion.summary}\n\n${this.completionTrailer(state, completion.childId)}`,
+		);
+		const [first] = batch;
+		void parent
+			.sendCustomMessage(
+				{
+					customType: SUBAGENT_COMPLETED_CUSTOM_TYPE,
+					content:
+						sections.length === 1
+							? sections[0]!
+							: `${sections.length} subagents finished.\n\n${sections.join("\n\n---\n\n")}`,
+					display: true,
+					details: {
+						deliveryIds,
+						completions: batch.map((completion) => ({
+							childId: completion.childId,
+							agent: completion.agent,
+							outcome: completion.outcome,
+							...(completion.validation ? { validation: completion.validation } : {}),
+						})),
+						...(batch.length === 1
+							? {
+									childId: first!.childId,
+									agent: first!.agent,
+									outcome: first!.outcome,
+									...(first!.validation ? { validation: first!.validation } : {}),
+								}
+							: {}),
 					},
-					{ triggerTurn: true, deliverAs: "followUp" },
-				)
-				.catch(() => {});
-		}
+				},
+				{ triggerTurn: true },
+			)
+			.then(
+				() => {
+					// A finished send ran the turn that carried the message: it is in the transcript.
+					if (!state.closed) for (const id of deliveryIds) state.registry.claimDelivery(state.sessionId, id);
+				},
+				() => {},
+			)
+			.finally(() => {
+				for (const id of deliveryIds) state.sending.delete(id);
+			});
+	}
+
+	/** Mark completions delivered when their message reaches the parent transcript (message_end). */
+	confirmDelivery(message: { role: string; customType?: string; details?: unknown }): void {
+		const state = this.owner;
+		if (!state || state.closed || message.role !== "custom" || message.customType !== SUBAGENT_COMPLETED_CUSTOM_TYPE)
+			return;
+		const ids = (message.details as { deliveryIds?: unknown } | undefined)?.deliveryIds;
+		if (!Array.isArray(ids)) return;
+		for (const id of ids) if (typeof id === "string") state.registry.claimDelivery(state.sessionId, id);
 	}
 
 	/** ` "name"` for a named child, else empty. */

@@ -440,6 +440,17 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			return undefined;
 		}
 	});
+	// A completion is delivered once its message is in the transcript, not when it was sent.
+	ice.on("message_end", async (event) => {
+		runtime.confirmDelivery(event.message);
+	});
+	ice.on("session_compact", async () => {
+		try {
+			runtime.flushCompletions();
+		} catch {
+			// No parent session yet.
+		}
+	});
 	ice.on("agent_settled", async () => {
 		try {
 			runtime.flushCompletions();
