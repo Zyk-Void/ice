@@ -328,6 +328,12 @@ export {
 	type ProjectTrustStoreEntry,
 	type ProjectTrustUpdate,
 } from "./core/trust-manager.ts";
+export type {
+	IceSubagentApprovalAnswer,
+	IceSubagentOverview,
+	IceSubagentOverviewApproval,
+	IceSubagentOverviewChild,
+} from "./ice-agent-view-bridge.ts";
 // Main entry point
 export { type MainOptions, main } from "./main.ts";
 // Run modes for programmatic SDK usage
@@ -432,6 +438,8 @@ export {
 	type IceSubagentMcpToolAuthorization,
 	registerIceSubagentMcpAdapter,
 } from "./subagents/types.ts";
+// Subagents V2 for SDK sessions: the launcher's extension and view bridge as an inline extension.
+export { createIceSubagents, type IceSubagentsSdk, type IceSubagentsSdkOptions } from "./subagents/v2/sdk.ts";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.ts";
 export { parseFrontmatter, stripFrontmatter } from "./utils/frontmatter.ts";

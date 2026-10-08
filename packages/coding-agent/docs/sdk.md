@@ -657,6 +657,54 @@ eventBus.on("my-extension:status", (data) => console.log(data));
 
 > See [examples/sdk/06-extensions.ts](../examples/sdk/06-extensions.ts) and [docs/extensions.md](extensions.md)
 
+### Subagents
+
+`createAgentSession()` does not install subagents. `createIceSubagents()` returns the same extension the `ice` launcher uses (`agent`, `agent_control`, `agent_patch`, `/agents`) plus a bridge to observe it:
+
+```typescript
+import {
+  createAgentSession,
+  createIceSubagents,
+  DefaultResourceLoader,
+  SessionManager,
+} from "@zykairotis/ice-coding-agent";
+
+const subagents = createIceSubagents({
+  mode: "plan", // default; "build" lets children mutate within the parent's authority
+  agents: { reviewer: { description: "Review a diff", prompt: "Review the changes you are given." } },
+});
+const loader = new DefaultResourceLoader({ extensionFactories: [subagents.extension] });
+await loader.reload();
+
+const { session } = await createAgentSession({
+  resourceLoader: loader,
+  sessionManager: SessionManager.create(process.cwd()), // must be persistent
+});
+subagents.attach(session);
+
+await session.prompt("Ask the reviewer agent to review the last commit.");
+console.log(subagents.overview()); // capacity, children, pending approvals
+```
+
+| Option | Description |
+|--------|-------------|
+| `mode` | `plan` (default) keeps children read-only; `build` allows mutations the parent may perform |
+| `agents` | Extra definitions, same schema as `ice.subagents.agents` |
+| `hookHandlers` | Trusted in-process handlers for configured `ice.hooks` IDs |
+| `mcpAdapter` | Parent-owned MCP adapter for definitions that select MCP tools |
+| `agentDir` | Root for user agent files (`<agentDir>/agents`); default `~/.ice/agent` |
+
+Requirements and limits:
+
+- The parent session must be persistent (`SessionManager.create()`/`open()`). With `SessionManager.inMemory()` every launch fails because child records are durable session entries.
+- Call `attach(session)` before the first prompt that may delegate.
+- An SDK session has no approval UI: rules that resolve to `ask`, foreground or background, are denied at once. Grant mutations with `ice.subagents.permissions` allow rules, for example `{"allow": ["write(src/**)"]}`.
+- `--sub-yolo` has no SDK equivalent.
+
+Settings (`ice.subagents.enabled`, `maxConcurrent`, `maxDepth`, `permissions`, …) are read from the session's `SettingsManager`. See [Subagents V2](subagents-v2.md).
+
+> See [examples/sdk/14-subagents.ts](../examples/sdk/14-subagents.ts)
+
 ### Skills
 
 ```typescript

@@ -171,8 +171,8 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			return argv ? (root, signal) => runVerifier(argv, root, { signal }) : undefined;
 		},
 		getFlagAgents: () => {
-			const raw = ice.getFlag("agents");
-			if (typeof raw !== "string" || !raw.trim()) return undefined;
+			const raw = typeof ice.getFlag === "function" ? ice.getFlag("agents") : undefined;
+			if (typeof raw !== "string" || !raw.trim()) return options.agents;
 			try {
 				return JSON.parse(raw) as unknown;
 			} catch {

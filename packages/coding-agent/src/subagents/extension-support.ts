@@ -35,6 +35,8 @@ export interface IceSubagentsOptions {
 	onHookObservation?: IceHookDispatcherOptions["onObservation"];
 	/** Optional parent-owned MCP adapter; absent adapters fail selected MCP launches closed. */
 	mcpAdapter?: IceSubagentMcpAdapter;
+	/** Host-supplied agent definitions (SDK); the `--agents` flag takes precedence when set. */
+	agents?: Record<string, unknown>;
 }
 
 export function flagEnabled(ice: ExtensionAPI, name: string): boolean {
