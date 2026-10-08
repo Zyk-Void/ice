@@ -221,19 +221,27 @@ export class SubagentV2Runtime {
 
 	/** Resolve a child reference from tool input: an ID, or a name given at launch. */
 	resolveChildRef(ref: string): string {
-		const state = this.state();
-		const records = state.registry.list(state.sessionId);
-		const inherited = state.registry
-			.inherited(state.sessionId)
-			.find((record) => record.id === ref || (record.name !== undefined && record.name === ref));
-		const owned = records.find((record) => record.id === ref || record.name === ref);
-		if (!owned && inherited)
-			throw new SubagentV2Error(
+		const forked = () =>
+			new SubagentV2Error(
 				"preflight",
 				`"${ref}" belongs to the session this one was forked from; subagents stay with their original session. Switch back to that session to continue it, or launch a new subagent here.`,
 			);
-		if (CHILD_ID_PATTERN.test(ref)) return ref;
+		if (CHILD_ID_PATTERN.test(ref)) {
+			// IDs pass through; only an existing owner can tell an ID inherited from a fork source.
+			const owner = this.owner;
+			if (
+				owner &&
+				!owner.registry.list(owner.sessionId, { includeDeleted: true }).some((record) => record.id === ref) &&
+				owner.registry.inherited(owner.sessionId).some((record) => record.id === ref)
+			)
+				throw forked();
+			return ref;
+		}
+		const state = this.state();
+		const records = state.registry.list(state.sessionId);
+		const owned = records.find((record) => record.name === ref);
 		if (owned) return owned.id;
+		if (state.registry.inherited(state.sessionId).some((record) => record.name === ref)) throw forked();
 		const names = records.flatMap((record) => (record.name ? [record.name] : []));
 		throw new SubagentV2Error(
 			"preflight",
