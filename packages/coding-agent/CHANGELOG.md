@@ -201,6 +201,7 @@
 
 ### Changed
 
+- Session token and cost totals include durable subagent usage, with a separate Subagents cost bucket and a footer cost annotation when space permits; parent context usage remains unchanged.
 - Background completion messages carry up to 16 KiB of the child's report and include a byte offset for reading the remainder with `agent_control action=output`.
 - Removed the upper limit of 24 on `ice.subagents.maxConcurrent`; any integer of at least 1 is accepted and extra turns queue. The agent strip now counts queued subagents separately from idle ones.
 - Changed subagent lifecycle: a subagent whose turn settled is parked 30 seconds later (out of memory, the agent strip, and `alt` view cycling; still resumable and listed under Finished in the Agent Hub), and a subagent stopped before it ever ran is removed. The `agent` tool now adds delegation guidance to the system prompt (briefing, when not to delegate, no polling, summarizing results, deleting finished subagents), and completion messages state the next actions and which siblings are still running.

@@ -139,7 +139,8 @@ export class SubagentV2Runtime {
 		if (this.owner)
 			throw new SubagentV2Error("busy", "Shut down the previous owner before replacing the parent session.");
 		const settings = this.host.getSettings();
-		const registry = new ChildRegistry<ResidentChild>(sessionJournal(parent.sessionManager), this.host.now);
+		const journal = sessionJournal(parent.sessionManager);
+		const registry = new ChildRegistry<ResidentChild>(journal, this.host.now);
 		registry.restore();
 		reconcileTerminalWorktrees(registry, parent.sessionId);
 		for (const record of registry.list(parent.sessionId)) {
@@ -171,6 +172,7 @@ export class SubagentV2Runtime {
 		const promptApproval = this.host.promptApproval;
 		this.owner = {
 			sessionId: parent.sessionId,
+			journal,
 			registry,
 			admission: new SubagentConcurrencyAdmission(settings.maxConcurrent),
 			broker: new ApprovalBroker({
@@ -1162,6 +1164,20 @@ export class SubagentV2Runtime {
 			throw caught;
 		}
 		this.releaseOutputArtifact(state.sessionId, id, previousOutput);
+		if (inputTokens || outputTokens || cacheReadTokens || cacheWriteTokens || cost) {
+			state.journal.append("subagent_usage", {
+				childId: id,
+				agent: result.agent,
+				usage: {
+					input: inputTokens,
+					output: outputTokens,
+					cacheRead: cacheReadTokens,
+					cacheWrite: cacheWriteTokens,
+					cost,
+				},
+			});
+			state.journal.flush();
+		}
 		if (resident.contract.isolation.mode === "worktree") {
 			const { repoRoot, worktreePath } = resident.contract.isolation;
 			try {

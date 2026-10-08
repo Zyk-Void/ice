@@ -94,6 +94,63 @@ async function runOne(
 }
 
 describe("subagent V2 runtime", () => {
+	it("persists each child's turn usage once in its parent journal", async () => {
+		const { harness, sessionManager, host } = await setup();
+		harness.setResponses([fauxAssistantMessage("report"), fauxAssistantMessage("second report")]);
+		const runtime = new SubagentV2Runtime(host());
+		try {
+			const result = await runOne(runtime, "explore", "report", true);
+			const second = await runtime.continueChild(result.childId, "again", { foreground: true });
+			runtime.flushCompletions();
+			const restored = SessionManager.open(sessionManager.getSessionFile()!);
+			const entries = restored
+				.getEntries()
+				.filter((entry) => entry.type === "custom" && entry.customType === "subagent_usage");
+			expect(entries).toHaveLength(2);
+			for (const [index, turn] of [result, second].entries()) {
+				expect(turn.usage.inputTokens + turn.usage.outputTokens).toBeGreaterThan(0);
+				expect(entries[index]).toMatchObject({
+					data: {
+						childId: result.childId,
+						agent: "explore",
+						usage: {
+							input: turn.usage.inputTokens,
+							output: turn.usage.outputTokens,
+							cacheRead: turn.usage.cacheReadTokens,
+							cacheWrite: turn.usage.cacheWriteTokens,
+							cost: turn.usage.cost,
+						},
+					},
+				});
+			}
+		} finally {
+			await runtime.shutdown();
+		}
+	});
+
+	it("skips parent billing entries for zero-usage turns", async () => {
+		const { harness, sessionManager, host } = await setup();
+		const runtime = new SubagentV2Runtime(host());
+		try {
+			const [record] = await runtime.launch([task("explore", "report")]);
+			const result = await runtime.runTurn(record!.id, "report", { foreground: true, signal: AbortSignal.abort() });
+			expect(result.usage).toEqual({
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+				cost: 0,
+			});
+			expect(harness.faux.state.callCount).toBe(0);
+			expect(
+				sessionManager
+					.getEntries()
+					.filter((entry) => entry.type === "custom" && entry.customType === "subagent_usage"),
+			).toEqual([]);
+		} finally {
+			await runtime.shutdown();
+		}
+	});
 	it("runs a foreground child under its frozen contract and records it durably", async () => {
 		const { harness, sessionManager, host } = await setup();
 		writeFileSync(join(harness.tempDir, "notes.txt"), "token check lives in auth.ts:42\n");

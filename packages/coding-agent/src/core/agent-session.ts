@@ -112,7 +112,7 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { BashBackgroundRegistry } from "./tools/bash-background.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
-import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
+import { addUsageToTotals, createUsageTotals, subagentUsageFromEntry } from "./usage-totals.ts";
 
 // ============================================================================
 // Skill Block Parsing
@@ -3386,6 +3386,8 @@ export class AgentSession {
 		const usageTotals = createUsageTotals();
 
 		for (const entry of this.sessionManager.getEntries()) {
+			const subagentUsage = subagentUsageFromEntry(entry);
+			if (subagentUsage) addUsageToTotals(usageTotals, subagentUsage);
 			if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
 				addUsageToTotals(usageTotals, entry.usage);
 			}

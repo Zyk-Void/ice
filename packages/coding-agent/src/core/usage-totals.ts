@@ -27,6 +27,48 @@ export function addUsageToTotals(totals: UsageTotals, usage: Usage): void {
 	totals.cost += usage.cost.total;
 }
 
+/** Read extension-owned billing data without adding it to model context. */
+export function subagentUsageFromEntry(entry: SessionEntry): Usage | undefined {
+	if (entry.type !== "custom" || entry.customType !== "subagent_usage") return undefined;
+	const data: unknown = entry.data;
+	if (!data || typeof data !== "object" || !("usage" in data)) return undefined;
+	const usage = data.usage;
+	if (!usage || typeof usage !== "object") return undefined;
+	if (
+		!("input" in usage) ||
+		!("output" in usage) ||
+		!("cacheRead" in usage) ||
+		!("cacheWrite" in usage) ||
+		!("cost" in usage)
+	)
+		return undefined;
+	const { input, output, cacheRead, cacheWrite, cost } = usage;
+	if (
+		typeof input !== "number" ||
+		typeof output !== "number" ||
+		typeof cacheRead !== "number" ||
+		typeof cacheWrite !== "number" ||
+		typeof cost !== "number"
+	)
+		return undefined;
+	if (
+		![input, output, cacheRead, cacheWrite].every((value) => Number.isSafeInteger(value) && value >= 0) ||
+		!Number.isFinite(cost) ||
+		cost < 0
+	)
+		return undefined;
+	const totalTokens = input + output + cacheRead + cacheWrite;
+	if (!Number.isSafeInteger(totalTokens)) return undefined;
+	return {
+		input,
+		output,
+		cacheRead,
+		cacheWrite,
+		totalTokens,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: cost },
+	};
+}
+
 export interface UsageCostBreakdownEntry {
 	key: string;
 	cost: number;
@@ -49,6 +91,9 @@ export function getUsageCostBreakdown(entries: SessionEntry[]): UsageCostBreakdo
 		} else if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
 			key = "Tools/summaries";
 			usage = entry.usage;
+		} else {
+			usage = subagentUsageFromEntry(entry);
+			if (usage) key = "Subagents";
 		}
 		if (!key || !usage) continue;
 

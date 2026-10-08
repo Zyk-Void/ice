@@ -3,7 +3,7 @@ import { type Component, truncateToWidth, visibleWidth } from "@zykairotis/ice-t
 import type { AgentSession } from "../../../core/agent-session.ts";
 import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
-import { addUsageToTotals, createUsageTotals } from "../../../core/usage-totals.ts";
+import { addUsageToTotals, createUsageTotals, subagentUsageFromEntry } from "../../../core/usage-totals.ts";
 import type { IceSubagentOverview } from "../../../ice-agent-view-bridge.ts";
 import { createDefaultAppearance } from "../appearance/appearance-defaults.ts";
 import type { FooterAppearance, FooterFieldId } from "../appearance/appearance-types.ts";
@@ -287,9 +287,15 @@ export class FooterComponent implements Component {
 
 		// Calculate cumulative usage from ALL session entries (not just post-compaction messages)
 		const usageTotals = createUsageTotals();
+		let subagentCost = 0;
 		let latestCacheHitRate: number | undefined;
 
 		for (const entry of this.session.sessionManager.getEntries()) {
+			const subagentUsage = subagentUsageFromEntry(entry);
+			if (subagentUsage) {
+				addUsageToTotals(usageTotals, subagentUsage);
+				subagentCost += subagentUsage.cost.total;
+			}
 			if (entry.type === "message" && entry.message.role === "assistant") {
 				addUsageToTotals(usageTotals, entry.message.usage);
 
@@ -368,6 +374,15 @@ export class FooterComponent implements Component {
 
 		// Add model name on the right side, plus thinking level if model supports it
 		const modelName = state.model?.id || "no-model";
+		const childCostHint = ` (+$${subagentCost.toFixed(3)} subagents)`;
+		if (
+			subagentCost > 0 &&
+			visibleWidth(statsLeft) + visibleWidth(childCostHint) + visibleWidth(modelName) + 2 <= width
+		) {
+			const costIndex = statsParts.findIndex((part) => part.startsWith("$"));
+			statsParts[costIndex] += childCostHint;
+			statsLeft = statsParts.join(" ");
+		}
 
 		let statsLeftWidth = visibleWidth(statsLeft);
 
@@ -446,8 +461,14 @@ export class FooterComponent implements Component {
 	private renderCustomized(width: number, appearance: FooterAppearance): string[] {
 		const state = this.session.state;
 		const usageTotals = createUsageTotals();
+		let subagentCost = 0;
 		let latestCacheHitRate: number | undefined;
 		for (const entry of this.session.sessionManager.getEntries()) {
+			const subagentUsage = subagentUsageFromEntry(entry);
+			if (subagentUsage) {
+				addUsageToTotals(usageTotals, subagentUsage);
+				subagentCost += subagentUsage.cost.total;
+			}
 			if (entry.type === "message" && entry.message.role === "assistant") {
 				addUsageToTotals(usageTotals, entry.message.usage);
 				const prompt = entry.message.usage.input + entry.message.usage.cacheRead + entry.message.usage.cacheWrite;
@@ -510,6 +531,16 @@ export class FooterComponent implements Component {
 			const parts = appearance.order
 				.filter((id) => allowed.has(id) && appearance.visible[id] && fields[id])
 				.map((id) => ({ id, text: renderField(id, fields[id]!, secondary) }));
+			const costPart = parts.find((part) => part.id === "cost");
+			const childCostHint = ` (+$${subagentCost.toFixed(3)} subagents)`;
+			if (
+				costPart &&
+				subagentCost > 0 &&
+				visibleWidth(parts.map((part) => part.text).join(appearance.separator)) + visibleWidth(childCostHint) <=
+					width
+			) {
+				costPart.text = renderField("cost", fields.cost! + childCostHint, secondary);
+			}
 			while (parts.length > 1 && visibleWidth(parts.map((part) => part.text).join(appearance.separator)) > width)
 				parts.pop();
 			if (!parts.length) return undefined;

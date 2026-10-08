@@ -13,7 +13,7 @@ import type { PermissionRuleSet } from "../permissions/evaluate.ts";
 import type { PermissionRuleScope } from "../permissions/rules.ts";
 import type { SubagentConcurrencyAdmission } from "../registry/admission.ts";
 import { openChildSession } from "../registry/child-sessions.ts";
-import type { ChildRegistry } from "../registry/registry.ts";
+import type { ChildRegistry, ParentJournal } from "../registry/registry.ts";
 import type { V2ChildTurnResult, V2OutputCapture, V2ResultObservations } from "../results/v2-result.ts";
 import { normalizeSubagentContextPacket } from "../runtime/helpers.ts";
 import type { SubagentHookRuntime } from "../runtime/live-session.ts";
@@ -124,6 +124,7 @@ export interface TurnResultContext {
 
 export interface OwnerState {
 	sessionId: string;
+	journal: ParentJournal;
 	registry: ChildRegistry<ResidentChild>;
 	admission: SubagentConcurrencyAdmission;
 	broker: ApprovalBroker;

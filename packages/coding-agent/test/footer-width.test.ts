@@ -27,9 +27,12 @@ function createSession(options: {
 	branchUsage?: AssistantUsage;
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
+	subagentUsage?: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
+	if (options.subagentUsage)
+		entries.push({ type: "custom", customType: "subagent_usage", data: { usage: options.subagentUsage } });
 
 	if (usage !== undefined) {
 		entries.push({
@@ -190,6 +193,33 @@ describe("FooterComponent width handling", () => {
 
 		const statsLine = stripAnsi(footer.render(120)[1]);
 		expect(statsLine).toContain("$1.250");
+	});
+
+	it.each(["legacy", "customized"])("includes child cost without changing context in the %s footer", (style) => {
+		const footer = new FooterComponent(
+			createSession({
+				sessionName: "",
+				usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: { total: 0.5 } },
+				subagentUsage: { input: 200, output: 20, cacheRead: 0, cacheWrite: 0, cost: 0.25 },
+			}),
+			createFooterData(1),
+		);
+		if (style === "customized") {
+			const appearance = createDefaultAppearance().footer;
+			appearance.separator = " | ";
+			footer.setAppearance(appearance);
+		}
+		const wide = stripAnsi(footer.render(160)[1]!);
+		expect(wide).toContain("↑300");
+		expect(wide).toContain("↓30");
+		expect(wide).toContain("$0.750 (+$0.250 subagents)");
+		expect(wide).toContain("12.3%/200k");
+		const narrow = stripAnsi(footer.render(60)[1]!);
+		expect(narrow).toContain("$0.750");
+		expect(narrow).not.toContain("subagents");
+		for (const width of [20, 40, 60, 160]) {
+			for (const line of footer.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+		}
 	});
 
 	it("shows the latest cache hit rate when cache usage is present", () => {
