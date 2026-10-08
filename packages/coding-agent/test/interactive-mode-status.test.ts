@@ -9,6 +9,7 @@ import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
+import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { setSymbolPreset } from "../src/modes/interactive/theme/symbols.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
@@ -120,28 +121,87 @@ describe("InteractiveMode.showStatus", () => {
 	});
 });
 
-describe("InteractiveMode.setToolsExpanded", () => {
-	test("applies expansion state to the active header and chat entries", () => {
-		const header = { setExpanded: vi.fn() };
-		const loadedResourcesChild = { setExpanded: vi.fn() };
-		const chatChild = { setExpanded: vi.fn() };
-		const fakeThis: any = {
+describe("InteractiveMode tool expansion", () => {
+	beforeAll(() => initTheme("dark"));
+
+	const cell = (id: string) =>
+		new ToolExecutionComponent(
+			"bash",
+			id,
+			{ command: `echo ${id}` },
+			{ compact: true },
+			undefined,
+			{
+				requestRender: vi.fn(),
+			} as never,
+			process.cwd(),
+		);
+
+	function mode(children: Component[]) {
+		const fakeThis = Object.assign(Object.create(InteractiveMode.prototype), {
 			toolOutputExpanded: false,
+			toolExpandFrom: undefined,
+			toolExpandOverrides: new Map<string, boolean>(),
 			customHeader: undefined,
-			builtInHeader: header,
-			loadedResourcesContainer: { children: [loadedResourcesChild] },
-			chatContainer: { children: [chatChild] },
+			builtInHeader: { setExpanded: vi.fn() },
+			loadedResourcesContainer: { children: [] },
+			chatContainer: { children },
 			ui: { requestRender: vi.fn() },
 			showStatus: vi.fn(),
-		};
+		});
+		return fakeThis as any;
+	}
 
-		(InteractiveMode as any).prototype.setToolsExpanded.call(fakeThis, true);
+	const expandedIds = (cells: ToolExecutionComponent[]) =>
+		cells.filter((item) => (item as any).expanded).map((item) => item.getToolCallId());
 
-		expect(fakeThis.toolOutputExpanded).toBe(true);
-		expect(header.setExpanded).toHaveBeenCalledWith(true);
-		expect(loadedResourcesChild.setExpanded).toHaveBeenCalledWith(true);
-		expect(chatChild.setExpanded).toHaveBeenCalledWith(true);
-		expect(fakeThis.showStatus).toHaveBeenCalledWith("Tool output: expanded");
+	test("setToolsExpanded applies to the header, non-tool entries, and every tool cell", () => {
+		const other = { setExpanded: vi.fn(), render: () => [], invalidate: () => {} };
+		const cells = [cell("a"), cell("b")];
+		const fake = mode([other, ...cells]);
+		fake.setToolsExpanded(true);
+		expect(fake.toolOutputExpanded).toBe(true);
+		expect(fake.builtInHeader.setExpanded).toHaveBeenCalledWith(true);
+		expect(other.setExpanded).toHaveBeenCalledWith(true);
+		expect(expandedIds(cells)).toEqual(["a", "b"]);
+		expect(fake.showStatus).toHaveBeenCalledWith("Tool output: expanded");
+	});
+
+	test("the expand key opens the newest cells in batches, then collapses all", () => {
+		const cells = ["a", "b", "c", "d", "e", "f", "g"].map(cell);
+		const fake = mode(cells);
+		fake.toggleToolOutputExpansion();
+		expect(expandedIds(cells)).toEqual(["e", "f", "g"]);
+		expect(fake.toolOutputExpanded).toBe(true);
+		fake.toggleToolOutputExpansion();
+		expect(expandedIds(cells)).toEqual(["b", "c", "d", "e", "f", "g"]);
+		fake.toggleToolOutputExpansion();
+		expect(expandedIds(cells)).toEqual(["a", "b", "c", "d", "e", "f", "g"]);
+		fake.toggleToolOutputExpansion();
+		expect(expandedIds(cells)).toEqual([]);
+		expect(fake.toolOutputExpanded).toBe(false);
+	});
+
+	test("new cells join an expanded tail without collapsing earlier ones", () => {
+		const cells = ["a", "b", "c", "d"].map(cell);
+		const fake = mode(cells);
+		fake.toggleToolOutputExpansion();
+		cells.push(cell("e"));
+		fake.applyToolCellExpansion();
+		expect(expandedIds(cells)).toEqual(["b", "c", "d", "e"]);
+	});
+
+	test("a click toggles one cell and leaves other links to the browser", () => {
+		const cells = ["a", "b", "c", "d"].map(cell);
+		const fake = mode(cells);
+		expect(fake.handleUiAction("ice-action:toggle-tool/a")).toBe(true);
+		expect(expandedIds(cells)).toEqual(["a"]);
+		fake.toggleToolOutputExpansion();
+		expect(expandedIds(cells)).toEqual(["b", "c", "d"]);
+		expect(fake.handleUiAction("ice-action:toggle-tool/c")).toBe(true);
+		expect(expandedIds(cells)).toEqual(["b", "d"]);
+		expect(fake.handleUiAction("https://example.com")).toBe(false);
+		expect(fake.handleUiAction("ice-action:toggle-tool/missing")).toBe(true);
 	});
 });
 

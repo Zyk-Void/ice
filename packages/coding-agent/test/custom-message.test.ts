@@ -41,4 +41,29 @@ describe("CustomMessageComponent", () => {
 				.some((line) => line.startsWith("custom")),
 		).toBe(true);
 	});
+
+	test("collapses long subagent_completed output to head and tail until expanded", () => {
+		initTheme("dark");
+		const body = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n");
+		const message: CustomMessage = {
+			role: "custom",
+			customType: "subagent_completed",
+			content: body,
+			display: true,
+			timestamp: Date.now(),
+		};
+		const component = new CustomMessageComponent(message);
+		const collapsed = component.render(60).map(stripAnsi).join("\n");
+
+		expect(collapsed).toContain("line 1");
+		expect(collapsed).toContain("line 20");
+		expect(collapsed).not.toContain("line 10");
+		expect(collapsed).toContain("13 more lines");
+
+		component.setExpanded(true);
+		const expanded = component.render(60).map(stripAnsi).join("\n");
+
+		expect(expanded).toContain("line 10");
+		expect(expanded).not.toContain("more lines");
+	});
 });

@@ -53,7 +53,7 @@ export function createDefaultAppearance(): AppearanceSettingsV2 {
 			borderStyle: "none",
 			borderColor: { kind: "theme", token: "border" },
 			paddingX: 1,
-			paddingY: 1,
+			paddingY: 0,
 			fitToContent: false,
 		},
 		assistantMessage: {

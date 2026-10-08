@@ -1,6 +1,6 @@
-import { Text, type TUI, visibleWidth } from "@zykairotis/ice-tui";
+import { getOsc8LinkAtColumn, Text, type TUI, visibleWidth } from "@zykairotis/ice-tui";
 import { Type } from "typebox";
-import { beforeAll, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { ToolGroupComponent } from "../src/modes/interactive/components/tool-group.ts";
@@ -9,6 +9,7 @@ import {
 	describeExploration,
 	summarizeToolResult,
 } from "../src/modes/interactive/components/tool-summary.ts";
+import { parseToolToggleUrl, setToolToggleLinks } from "../src/modes/interactive/components/tool-toggle-link.ts";
 import { setSymbolPreset } from "../src/modes/interactive/theme/symbols.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -305,5 +306,43 @@ describe("ToolGroupComponent", () => {
 		const lines = text(group.render(60));
 		expect(lines).toHaveLength(2 + 6);
 		expect(lines.at(-1)).toBe("    … +4 more ( to expand)");
+	});
+});
+
+describe("tool cell toggle links", () => {
+	afterEach(() => setToolToggleLinks(false));
+
+	const linkedUrls = (lines: string[]) =>
+		lines.map((line) => getOsc8LinkAtColumn(line, 0)).filter((url): url is string => url !== undefined);
+
+	test("emits no links unless fullscreen enabled them", () => {
+		const row = bash("ls");
+		expect(row.render(60).some((line) => line.includes("\x1b]8;"))).toBe(false);
+	});
+
+	test("links a cell's title row and its more hint to its own id", () => {
+		setToolToggleLinks(true);
+		const row = bash("ls");
+		row.updateResult(result("one\ntwo\nthree\nfour\nfive"));
+		const url = `ice-action:toggle-tool/${encodeURIComponent(row.getToolCallId())}`;
+		const lines = row.render(60);
+		const linked = lines.filter((line) => line.includes("\x1b]8;;ice-action"));
+		expect(linked.map((line) => stripAnsi(line).trim())).toEqual(["✓ Ran ls", "… +2 lines (click or  to expand)"]);
+		expect(getOsc8LinkAtColumn(linked[0]!, 0)).toBe(url);
+		expect(getOsc8LinkAtColumn(linked[1]!, 6)).toBe(url);
+		expect(parseToolToggleUrl(url)).toBe(row.getToolCallId());
+		expect(parseToolToggleUrl("https://example.com")).toBeUndefined();
+	});
+
+	test("links a group's header, and its expanded members, to the group's id", () => {
+		setToolToggleLinks(true);
+		const group = new ToolGroupComponent(false);
+		const first = row("read", { path: "a.ts" });
+		group.add(first);
+		group.add(row("read", { path: "b.ts" }));
+		const url = `ice-action:toggle-tool/${encodeURIComponent(first.getToolCallId())}`;
+		expect(linkedUrls(group.render(60))).toEqual([url]);
+		group.setExpanded(true);
+		expect(new Set(linkedUrls(group.render(60)))).toEqual(new Set([url]));
 	});
 });

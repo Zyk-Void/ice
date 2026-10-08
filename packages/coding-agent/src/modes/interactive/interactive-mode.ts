@@ -172,6 +172,7 @@ import { SubagentFooterSwitcher } from "./components/subagent-view-switcher.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { ToolGroupComponent } from "./components/tool-group.ts";
 import { describeExploration } from "./components/tool-summary.ts";
+import { parseToolToggleUrl, setToolToggleLinks } from "./components/tool-toggle-link.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
@@ -369,13 +370,36 @@ interface InteractiveTuiOptions {
 	showHardwareCursor: boolean;
 	logDirectory: string;
 	terminal?: Terminal;
+	/** Handles an internal `ice-action:` link clicked in fullscreen; other URLs open in the browser. */
+	onAction?: (url: string) => boolean;
+}
+
+/** Tool cells the expand key opens per press, newest first. */
+const TOOL_EXPAND_BATCH = 3;
+
+/** A transcript cell whose output the expand key and clicks toggle: one tool call, or a group of them. */
+type ToolCell = ToolExecutionComponent | ToolGroupComponent;
+
+function isToolCell(component: Component): component is ToolCell {
+	return component instanceof ToolExecutionComponent || component instanceof ToolGroupComponent;
+}
+
+function toolCellId(cell: ToolCell): string {
+	return cell instanceof ToolGroupComponent ? cell.getToggleId() : cell.getToolCallId();
 }
 
 /** Composition root for selecting the interactive terminal renderer. */
 export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScreen | TuiAltScreen {
 	const terminal = options.terminal ?? new ProcessTerminal();
+	// Only the fullscreen renderer routes link clicks back to the app.
+	setToolToggleLinks(options.uiMode === "fullscreen");
 	if (options.uiMode === "fullscreen") {
-		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, { openUrl: openBrowser });
+		const onAction = options.onAction;
+		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, {
+			openUrl: (url) => {
+				if (!onAction?.(url)) openBrowser(url);
+			},
+		});
 	}
 	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory);
 }
@@ -469,8 +493,12 @@ export class InteractiveMode {
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
 
-	// Tool output expansion state
+	// Tool output expansion state. The expand key opens the newest tool cells in batches: cells from
+	// `toolExpandFrom` (a cell id, or "all") to the end are expanded, so new cells join the expanded tail.
+	// A click toggles one cell and overrides the batch for it. Other expandables follow `toolOutputExpanded`.
 	private toolOutputExpanded = false;
+	private toolExpandFrom: string | undefined;
+	private readonly toolExpandOverrides = new Map<string, boolean>();
 
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
@@ -611,6 +639,7 @@ export class InteractiveMode {
 			uiMode,
 			showHardwareCursor: this.settingsManager.getShowHardwareCursor(),
 			logDirectory: getAgentDir(),
+			onAction: (url) => this.handleUiAction(url),
 		});
 		this.ui = createInteractiveTuiReference(() => this.renderer);
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
@@ -915,6 +944,7 @@ export class InteractiveMode {
 			showHardwareCursor,
 			logDirectory: getAgentDir(),
 			terminal,
+			onAction: (url) => this.handleUiAction(url),
 		});
 		nextUi.setClearOnShrink(clearOnShrink);
 		nextUi.onDebug = onDebug;
@@ -4556,6 +4586,8 @@ export class InteractiveMode {
 			return;
 		}
 		this.renderSessionEntries(this.renderSession.sessionManager.buildContextEntries());
+		// Rebuilt cells start from the global flag; restore the batch and per-cell state by id.
+		this.applyToolCellExpansion();
 	}
 
 	// =========================================================================
@@ -5150,26 +5182,80 @@ export class InteractiveMode {
 		}
 	}
 
+	/** Expand the newest batch of collapsed tool cells; after the oldest batch, collapse everything. */
 	private toggleToolOutputExpansion(): void {
-		this.setToolsExpanded(!this.toolOutputExpanded);
+		const cells = this.toolCells();
+		const from = this.toolExpandFromIndex(cells);
+		if (from === 0) {
+			this.setToolExpandFrom(undefined);
+			this.showStatus("Tool output: collapsed");
+			return;
+		}
+		const start = Math.max(0, (from ?? cells.length) - TOOL_EXPAND_BATCH);
+		this.setToolExpandFrom(start === 0 ? "all" : toolCellId(cells[start]!));
+		const key = keyText("app.tools.expand");
+		this.showStatus(
+			start === 0
+				? `Tool output: all expanded (${key} collapses)`
+				: `Tool output: last ${cells.length - start} of ${cells.length} expanded (${key} for more)`,
+		);
 	}
 
 	private setToolsExpanded(expanded: boolean): void {
-		if (expanded === this.toolOutputExpanded) return;
+		this.setToolExpandFrom(expanded ? "all" : undefined);
+		this.showStatus(`Tool output: ${expanded ? "expanded" : "collapsed"}`);
+	}
 
-		this.toolOutputExpanded = expanded;
-		const activeHeader = this.customHeader ?? this.builtInHeader;
-		if (isExpandable(activeHeader)) {
-			activeHeader.setExpanded(expanded);
-		}
-		for (const container of [this.loadedResourcesContainer, this.chatContainer]) {
-			for (const child of container.children) {
-				if (isExpandable(child)) {
-					child.setExpanded(expanded);
+	private setToolExpandFrom(from: string | undefined): void {
+		this.toolExpandFrom = from;
+		this.toolExpandOverrides.clear();
+		const expanded = from !== undefined;
+		if (expanded !== this.toolOutputExpanded) {
+			this.toolOutputExpanded = expanded;
+			const activeHeader = this.customHeader ?? this.builtInHeader;
+			if (isExpandable(activeHeader)) activeHeader.setExpanded(expanded);
+			for (const container of [this.loadedResourcesContainer, this.chatContainer]) {
+				for (const child of container.children) {
+					if (isExpandable(child) && !isToolCell(child)) child.setExpanded(expanded);
 				}
 			}
 		}
-		this.showStatus(`Tool output: ${expanded ? "expanded" : "collapsed"}`);
+		this.applyToolCellExpansion();
+	}
+
+	private toolCells(): ToolCell[] {
+		return this.chatContainer.children.filter(isToolCell);
+	}
+
+	/** Index of the first expanded cell; undefined when collapsed, 0 when all are expanded or the anchor is gone. */
+	private toolExpandFromIndex(cells: readonly ToolCell[]): number | undefined {
+		if (this.toolExpandFrom === undefined) return undefined;
+		if (this.toolExpandFrom === "all") return 0;
+		const index = cells.findIndex((cell) => toolCellId(cell) === this.toolExpandFrom);
+		return Math.max(0, index);
+	}
+
+	private applyToolCellExpansion(): void {
+		const cells = this.toolCells();
+		const from = this.toolExpandFromIndex(cells);
+		cells.forEach((cell, index) => {
+			cell.setExpanded(this.toolExpandOverrides.get(toolCellId(cell)) ?? (from !== undefined && index >= from));
+		});
+		this.ui.requestRender();
+	}
+
+	/** Routes internal links clicked in fullscreen; returns false for URLs the browser should open. */
+	private handleUiAction(url: string): boolean {
+		const id = parseToolToggleUrl(url);
+		if (id === undefined) return false;
+		const cells = this.toolCells();
+		const index = cells.findIndex((cell) => toolCellId(cell) === id);
+		if (index < 0) return true;
+		const from = this.toolExpandFromIndex(cells);
+		const current = this.toolExpandOverrides.get(id) ?? (from !== undefined && index >= from);
+		this.toolExpandOverrides.set(id, !current);
+		this.applyToolCellExpansion();
+		return true;
 	}
 
 	private toggleThinkingBlockVisibility(): void {

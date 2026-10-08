@@ -9,6 +9,7 @@ import { createDefaultAppearance } from "../appearance/appearance-defaults.ts";
 import { resolveAppearanceColorFn } from "../appearance/appearance-resolve.ts";
 import type { SubagentChromeAppearance } from "../appearance/appearance-types.ts";
 import { applyTextPresentation } from "../appearance/text-presentation.ts";
+import { sym } from "../theme/symbols.ts";
 import type { Theme } from "../theme/theme.ts";
 import { keyText } from "./keybinding-hints.ts";
 
@@ -119,6 +120,9 @@ function formatFooterCheckIn(state: SubagentCheckInState | undefined): string | 
 	return state.nextDueAt === undefined ? "check-in armed" : `check-in due ${new Date(state.nextDueAt).toISOString()}`;
 }
 
+/** The main agent's name in the footer strip and view switcher. */
+const ICE_LABEL = (): string => `${sym("logo")} ICE`;
+
 function footerStatus(view: IceAgentViewDescriptor, attention: SubagentFooterAttention | undefined): string {
 	if (view.kind === "parent") return "MAIN";
 	if (!view.live) return (view.status ?? "history").replaceAll("_", " ").replaceAll("-", " ").toUpperCase();
@@ -195,7 +199,7 @@ export function createSubagentFooterSnapshot(
 }
 
 export function formatAgentSwitcherLabel(view: IceAgentViewDescriptor): string {
-	if (view.kind === "parent") return "Main agent";
+	if (view.kind === "parent") return ICE_LABEL();
 	const identity = view.taskId ?? view.runId?.slice(0, 8);
 	return [view.role ?? view.label, identity ? `· ${identity}` : undefined].filter(Boolean).join(" ");
 }
@@ -303,17 +307,10 @@ export class SubagentFooterSwitcher implements Component {
 		]
 			.filter((part): part is string => part !== undefined)
 			.join(" · ");
-		const selectedSummary = snapshot.mainAgentDisplayed
-			? " · [Main agent] MAIN"
-			: selected
-				? ` · [${selectedPosition} ${selected.label}] ${selected.status}`
-				: "";
-		const switchKeys = `${keyText("app.subagents.previous")}/${keyText("app.subagents.next")} switch`;
-		// In a child view, Escape (the interrupt key) returns to the main agent; say so first.
-		const navigation = snapshot.mainAgentDisplayed
-			? `${switchKeys} · ${keyText("app.agents.hub")} manage`
-			: `${keyText("app.interrupt")} main · ${switchKeys}`;
-		const summary = `Agents ${counts}${selectedSummary} · ${navigation}`;
+		// On the main agent the strip only names it; key hints show while viewing a child, where they are needed.
+		const summary = snapshot.mainAgentDisplayed
+			? `Agents ${counts} · ${ICE_LABEL()}`
+			: `Agents ${counts}${selected ? ` · [${selectedPosition} ${selected.label}] ${selected.status}` : ""} · ${keyText("app.interrupt")} ${ICE_LABEL()} · ${keyText("app.subagents.previous")}/${keyText("app.subagents.next")} switch`;
 		const countOnly = [
 			`Agents ${snapshot.children.length}`,
 			snapshot.attentionCount > 0 ? `!${snapshot.attentionCount} attention` : undefined,

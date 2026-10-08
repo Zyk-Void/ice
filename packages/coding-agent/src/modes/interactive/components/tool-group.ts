@@ -1,9 +1,9 @@
 import { Container, truncateToWidth } from "@zykairotis/ice-tui";
 import { sym } from "../theme/symbols.ts";
 import { theme } from "../theme/theme.ts";
-import { keyText } from "./keybinding-hints.ts";
 import type { ToolExecutionComponent } from "./tool-execution.ts";
 import { COMPACT_TOOL_MAX_WIDTH, describeExploration } from "./tool-summary.ts";
+import { expandHint, linkToolToggle, linkToolToggleLine } from "./tool-toggle-link.ts";
 
 /** Collapsed groups list at most this many exploration lines. */
 const MAX_COLLAPSED_LINES = 6;
@@ -31,9 +31,15 @@ export class ToolGroupComponent extends Container {
 
 	add(member: ToolExecutionComponent): void {
 		member.setLeadingSpacer(false);
+		member.setToggleId(this.getToggleId(member));
 		member.setExpanded(this.expanded);
 		this.members.push(member);
 		this.addChild(member);
+	}
+
+	/** The group's identity for expansion state: its first member's tool call. */
+	getToggleId(fallback?: ToolExecutionComponent): string {
+		return (this.members[0] ?? fallback)?.getToolCallId() ?? "";
 	}
 
 	/** A failed call ends the run so later calls start a new cell. */
@@ -48,6 +54,11 @@ export class ToolGroupComponent extends Container {
 
 	override render(width: number): string[] {
 		if (this.members.length === 0) return [];
+		// Expanded members link their own rows to this group.
+		return this.expanded ? this.renderCell(width) : linkToolToggle(this.renderCell(width), this.getToggleId());
+	}
+
+	private renderCell(width: number): string[] {
 		const lines = [""];
 		if (this.expanded) {
 			for (const member of this.members) lines.push(...member.render(width));
@@ -77,7 +88,7 @@ export class ToolGroupComponent extends Container {
 		});
 		if (hidden > 0) {
 			lines.push(
-				`    ${theme.fg("dim", `${sym("ellipsis")} +${hidden} more (${keyText("app.tools.expand")} to expand)`)}`,
+				`    ${linkToolToggleLine(theme.fg("dim", `${sym("ellipsis")} +${hidden} more (${expandHint()} to expand)`), this.getToggleId())}`,
 			);
 		}
 

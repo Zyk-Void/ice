@@ -21,8 +21,8 @@ import { applyTextPresentation, toolStateBackground } from "../appearance/text-p
 import { sym } from "../theme/symbols.ts";
 import { theme } from "../theme/theme.ts";
 import { renderDiff } from "./diff.ts";
-import { keyText } from "./keybinding-hints.ts";
 import { COMPACT_TOOL_MAX_WIDTH, resultTextLines, summarizeToolResult } from "./tool-summary.ts";
+import { expandHint, linkToolToggle, linkToolToggleLine } from "./tool-toggle-link.ts";
 
 export interface ToolExecutionOptions {
 	showImages?: boolean;
@@ -65,6 +65,8 @@ export class ToolExecutionComponent extends Container {
 	private imageSpacers: Spacer[] = [];
 	private toolName: string;
 	private toolCallId: string;
+	/** The cell a click on this row toggles: itself, or the group that lays it out. */
+	private toggleId: string;
 	private args: any;
 	private expanded = false;
 	private showImages: boolean;
@@ -99,6 +101,7 @@ export class ToolExecutionComponent extends Container {
 		super();
 		this.toolName = toolName;
 		this.toolCallId = toolCallId;
+		this.toggleId = toolCallId;
 		this.args = args;
 		this.toolDefinition = toolDefinition;
 		this.builtInToolDefinition = createAllToolDefinitions(cwd)[toolName as ToolName];
@@ -299,6 +302,14 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	getToolCallId(): string {
+		return this.toolCallId;
+	}
+
+	setToggleId(id: string): void {
+		this.toggleId = id;
+	}
+
 	getToolName(): string {
 		return this.toolName;
 	}
@@ -379,7 +390,7 @@ export class ToolExecutionComponent extends Container {
 		const lines = resultTextLines(this.result);
 		const dim = (text: string) => theme.fg("dim", text);
 		const more = (hidden: number) =>
-			dim(`${sym("ellipsis")} +${hidden} lines (${keyText("app.tools.expand")} to expand)`);
+			linkToolToggleLine(dim(`${sym("ellipsis")} +${hidden} lines (${expandHint()} to expand)`), this.toggleId);
 		if (this.isPartial) {
 			const tail = lines.slice(-COMPACT_RUNNING_TAIL_LINES);
 			const hidden = lines.length - tail.length;
@@ -445,6 +456,10 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override render(width: number): string[] {
+		return linkToolToggle(this.renderCell(width), this.toggleId);
+	}
+
+	private renderCell(width: number): string[] {
 		if (this.hideComponent) {
 			return [];
 		}

@@ -3,10 +3,17 @@ import type { Component } from "@zykairotis/ice-tui";
 import { applyChromeBorder, Box, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@zykairotis/ice-tui";
 import type { MessageRenderer } from "../../../core/extensions/types.ts";
 import type { CustomMessage } from "../../../core/messages.ts";
+import { SUBAGENT_COMPLETED_CUSTOM_TYPE } from "../../../subagents/v2/runtime-support.ts";
 import { resolveAppearanceColorFn } from "../appearance/appearance-resolve.ts";
 import type { SystemCardAppearance } from "../appearance/appearance-types.ts";
 import { applyTextPresentation } from "../appearance/text-presentation.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
+import { keyText } from "./keybinding-hints.ts";
+
+/** Default-rendered custom types that collapse to head/tail lines until expanded. */
+const COLLAPSIBLE_CUSTOM_TYPES: ReadonlySet<string> = new Set([SUBAGENT_COMPLETED_CUSTOM_TYPE]);
+const COLLAPSED_HEAD_LINES = 4;
+const COLLAPSED_TAIL_LINES = 3;
 
 /**
  * Component that renders a custom message entry from extensions.
@@ -151,9 +158,33 @@ export class CustomMessageComponent extends Container {
 				.join("\n");
 		}
 
+		if (!this._expanded && COLLAPSIBLE_CUSTOM_TYPES.has(this.message.customType)) {
+			const sourceLines = text.split("\n");
+			const hidden = sourceLines.length - COLLAPSED_HEAD_LINES - COLLAPSED_TAIL_LINES;
+			if (hidden > 1) {
+				const head = sourceLines.slice(0, COLLAPSED_HEAD_LINES).join("\n");
+				const tail = sourceLines.slice(-COLLAPSED_TAIL_LINES).join("\n");
+				this.addBody(head);
+				this.box.addChild(
+					new Text(
+						this.cardBody(`... ${hidden} more lines (`) +
+							theme.fg("dim", keyText("app.tools.expand")) +
+							this.cardBody(" to expand)"),
+						0,
+						0,
+					),
+				);
+				this.addBody(tail);
+				return;
+			}
+		}
+		this.addBody(text);
+	}
+
+	private addBody(text: string): void {
 		this.box.addChild(
 			new Markdown(text, 0, 0, this.markdownTheme, {
-				color: (text: string) => this.cardBody(text),
+				color: (value: string) => this.cardBody(value),
 			}),
 		);
 	}

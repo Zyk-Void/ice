@@ -58,7 +58,7 @@ export class UserMessageComponent extends Container {
 
 	private rebuild(): void {
 		this.clear();
-		this.contentBox = this.buildBox(this.appearance?.paddingX ?? this.outputPad, this.appearance?.paddingY ?? 1);
+		this.contentBox = this.buildBox(this.appearance?.paddingX ?? this.outputPad, this.appearance?.paddingY ?? 0);
 		this.addChild(this.contentBox);
 	}
 
@@ -103,7 +103,7 @@ export class UserMessageComponent extends Container {
 		const safeWidth = Math.max(1, Math.floor(width));
 		const borderStyle = this.appearance?.borderStyle ?? "none";
 		const requestedPaddingX = this.appearance?.paddingX ?? this.outputPad;
-		const paddingY = this.appearance?.paddingY ?? 1;
+		const paddingY = this.appearance?.paddingY ?? 0;
 		const borderColor = this.appearance
 			? resolveAppearanceColorFn(this.appearance.borderColor, "fg")
 			: (content: string) => theme.fg("userMessageText", content);
