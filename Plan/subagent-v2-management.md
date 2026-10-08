@@ -1,6 +1,6 @@
 # Subagent V2 Management Improvements
 
-Status: Phases 0-4 committed (2026-10-08, a014a175a). Follow-ups 3-5 implemented; live concurrency verification remains partial. Deferred items remain.
+Status: Phases 0-4 committed (2026-10-08, a014a175a). Follow-ups 3-5 implemented; live verification completed after startup-setting fixes. Deferred items remain.
 
 ## Problem
 
@@ -124,6 +124,7 @@ Acceptance: `maxConcurrent: 50` is accepted and enforced.
 
 ## Follow-ups
 
-- Task 3 — done (`e75542224`): background reports carry up to 16 KiB with a byte-offset continuation hint; ASCII/multibyte truncation and intact-report tests pass.
+- Task 2 — done (`9931b03f9`, `9e1af319f`): early initialization honors global settings and existing trusted project limits. Live Luna checks cover queue/capacity, Hub usage, completion, retirement/reopen, wait interruption, name-based status, and tinted edit rows.
+- Task 3 — done (`e75542224`, `8801d3c6e`): background reports carry up to 16 KiB with a report-relative byte-offset continuation hint; inline/artifact remainder reads, error-prefix and multibyte cases, and bounded sibling trailers pass.
 - Task 4 — done (`5cb1169f9`): fullscreen unseen-message pill uses the configured transcript-bottom key; component/integration tests and live scroll/count/End check pass.
 - Task 5 — done (`4de4c6815`): durable child usage enters parent billing totals and the Subagents cost bucket; context accounting stays unchanged; persistence, validation, and footer tests pass.
