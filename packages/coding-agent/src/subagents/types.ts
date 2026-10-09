@@ -184,9 +184,6 @@ export type SubagentFailureCode =
 	| "batch_admission_exhausted"
 	| "follow_up_budget_exhausted"
 	| "provider_option_unsupported"
-	| "writer_precondition"
-	| "writer_workspace_failure"
-	| "writer_patch_failure"
 	| "integration_conflict"
 	| "rollback_conflict"
 	| "unsafe_parent_workspace";
@@ -565,65 +562,6 @@ export interface SelfDelegationInput {
 	inheritSkills?: boolean;
 	/** Explicit MCP server/tool selection; never ambient connection or credential inheritance. */
 	mcp?: readonly string[];
-}
-
-export interface WriterLaunchPreflight {
-	parentRoot: string;
-	parentHead: string;
-	baseCommit: string;
-	statusPorcelain: string;
-}
-
-export interface WriterWorkspace {
-	parentRoot: string;
-	root: string;
-	baseCommit: string;
-	cleanup: () => Promise<void>;
-}
-
-export type WriterResultStatus = "completed" | "failed" | "cancelled" | "timed_out";
-
-export const WRITER_PATCH_LIMITS = {
-	maxChangedFiles: 32,
-	maxPatchBytes: 512 * 1024,
-} as const;
-export const WRITER_PATCH_PREVIEW_LIMIT_BYTES = 32 * 1024;
-
-export interface WriterPatchFile {
-	path: string;
-	change: "add" | "modify" | "delete";
-	beforeSha256?: string;
-	afterSha256?: string;
-}
-
-export interface WriterPatchArtifact {
-	schemaVersion: 1;
-	runId: string;
-	baseCommit: string;
-	changedFileCount: number;
-	patchBytes: number;
-	patchSha256: string;
-	patchRef: string;
-	files: WriterPatchFile[];
-}
-
-export type ReadonlyWriterPatchArtifact = Readonly<Omit<WriterPatchArtifact, "files">> & {
-	files: readonly Readonly<WriterPatchFile>[];
-};
-
-export interface WriterResult {
-	runId: string;
-	parentSessionId: string;
-	status: WriterResultStatus;
-	workspaceIsolation?: "worktree" | "parent";
-	summary: string;
-	baseCommit: string;
-	observedOutputBytes: number;
-	output?: SubagentOutput;
-	workspaceRemoved: boolean;
-	diagnostics: SubagentDiagnostic[];
-	patchArtifact?: WriterPatchArtifact;
-	usage?: SubagentUsage;
 }
 
 export interface NormalizedSubagentRequest

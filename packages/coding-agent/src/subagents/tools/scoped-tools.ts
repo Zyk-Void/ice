@@ -1,6 +1,6 @@
 /** Scoped child tool definitions, selected MCP tools, and execution policy wrappers (moved from ice-subagents.ts). */
 import { existsSync, lstatSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { type Static, type TSchema, Type } from "typebox";
 import { Value } from "typebox/value";
 import type { ToolDefinition } from "../../core/extensions/index.ts";
@@ -14,12 +14,15 @@ import {
 } from "../../core/tools/index.ts";
 import { resolveToCwd } from "../../core/tools/path-utils.ts";
 import { redactCredentialText } from "../../utils/redact.ts";
-import { hasGitPathComponent } from "../isolation/writer-patch.ts";
 import { SubagentError } from "../runtime/helpers.ts";
 import type { NativeSubagentSessionOptions } from "../runtime/live-session.ts";
 import { type IceSubagentMcpToolAuthorization, subagentMcpToolName } from "../types.ts";
 import { awaitIceToolDispatch, boundedIceToolOutput } from "./adapters.ts";
 import { canonicalPath, isApprovedSubagentPath, resolveScopeCandidate } from "./paths.ts";
+
+function hasGitPathComponent(path: string): boolean {
+	return path.split(sep).some((component) => component === ".git");
+}
 
 export function assertNoSymlinkComponents(path: string): void {
 	let current = resolve(path);
