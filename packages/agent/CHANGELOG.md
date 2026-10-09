@@ -18,6 +18,10 @@
 - Added bounded `Session.findEntriesOnBranch()` and `findEntryOnBranch()` queries with explicit traversal, filtering, ordering, and limit options.
 - Added a compile-complete `AgentHarness` v2 scaffold; unfinished operation paths reject with `HarnessNotImplemented` while durable execution is implemented.
 
+### Changed
+
+- Parallel tool calls now start executing as soon as their own preparation (`beforeToolCall`) finishes, instead of waiting until every call in the batch is prepared. Preparation and approval remain sequential and in call order; tool result messages keep assistant order.
+
 ### Fixed
 
 - Fixed an error stop reason reported after the run signal was aborted being surfaced, retried, and compacted as a provider failure: the agent loop now reclassifies such responses as `aborted`.
