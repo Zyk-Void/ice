@@ -2,6 +2,10 @@ import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import { type Component, type ScrollView, truncateToWidth, visibleWidth } from "@zykairotis/ice-tui";
 import type { Theme } from "../theme/theme.ts";
 import { keyText } from "./keybinding-hints.ts";
+import { ICE_ACTION_URL_PREFIX } from "./tool-toggle-link.ts";
+
+/** Internal link on the pill; InteractiveMode routes a click on it to scroll the transcript to the end. */
+export const JUMP_TO_BOTTOM_URL = `${ICE_ACTION_URL_PREFIX}scroll-bottom`;
 
 export class NewMessagesPill implements Component {
 	private readonly scrollView: Pick<ScrollView, "isFollowingEnd">;
@@ -53,7 +57,7 @@ export class NewMessagesPill implements Component {
 		const line = truncateToWidth(` ${label}${key ? ` (${key})` : ""} ↓ `, Math.max(0, width));
 		return [
 			" ".repeat(Math.max(0, Math.floor((width - visibleWidth(line)) / 2))) +
-				this.theme.bg("selectedBg", this.theme.fg("text", line)),
+				`\x1b]8;;${JUMP_TO_BOTTOM_URL}\x1b\\${this.theme.bg("selectedBg", this.theme.fg("text", line))}\x1b]8;;\x1b\\`,
 		];
 	}
 }

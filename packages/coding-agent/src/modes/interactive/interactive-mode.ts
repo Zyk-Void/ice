@@ -7,6 +7,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { formatWithOptions } from "node:util";
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import type { AuthEvent, AuthPrompt } from "@zykairotis/ice-ai";
 import type { AssistantMessage, ImageContent, Message, Model } from "@zykairotis/ice-ai/compat";
@@ -66,6 +67,7 @@ import {
 	detectCacheMiss,
 } from "../../core/cache-stats.ts";
 import type {
+	ActiveExtensionHandler,
 	AutocompleteProviderFactory,
 	EditorFactory,
 	ExtensionCommandContext,
@@ -145,7 +147,7 @@ import { FooterComponent, formatCwdForFooter, formatTokens } from "./components/
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
-import { NewMessagesPill } from "./components/new-messages-pill.ts";
+import { JUMP_TO_BOTTOM_URL, NewMessagesPill } from "./components/new-messages-pill.ts";
 import { NoticesViewComponent } from "./components/notices-view.ts";
 import {
 	type AuthSelectorProvider,
@@ -168,11 +170,12 @@ import {
 	type WorkingDetails,
 	WorkingStatusIndicator,
 } from "./components/status-indicator.ts";
+import { JUMP_TO_PROMPT_URL, StickyPromptHeader, TranscriptDocument } from "./components/sticky-prompt.ts";
 import { SubagentFooterSwitcher } from "./components/subagent-view-switcher.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { ToolGroupComponent } from "./components/tool-group.ts";
 import { describeExploration } from "./components/tool-summary.ts";
-import { parseToolToggleUrl, setToolToggleLinks } from "./components/tool-toggle-link.ts";
+import { isIceActionUrl, parseToolToggleUrl, setToolToggleLinks } from "./components/tool-toggle-link.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
@@ -180,6 +183,14 @@ import { UserMessageSelectorComponent } from "./components/user-message-selector
 import { editInExternalEditor } from "./external-editor.ts";
 import { getModelSearchText } from "./model-search.ts";
 import { NoticeCenter, SAFETY_NOTICE_CAPABILITIES } from "./notice-center.ts";
+import {
+	extensionNoticeCategory,
+	formatNoticesReport,
+	isMcpName,
+	noticeForSessionEvent,
+	resourceNotices,
+	subagentNotices,
+} from "./notice-sources.ts";
 import { resolveDefaultSymbolPreset, setSymbolPreset, sym } from "./theme/symbols.ts";
 import {
 	getAvailableThemes,
@@ -396,6 +407,8 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 	if (options.uiMode === "fullscreen") {
 		const onAction = options.onAction;
 		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, {
+			wheelScrollLines: 3,
+			isActionUrl: isIceActionUrl,
 			openUrl: (url) => {
 				if (!onAction?.(url)) openBrowser(url);
 			},
@@ -435,7 +448,8 @@ export class InteractiveMode {
 	private mainScreenRenderState: TuiMainScreenRenderState | undefined;
 	private loadedResourcesContainer: Container;
 	private chatContainer: Container;
-	private documentContainer: Container;
+	private documentContainer: TranscriptDocument;
+	private stickyPrompt: StickyPromptHeader | undefined;
 	private transcriptScrollView: TuiLayouts.ScrollView | undefined;
 	private fullscreenLayoutRoot: Component | undefined;
 	private pendingMessagesContainer: Container;
@@ -462,6 +476,12 @@ export class InteractiveMode {
 	private isInitialized = false;
 	private onInputCallback?: (text: string) => void;
 	private pendingUserInputs: string[] = [];
+	/** A submitted prompt shown before the session accepts it, while input and before_agent_start hooks run. */
+	private preparingPrompt: { echo: UserMessageComponent | undefined; indicator: WorkingStatusIndicator } | undefined;
+	private unsubscribeSlowHandlers?: () => void;
+	private restoreConsole?: () => void;
+	/** Arguments of running tool calls, kept for the notice of a failed call. */
+	private readonly noticeToolArgs = new Map<string, unknown>();
 	private activeStatusIndicator: StatusIndicator | undefined = undefined;
 	private readonly idleStatus = new IdleStatus();
 	private workingMessage: string | undefined = undefined;
@@ -623,6 +643,7 @@ export class InteractiveMode {
 		this.displayedViewPresentation = initialDisplayedView?.presentation;
 		this.agentViewBridge?.setParentSession(this.runtimeSession);
 		this.agentViewUnsubscribe = this.agentViewBridge?.subscribe(() => {
+			this.noticeCenter.replaceGroup("subagents", subagentNotices(this.agentViewBridge?.getSubagentOverview()));
 			void this.handleAgentViewChange();
 		});
 		const uiMode = options.uiMode ?? this.settingsManager.getUiMode();
@@ -646,7 +667,7 @@ export class InteractiveMode {
 		this.headerContainer = new Container();
 		this.loadedResourcesContainer = new Container();
 		this.chatContainer = new Container();
-		this.documentContainer = new Container();
+		this.documentContainer = new TranscriptDocument(this.chatContainer);
 		this.agentViewIdentity = new Text("", 0, 0);
 		this.documentContainer.addChild(this.headerContainer);
 		this.documentContainer.addChild(this.agentViewIdentity);
@@ -1025,6 +1046,12 @@ export class InteractiveMode {
 				getTranscriptId: () => `${this.displayedViewId}:${this.renderSession.sessionId}`,
 			},
 		);
+		this.stickyPrompt = new StickyPromptHeader(
+			this.documentContainer,
+			this.transcriptScrollView,
+			theme,
+			() => this.renderer.mode === "fullscreen",
+		);
 		const dock = new TuiLayouts.VStack([
 			{ component: newMessagesPill, shrink: 1, minSize: 0 },
 			{ component: this.pendingMessagesContainer, shrink: 1, minSize: 0 },
@@ -1036,6 +1063,7 @@ export class InteractiveMode {
 			{ component: this.footerContainer, shrink: 1, minSize: 1 },
 		]);
 		this.fullscreenLayoutRoot = new TuiLayouts.VStack([
+			{ component: this.stickyPrompt, shrink: 0, minSize: 0 },
 			{ component: this.transcriptScrollView, basis: 0, grow: 1, shrink: 1, minSize: 1 },
 			{ component: dock, basis: "auto", grow: 0, shrink: 1, minSize: 1 },
 		]);
@@ -1056,6 +1084,7 @@ export class InteractiveMode {
 
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
 		this.ui.start();
+		this.captureRuntimeConsole();
 		this.isInitialized = true;
 
 		await this.themeController.applyFromSettings();
@@ -1205,6 +1234,7 @@ export class InteractiveMode {
 		const modelsJsonError = this.session.modelRuntime.getError();
 		if (modelsJsonError) {
 			this.showError(`models.json error: ${modelsJsonError}`);
+			this.addModelsJsonNotice(modelsJsonError);
 		}
 
 		if (modelFallbackMessage) {
@@ -1242,6 +1272,9 @@ export class InteractiveMode {
 			} catch (error: unknown) {
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
+			} finally {
+				// Commands, input hooks that handle the text, and early errors never start a turn.
+				this.endPreparingPrompt();
 			}
 		}
 	}
@@ -1406,6 +1439,105 @@ export class InteractiveMode {
 		return this.options.verbose || this.toolOutputExpanded;
 	}
 
+	private noteSlowExtensionHandler(handler: ActiveExtensionHandler & { durationMs: number }): void {
+		const source = this.formatExtensionDisplayPath(handler.extensionPath);
+		this.noticeCenter.add({
+			id: `slow-extension-handler:${handler.extensionPath}:${handler.event}`,
+			kind: "warning",
+			category: extensionNoticeCategory(handler.extensionPath),
+			source,
+			title: `${handler.event} handler took ${(handler.durationMs / 1000).toFixed(1)}s`,
+			detail: "Prompts wait for this handler before they are sent to the model.",
+		});
+	}
+
+	/**
+	 * `/notices <prompt>`: send the prompt with a bounded snapshot of the notices panel attached as a
+	 * collapsible card, so the agent can see the failures and logs the panel shows.
+	 */
+	private async promptWithNotices(command: string, prompt: string): Promise<void> {
+		if (this.session.isCompacting) {
+			this.showWarning("Wait for compaction to finish before sending a prompt.");
+			return;
+		}
+		this.editor.setText("");
+		this.editor.addToHistory?.(command);
+		const report = {
+			customType: "notices",
+			content: formatNoticesReport(this.noticeCenter.list(), Date.now()),
+			display: true,
+			details: { notices: this.noticeCenter.list().length },
+		};
+		if (this.session.isStreaming) {
+			await this.session.sendCustomMessage(report, { deliverAs: "steer" });
+			await this.session.prompt(prompt, { streamingBehavior: "steer" });
+			this.updatePendingMessagesDisplay();
+			this.ui.requestRender();
+			return;
+		}
+		// Delivered with the user message when the turn starts.
+		await this.session.sendCustomMessage(report, { deliverAs: "nextTurn" });
+		this.flushPendingBashComponents();
+		if (this.onInputCallback) {
+			this.beginPreparingPrompt(prompt);
+			this.onInputCallback(prompt);
+		} else {
+			this.pendingUserInputs.push(prompt);
+		}
+	}
+
+	/** Echo a submitted prompt and show what it waits on until the session starts the turn. */
+	private beginPreparingPrompt(text: string): void {
+		this.endPreparingPrompt();
+		const showsParent = !this.agentViewBridge || this.displayView?.kind === "parent";
+		// Slash commands may never become a user message, so only plain prompts are echoed.
+		const echo =
+			showsParent && !text.startsWith("/")
+				? new UserMessageComponent(
+						text,
+						this.getMarkdownThemeWithSettings(),
+						this.outputPad,
+						this.getMarkdownTransformers(),
+					)
+				: undefined;
+		if (echo) {
+			this.stampMessageAppearance(echo);
+			this.chatContainer.addChild(echo);
+		}
+		const startedAt = Date.now();
+		const indicator = new WorkingStatusIndicator(
+			this.ui,
+			"Preparing",
+			this.getEffectiveWorkingIndicator(),
+			this.effectiveAppearance().statusIndicators.working,
+		);
+		indicator.setDetails(() => {
+			const active = this.session.extensionRunner.getActiveHandler();
+			return {
+				startedAt,
+				outputTokens: 0,
+				outputTokensEstimated: false,
+				interruptible: false,
+				detail: active
+					? `Waiting on ${this.formatExtensionDisplayPath(active.extensionPath)} (${active.event})`
+					: "Sending prompt",
+			};
+		});
+		this.preparingPrompt = { echo, indicator };
+		this.showStatusIndicator(indicator);
+		this.ui.requestRender();
+	}
+
+	/** Drop the echo (the session's own user message replaces it) and the preparing indicator if still shown. */
+	private endPreparingPrompt(): void {
+		const preparing = this.preparingPrompt;
+		if (!preparing) return;
+		this.preparingPrompt = undefined;
+		if (preparing.echo) this.chatContainer.removeChild(preparing.echo);
+		if (this.activeStatusIndicator === preparing.indicator) this.clearStatusIndicator();
+		this.ui.requestRender();
+	}
+
 	private addExtensionConsoleNotice(entry: ExtensionConsoleEntry): void {
 		const text = entry.text.trim();
 		if (!text) return;
@@ -1414,6 +1546,7 @@ export class InteractiveMode {
 		this.noticeCenter.add({
 			id: `extension-console:${entry.extensionPath}:${text}`,
 			kind,
+			category: extensionNoticeCategory(entry.extensionPath),
 			source: this.formatExtensionDisplayPath(entry.extensionPath),
 			title: firstLine,
 			detail: text === firstLine ? undefined : text,
@@ -1424,6 +1557,7 @@ export class InteractiveMode {
 	private applySymbolsSetting(): void {
 		const symbols = this.settingsManager.getSymbols();
 		setSymbolPreset(symbols === "auto" ? resolveDefaultSymbolPreset(process.env) : symbols);
+		this.defaultEditor.setPrompt(`${sym("prompt")} `);
 	}
 
 	private getElevatedCapabilities(): string[] {
@@ -1814,6 +1948,35 @@ export class InteractiveMode {
 		return lines.join("\n");
 	}
 
+	/** Load problems of skills, prompts, themes, and extensions, refreshed whenever resources are shown or reloaded. */
+	private syncResourceNotices(): void {
+		const loader = this.session.resourceLoader;
+		const extensionDiagnostics: ResourceDiagnostic[] = [
+			...loader
+				.getExtensions()
+				.errors.map((error) => ({ type: "error" as const, message: error.error, path: error.path })),
+			...this.session.extensionRunner.getCommandDiagnostics(),
+			...this.getBuiltInCommandConflictDiagnostics(this.session.extensionRunner),
+			...this.session.extensionRunner.getShortcutDiagnostics(),
+		];
+		this.noticeCenter.replaceGroup(
+			"resources",
+			resourceNotices(
+				[
+					{ category: "skills", diagnostics: loader.getSkills().diagnostics },
+					{ category: "prompts", diagnostics: loader.getPrompts().diagnostics },
+					{ category: "themes", diagnostics: loader.getThemes().diagnostics },
+					{ category: "extensions", diagnostics: extensionDiagnostics },
+				],
+				(value) => this.formatDisplayPath(value),
+			).map((notice) =>
+				notice.category === "extensions" && isMcpName(notice.source)
+					? { ...notice, category: "mcp" as const }
+					: notice,
+			),
+		);
+	}
+
 	private showLoadedResources(options?: {
 		extensions?: Array<{ path: string; sourceInfo?: SourceInfo }>;
 		force?: boolean;
@@ -1823,6 +1986,7 @@ export class InteractiveMode {
 	}): void {
 		// Resource rendering is idempotent; chat clears no longer clear this separate container.
 		this.loadedResourcesContainer.clear();
+		this.syncResourceNotices();
 		const target = options?.compact ? this.chatContainer : this.loadedResourcesContainer;
 		// Startup shows one summary row; full sections appear when expanded.
 		const sections: Array<{ name: string; body: string; color: ThemeColor }> = [];
@@ -2120,9 +2284,13 @@ export class InteractiveMode {
 				}
 			},
 			onError: (error) => {
-				this.showExtensionError(error.extensionPath, error.error, error.stack);
+				this.showExtensionError(error.extensionPath, error.event, error.error, error.stack);
 			},
 		});
+		this.unsubscribeSlowHandlers?.();
+		this.unsubscribeSlowHandlers = this.session.extensionRunner.onSlowHandler((handler) =>
+			this.noteSlowExtensionHandler(handler),
+		);
 
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 		this.setupAutocompleteProvider();
@@ -3257,11 +3425,24 @@ export class InteractiveMode {
 			this.noticeCenter.add({
 				id: options.id,
 				kind: type,
+				category: options.id.startsWith("safety:") ? "session" : isMcpName(message) ? "mcp" : "extensions",
 				source: "extension",
 				title: message,
 				sticky: options.sticky,
 			});
 			return;
+		}
+		// Warnings and errors also stay in the notices panel after they scroll out of the chat.
+		if (type === "warning" || type === "error") {
+			const title = message.split("\n", 1)[0] ?? message;
+			this.noticeCenter.add({
+				id: `notify:${type}:${message}`,
+				kind: type,
+				category: isMcpName(message) ? "mcp" : "extensions",
+				source: "extension",
+				title,
+				detail: title === message ? undefined : message,
+			});
 		}
 		if (type === "error") {
 			this.showError(message);
@@ -3355,21 +3536,20 @@ export class InteractiveMode {
 	/**
 	 * Show an extension error in the UI.
 	 */
-	private showExtensionError(extensionPath: string, error: string, stack?: string): void {
-		const errorMsg = `Extension "${extensionPath}" error: ${error}`;
-		const errorText = new Text(theme.fg("error", errorMsg), 1, 0);
-		this.chatContainer.addChild(errorText);
-		if (stack) {
-			// Show stack trace in dim color, indented
-			const stackLines = stack
-				.split("\n")
-				.slice(1) // Skip first line (duplicates error message)
-				.map((line) => theme.fg("dim", `  ${line.trim()}`))
-				.join("\n");
-			if (stackLines) {
-				this.chatContainer.addChild(new Text(stackLines, 1, 0));
-			}
-		}
+	/** Extension failures go to the notices view (footer badge) instead of interleaving stack traces with the chat. */
+	private showExtensionError(extensionPath: string, event: string, error: string, stack?: string): void {
+		const source = this.formatExtensionDisplayPath(extensionPath);
+		this.noticeCenter.add({
+			id: `extension-error:${extensionPath}:${event}:${error}`,
+			kind: "error",
+			category: extensionNoticeCategory(extensionPath),
+			source,
+			title: `${event} handler failed: ${error}`,
+			detail: stack,
+		});
+		this.showStatus(
+			`Extension ${source} failed in ${event} ${sym("separator")} ${keyText("app.notices.show")} for details`,
+		);
 		this.ui.requestRender();
 	}
 
@@ -3424,6 +3604,7 @@ export class InteractiveMode {
 		this.ui.onDebug = () => this.handleDebugCommand();
 		this.defaultEditor.onAction("app.model.select", () => this.showModelSelector());
 		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
+		this.defaultEditor.onAction("app.tools.collapse", () => this.setToolsExpanded(false));
 		this.defaultEditor.onAction("app.notices.show", () => this.showNoticesView());
 		this.defaultEditor.onConditionalAction(
 			"app.shortcuts.show",
@@ -3603,6 +3784,10 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
+			if (text.startsWith("/notices ")) {
+				await this.promptWithNotices(text, text.slice("/notices".length).trim());
+				return;
+			}
 			if (text === "/resources") {
 				this.showLoadedResources({ force: true, compact: true });
 				this.editor.setText("");
@@ -3758,6 +3943,7 @@ export class InteractiveMode {
 			this.flushPendingBashComponents();
 
 			if (this.onInputCallback) {
+				this.beginPreparingPrompt(text);
 				this.onInputCallback(text);
 			} else {
 				this.pendingUserInputs.push(text);
@@ -3768,7 +3954,70 @@ export class InteractiveMode {
 
 	private subscribeToAgent(): void {
 		this.unsubscribe = this.session.subscribe(async (event) => {
+			this.recordSessionEventNotice(event);
 			await this.handleEvent(event);
+		});
+	}
+
+	/** Failed tools, model errors and retries, and compaction outcomes of the main session go to notices. */
+	private recordSessionEventNotice(event: AgentSessionEvent): void {
+		if (event.type === "tool_execution_start") {
+			this.noticeToolArgs.set(event.toolCallId, event.args);
+			return;
+		}
+		const args = event.type === "tool_execution_end" ? this.noticeToolArgs.get(event.toolCallId) : undefined;
+		if (event.type === "tool_execution_end") this.noticeToolArgs.delete(event.toolCallId);
+		const notice = noticeForSessionEvent(event, args);
+		if (notice) this.noticeCenter.add(notice);
+	}
+
+	/**
+	 * While the TUI owns the terminal, console writes (an MCP server failing later, an extension warning from
+	 * a handler) would draw over the screen; keep them as notices instead. Output passes through untouched
+	 * while the TUI is stopped (external editor, suspend) and during shutdown.
+	 */
+	private captureRuntimeConsole(): void {
+		if (this.restoreConsole) return;
+		const levels = ["log", "info", "warn", "error"] as const;
+		const originals = levels.map((level) => [level, console[level]] as const);
+		for (const [level, original] of originals) {
+			console[level] = (...args: unknown[]) => {
+				if (!this.ui.isRunning || this.isShuttingDown) {
+					original.apply(console, args);
+					return;
+				}
+				this.addConsoleNotice(level, formatWithOptions({}, ...args));
+			};
+		}
+		this.restoreConsole = () => {
+			for (const [level, original] of originals) console[level] = original;
+			this.restoreConsole = undefined;
+		};
+	}
+
+	private addConsoleNotice(level: "log" | "info" | "warn" | "error", output: string): void {
+		const text = output.trim();
+		if (!text) return;
+		const title = text.split("\n", 1)[0] ?? text;
+		this.noticeCenter.add({
+			id: `console:${level}:${text}`,
+			kind: level === "error" ? "error" : level === "warn" ? "warning" : "info",
+			category: isMcpName(text) ? "mcp" : "console",
+			source: `console.${level}`,
+			title,
+			detail: title === text ? undefined : text,
+			quiet: level === "log" || level === "info",
+		});
+	}
+
+	private addModelsJsonNotice(error: string): void {
+		this.noticeCenter.add({
+			id: `models-json:${error}`,
+			kind: "error",
+			category: "model",
+			source: "models.json",
+			title: `models.json could not be loaded: ${error.split("\n", 1)[0]}`,
+			detail: error,
 		});
 	}
 
@@ -3837,6 +4086,7 @@ export class InteractiveMode {
 					this.ui.requestRender();
 				} else if (event.message.role === "user") {
 					if (this.isIceInternalChildMessage(event.message, displayedView, eventSession)) break;
+					if (!sourceSession || sourceSession === this.runtimeSession) this.endPreparingPrompt();
 					this.addMessageToChat(event.message);
 					if (!sourceSession || sourceSession === this.runtimeSession) this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
@@ -4619,6 +4869,7 @@ export class InteractiveMode {
 	private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
+		this.restoreConsole?.();
 		// Keep signal handlers registered until terminal cleanup has completed.
 		// `signal-exit` checks the listener list during the same SIGTERM/SIGHUP
 		// dispatch and re-sends the signal if only its own listeners remain.
@@ -5246,6 +5497,17 @@ export class InteractiveMode {
 
 	/** Routes internal links clicked in fullscreen; returns false for URLs the browser should open. */
 	private handleUiAction(url: string): boolean {
+		if (url === JUMP_TO_BOTTOM_URL) {
+			this.transcriptScrollView?.scrollToEnd();
+			this.ui.requestRender();
+			return true;
+		}
+		if (url === JUMP_TO_PROMPT_URL) {
+			const row = this.stickyPrompt?.targetRow;
+			if (row !== undefined) this.transcriptScrollView?.scrollTo(row);
+			this.ui.requestRender();
+			return true;
+		}
 		const id = parseToolToggleUrl(url);
 		if (id === undefined) return false;
 		const cells = this.toolCells();
@@ -5331,6 +5593,7 @@ export class InteractiveMode {
 		this.noticeCenter.add({
 			id: "ice-update",
 			kind: "update",
+			category: "updates",
 			source: APP_NAME,
 			title: `${APP_NAME} ${release.version} is available. Run ${APP_NAME} update`,
 			detail: [note, "Changelog: https://ice.dev/changelog"].filter(Boolean).join("\n\n"),
@@ -5341,6 +5604,7 @@ export class InteractiveMode {
 		this.noticeCenter.add({
 			id: "package-updates",
 			kind: "update",
+			category: "updates",
 			source: "package-manager",
 			title: `Package updates available. Run ${APP_NAME} update --extensions`,
 			detail: packages.map((pkg) => `- ${pkg}`).join("\n"),
@@ -7091,6 +7355,7 @@ export class InteractiveMode {
 			const modelsJsonError = this.session.modelRuntime.getError();
 			if (modelsJsonError) {
 				this.showError(`models.json error: ${modelsJsonError}`);
+				this.addModelsJsonNotice(modelsJsonError);
 			}
 			this.showStatus(
 				savedImplicitProjectTrust
@@ -7464,6 +7729,7 @@ export class InteractiveMode {
 				title: "Transcript",
 				rows: [
 					row(key("app.tools.expand"), "Expand tool output"),
+					row(key("app.tools.collapse"), "Collapse all tool output"),
 					row(key("app.thinking.toggle"), "Show thinking"),
 					row(key("app.notices.show"), "Notices"),
 					row(key("app.message.copy"), "Copy last reply"),
@@ -7479,7 +7745,9 @@ export class InteractiveMode {
 
 	private showNoticesView(): void {
 		this.showSelector((done) => {
-			const view = new NoticesViewComponent(this.noticeCenter, done);
+			const view = new NoticesViewComponent(this.noticeCenter, this.keybindings, done, {
+				requestRender: () => this.ui.requestRender(),
+			});
 			return { component: view, focus: view, dispose: () => view.dispose() };
 		});
 	}
@@ -7784,6 +8052,7 @@ export class InteractiveMode {
 		// session's appearance table style after teardown.
 		setDefaultTableStyle(this.previousDefaultTableStyle);
 		setDiffAppearance(undefined);
+		this.restoreConsole?.();
 		setInteractiveChromeThemeOverride(undefined);
 		this.agentSwitcher?.dispose();
 		this.agentSwitcher = undefined;

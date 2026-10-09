@@ -144,7 +144,11 @@ This routing remains configurable through the ordinary action bindings. For exam
 | Keybinding id | Default | Description |
 |--------|---------|-------------|
 | `app.tools.expand` | `ctrl+o` | Expand the newest 3 collapsed tool calls per press, then collapse all after the oldest; in fullscreen mode, click a tool call's title or `+N lines` hint to toggle just that call |
-| `app.notices.show` | `f2` | Show warnings, update notices, and captured extension output |
+| `app.tools.collapse` | `alt+o` | Collapse all expanded tool calls at once |
+| `app.notices.show` | `f2` | Open the notices panel (also `/notices`): errors, warnings, and logged events from extensions, MCP, tools, skills, prompts, themes, compaction, subagents, the model, and updates |
+| `app.notices.dismiss` | `d` | Notices panel: dismiss the selected notice |
+| `app.notices.clear` | `x` | Notices panel: dismiss every notice in the selected filter |
+| `app.notices.copy` | `c` | Notices panel: copy the selected notice |
 | `app.shortcuts.show` | `?` | Show the keyboard shortcut overview; only when the editor is empty, otherwise `?` is typed |
 | `app.tasks.background` | `ctrl+b` | Move a running bash command or subagent wait to the background; falls through to the editor (cursor left) when nothing can be backgrounded |
 | `app.subagents.open` | `ctrl+shift+a` | Open the Agent Hub (same as `/agents`) |

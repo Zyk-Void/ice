@@ -49,6 +49,8 @@ export interface WorkingDetails {
 	thinking?: string;
 	/** Detail row text (running tool title or a tip); undefined hides the row. */
 	detail?: string;
+	/** False hides the interrupt hint, e.g. while a prompt waits on extension hooks that the key cannot cancel. */
+	interruptible?: boolean;
 }
 
 /** "0s", "42s", "1m 18s", "1h 02m". */
@@ -112,7 +114,7 @@ export class WorkingStatusIndicator extends StatusIndicator {
 		}
 		if (details.thinking && details.thinking !== "off") facts.push(`thinking ${details.thinking}`);
 		const interruptKey = keyText("app.interrupt");
-		if (interruptKey) facts.push(`${interruptKey} to interrupt`);
+		if (interruptKey && details.interruptible !== false) facts.push(`${interruptKey} to interrupt`);
 		const suffix = theme.fg("dim", ` (${facts.join(` ${sym("separator")} `)})`);
 		const [first = "", ...rest] = lines.slice(1);
 		const result = [lines[0]!, truncateToWidth(first.trimEnd() + suffix, width, theme.fg("dim", sym("ellipsis")))];

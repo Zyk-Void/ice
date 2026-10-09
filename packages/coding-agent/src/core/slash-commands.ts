@@ -30,7 +30,10 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "session", description: "Show session info and stats" },
 	{ name: "changelog", description: "Show changelog entries" },
 	{ name: "hotkeys", description: "Show all keyboard shortcuts" },
-	{ name: "notices", description: "Show warnings, update notices, and extension output" },
+	{
+		name: "notices",
+		description: "Open the notices panel; /notices <prompt> sends the prompt with the current notices attached",
+	},
 	{ name: "tasks", description: "Show background commands, or open the subagent chooser" },
 	{ name: "resources", description: "Show loaded context files, skills, prompts, and extensions" },
 	{ name: "fork", description: "Create a new fork from a previous user message" },

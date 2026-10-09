@@ -23,7 +23,8 @@ export type SymbolKey =
 	| "ellipsis"
 	| "warning"
 	| "error"
-	| "update";
+	| "update"
+	| "prompt";
 
 const UNICODE: Record<SymbolKey, string> = {
 	logo: "❄",
@@ -43,6 +44,7 @@ const UNICODE: Record<SymbolKey, string> = {
 	warning: "⚠",
 	error: "✗",
 	update: "↑",
+	prompt: "❯",
 };
 
 const SYMBOL_PRESETS: Record<SymbolPreset, Record<SymbolKey, string>> = {
@@ -67,6 +69,7 @@ const SYMBOL_PRESETS: Record<SymbolPreset, Record<SymbolKey, string>> = {
 		warning: "!",
 		error: "x",
 		update: "^",
+		prompt: ">",
 	},
 };
 

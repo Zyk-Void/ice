@@ -4,7 +4,7 @@ import { Container, ScrollView, setKeybindings, Text, TuiAltScreen, VStack, visi
 import { beforeEach, describe, expect, it } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
-import { NewMessagesPill } from "../src/modes/interactive/components/new-messages-pill.ts";
+import { JUMP_TO_BOTTOM_URL, NewMessagesPill } from "../src/modes/interactive/components/new-messages-pill.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 
 describe("new messages pill", () => {
@@ -61,6 +61,45 @@ describe("new messages pill", () => {
 		expect(pill.render(80).join("")).toContain("ctrl+end");
 		for (const width of [0, 1, 5, 20, 80]) {
 			expect(visibleWidth(pill.render(width)[0]!)).toBeLessThanOrEqual(width);
+		}
+	});
+
+	it("scrolls to the end when the pill is clicked", async () => {
+		const terminal = new VirtualTerminal(80, 12);
+		const document = new Text(Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n"), 0, 0);
+		const scroll = new ScrollView(document, { follow: "end", primary: true });
+		const opened: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			openUrl: (url) => {
+				opened.push(url);
+				if (url === JUMP_TO_BOTTOM_URL) scroll.scrollToEnd();
+			},
+		});
+		const pill = new NewMessagesPill(scroll, () => [], theme);
+		const editor = { render: () => ["editor"], invalidate: () => {}, handleInput: () => {} };
+		tui.addChild(new Container());
+		tui.setLayoutRoot(
+			new VStack([
+				{ component: scroll, basis: 0, grow: 1 },
+				{ component: new VStack([{ component: pill }, { component: editor }]) },
+			]),
+		);
+		tui.setFocus(editor);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			terminal.sendInput("\x1b[5~");
+			await terminal.waitForRender();
+			const row = terminal.getViewport().findIndex((line) => line.includes("Jump to bottom"));
+			expect(row).toBeGreaterThanOrEqual(0);
+			const col = terminal.getViewport()[row]!.indexOf("Jump") + 1;
+			terminal.sendInput(`\x1b[<0;${col};${row + 1}M`);
+			terminal.sendInput(`\x1b[<0;${col};${row + 1}m`);
+			await terminal.waitForRender();
+			expect(opened).toEqual([JUMP_TO_BOTTOM_URL]);
+			expect(scroll.isFollowingEnd).toBe(true);
+		} finally {
+			tui.stop();
 		}
 	});
 

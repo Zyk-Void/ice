@@ -8,11 +8,14 @@ import { TuiMainScreen } from "../../tui/src/tui-main-screen.ts";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
+import { createDefaultAppearance } from "../src/modes/interactive/appearance/appearance-defaults.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
+import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import { NoticeCenter } from "../src/modes/interactive/notice-center.ts";
 import { setSymbolPreset } from "../src/modes/interactive/theme/symbols.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 function renderLastLine(container: Container, width = 120): string {
 	const last = container.children[container.children.length - 1];
@@ -118,6 +121,76 @@ describe("InteractiveMode.showStatus", () => {
 		// adds spacer + text
 		expect(fakeThis.chatContainer.children).toHaveLength(5);
 		expect(renderLastLine(fakeThis.chatContainer)).toContain("STATUS_TWO");
+	});
+});
+
+describe("InteractiveMode preparing prompt", () => {
+	beforeAll(() => initTheme("dark"));
+
+	function mode(active?: { extensionPath: string; event: string; startedAt: number }) {
+		const fake = Object.assign(Object.create(InteractiveMode.prototype), {
+			chatContainer: new Container(),
+			statusContainer: new Container(),
+			activeStatusIndicator: undefined,
+			preparingPrompt: undefined,
+			noticeCenter: new NoticeCenter(),
+			options: { uiMode: "fullscreen" },
+			ui: { requestRender: vi.fn(), getClearOnShrink: () => false },
+			outputPad: 1,
+			agentViewBridge: undefined,
+			getMarkdownThemeWithSettings: () => getMarkdownTheme(),
+			getMarkdownTransformers: () => [],
+			stampMessageAppearance: () => {},
+			getEffectiveWorkingIndicator: () => undefined,
+			effectiveAppearance: () => createDefaultAppearance(),
+			formatExtensionDisplayPath: (value: string) => value,
+			showStatus: vi.fn(),
+		});
+		// `session` is a getter on the prototype, so the fake defines its own value.
+		Object.defineProperty(fake, "session", { value: { extensionRunner: { getActiveHandler: () => active } } });
+		return fake as any;
+	}
+
+	test("echoes a submitted prompt and names the hook it waits on until the turn starts", () => {
+		const fake = mode({ extensionPath: "ice-cognee", event: "before_agent_start", startedAt: Date.now() });
+		fake.beginPreparingPrompt("explain the bug");
+		try {
+			const echo = fake.chatContainer.children[0];
+			expect(echo).toBeInstanceOf(UserMessageComponent);
+			expect(echo.getText()).toBe("explain the bug");
+			const status = normalizeRenderedOutput(fake.statusContainer);
+			expect(status).toContain("Preparing");
+			expect(status).toContain("Waiting on ice-cognee (before_agent_start)");
+			expect(status).not.toContain("to interrupt");
+		} finally {
+			fake.endPreparingPrompt();
+		}
+		expect(fake.chatContainer.children).toEqual([]);
+		expect(fake.statusContainer.children).toEqual([]);
+		expect(fake.activeStatusIndicator).toBeUndefined();
+	});
+
+	test("does not echo slash commands and keeps a newer indicator when the turn already started", () => {
+		const fake = mode();
+		fake.beginPreparingPrompt("/compact");
+		expect(fake.chatContainer.children).toEqual([]);
+		expect(normalizeRenderedOutput(fake.statusContainer)).toContain("Sending prompt");
+		const working = { kind: "working", dispose: vi.fn(), render: () => ["working"], invalidate: () => {} };
+		fake.showStatusIndicator(working);
+		fake.endPreparingPrompt();
+		expect(fake.activeStatusIndicator).toBe(working);
+	});
+
+	test("sends extension errors and slow hooks to notices instead of the chat", () => {
+		const fake = mode();
+		fake.showExtensionError("ext.ts", "before_agent_start", "boom", "Error: boom\n    at x");
+		fake.noteSlowExtensionHandler({ extensionPath: "ext.ts", event: "input", startedAt: 0, durationMs: 2400 });
+		expect(fake.chatContainer.children).toEqual([]);
+		expect(fake.showStatus).toHaveBeenCalledOnce();
+		expect(fake.noticeCenter.list().map((notice: any) => [notice.kind, notice.source, notice.title])).toEqual([
+			["error", "ext.ts", "before_agent_start handler failed: boom"],
+			["warning", "ext.ts", "input handler took 2.4s"],
+		]);
 	});
 });
 
@@ -719,6 +792,8 @@ describe("InteractiveMode.showLoadedResources", () => {
 				(InteractiveMode as any).prototype.getCompactExtensionLabels.call(fakeThis, extensions),
 			formatDiagnostics: () => "diagnostics",
 			getBuiltInCommandConflictDiagnostics: () => [],
+			noticeCenter: new NoticeCenter(),
+			syncResourceNotices: () => (InteractiveMode as any).prototype.syncResourceNotices.call(fakeThis),
 		};
 
 		if (options.useRealScopeGroups) {
@@ -1404,6 +1479,18 @@ describe("InteractiveMode.showLoadedResources", () => {
 		});
 
 		expect(fakeThis.loadedResourcesContainer.children).toHaveLength(0);
+	});
+
+	test("records skill diagnostics as notices even when the startup listing is quiet", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: true,
+			skillDiagnostics: [{ type: "error", message: "SKILL.md has no frontmatter" }],
+		});
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis);
+		expect(fakeThis.loadedResourcesContainer.children).toEqual([]);
+		expect(fakeThis.noticeCenter.list()).toMatchObject([
+			{ kind: "error", category: "skills", title: "SKILL.md has no frontmatter", group: "resources" },
+		]);
 	});
 
 	test("still shows diagnostics on quiet startup when requested", () => {

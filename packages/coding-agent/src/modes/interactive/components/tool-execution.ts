@@ -88,6 +88,8 @@ export class ToolExecutionComponent extends Container {
 	private hideComponent = false;
 	private readonly compact: boolean;
 	private leadingSpacer = true;
+	/** Lines of a finished cell, reused until a state change; fullscreen scrolling re-renders every cell per frame. */
+	private renderCache?: { width: number; lines: string[] };
 
 	constructor(
 		toolName: string,
@@ -308,6 +310,7 @@ export class ToolExecutionComponent extends Container {
 
 	setToggleId(id: string): void {
 		this.toggleId = id;
+		this.renderCache = undefined;
 	}
 
 	getToolName(): string {
@@ -330,6 +333,7 @@ export class ToolExecutionComponent extends Container {
 	/** Grouped members omit the blank line that separates standalone transcript items. */
 	setLeadingSpacer(enabled: boolean): void {
 		this.leadingSpacer = enabled;
+		this.renderCache = undefined;
 	}
 
 	/** State-specific glyph: pending arrow, completed check, or failure cross. */
@@ -456,7 +460,12 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override render(width: number): string[] {
-		return linkToolToggle(this.renderCell(width), this.toggleId);
+		// Running cells redraw live output, so only finished cells are cached.
+		if (this.isPartial) return linkToolToggle(this.renderCell(width), this.toggleId);
+		if (this.renderCache?.width !== width) {
+			this.renderCache = { width, lines: linkToolToggle(this.renderCell(width), this.toggleId) };
+		}
+		return this.renderCache.lines;
 	}
 
 	private renderCell(width: number): string[] {
@@ -497,6 +506,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private updateDisplay(): void {
+		this.renderCache = undefined;
 		const state = this.isPartial ? "pending" : this.result?.isError ? "error" : "success";
 		const bgFn = (text: string): string => this.toolBg(state, text);
 

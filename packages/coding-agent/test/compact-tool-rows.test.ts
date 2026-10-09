@@ -296,6 +296,29 @@ describe("ToolGroupComponent", () => {
 		expect(stripAnsi(group.render(240)[2]!)).toContain("…");
 	});
 
+	test("reuses settled renders until a member, expansion, or invalidation changes them", () => {
+		const group = new ToolGroupComponent(false);
+		const first = row("read", { path: "a.ts" });
+		group.add(first);
+		first.updateResult(result("a"), true);
+		expect(group.render(60)).not.toBe(group.render(60));
+		first.updateResult(result("a"));
+		const settled = group.render(60);
+		expect(group.render(60)).toBe(settled);
+		expect(first.render(60)).toBe(first.render(60));
+
+		const second = row("read", { path: "b.ts" });
+		second.updateResult(result("b"));
+		group.add(second);
+		expect(text(group.render(60))).toContain("    Read b.ts");
+		group.setExpanded(true);
+		expect(text(group.render(60))).toContain("    r:b");
+		const expanded = group.render(60);
+		group.invalidate();
+		expect(group.render(60)).not.toBe(expanded);
+		expect(group.render(40)).not.toBe(group.render(60));
+	});
+
 	test("caps long runs with a more hint", () => {
 		const group = new ToolGroupComponent(false);
 		for (let index = 0; index < 9; index++) {

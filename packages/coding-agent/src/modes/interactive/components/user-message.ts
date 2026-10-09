@@ -46,6 +46,11 @@ export class UserMessageComponent extends Container {
 		this.rebuild();
 	}
 
+	/** The prompt as the user wrote it. */
+	getText(): string {
+		return this.text;
+	}
+
 	setOutputPad(padding: number): void {
 		this.outputPad = padding;
 		this.rebuild();

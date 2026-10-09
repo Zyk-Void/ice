@@ -11,6 +11,7 @@ export {
 	loadExtensions,
 } from "./loader.ts";
 export type {
+	ActiveExtensionHandler,
 	ExtensionErrorListener,
 	ForkHandler,
 	NavigateTreeHandler,

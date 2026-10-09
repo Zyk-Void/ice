@@ -32,44 +32,40 @@ describe("SessionHeaderComponent", () => {
 		setSymbolPreset("unicode");
 	});
 
-	test("renders the wordmark beside model, directory, mode, and loaded resources", () => {
+	test("renders a compact three-line banner beside the penguin", () => {
 		const lines = strip(new SessionHeaderComponent(() => data()).render(120));
-		expect(lines[0]).toMatch(/^╭─+╮$/);
-		expect(lines[1]).toMatch(/^│ ██╗ ██████╗███████╗ {3}❄ ICE {2}v1\.2\.3 +│$/);
-		expect(lines[3]).toMatch(/^│ ██║██║ {5}█████╗ {5}model {6}gpt-test · high +\/model │$/);
-		expect(lines[4]).toContain("directory  ~/work/project");
-		expect(lines[5]).toContain("mode       build · bash · external");
-		expect(lines[6]).toContain("loaded     2 skills");
-		expect(lines[7]).toMatch(/^╰─+╯$/);
-		expect(lines[8]).toBe("  ctrl+o details");
-		expect(new Set(lines.slice(0, 8).map((line) => visibleWidth(line))).size).toBe(1);
+		expect(lines).toEqual([
+			" ▄███▄   ICE v1.2.3",
+			"█▀█▀█▀█  gpt-test · high · build · bash · external",
+			" ▀▄▄▄▀   ~/work/project · 2 skills",
+			"ctrl+o details",
+		]);
 	});
 
-	test("uses the ASCII wordmark with the ascii symbol preset", () => {
+	test("uses the ASCII penguin with the ascii symbol preset", () => {
 		setSymbolPreset("ascii");
 		const lines = strip(new SessionHeaderComponent(() => data()).render(120));
 		setSymbolPreset("unicode");
-		expect(lines[0]).toMatch(/^\+-+\+$/);
-		expect(lines[2]).toContain("|_ _/ ___| ____|");
+		expect(lines[1]).toBe("//\\\\  gpt-test - high - build - bash - external");
 		for (const line of lines) expect(/^[\x20-\x7e]*$/.test(line)).toBe(true);
 	});
 
-	test("drops the wordmark when narrow and never exceeds the terminal width", () => {
+	test("drops loaded resources before truncating the directory and never exceeds the width", () => {
 		const longCwd = `~/${"very-long-directory/".repeat(8)}leaf`;
-		for (const width of [44, 60, 120]) {
+		for (const width of [30, 44, 60, 120]) {
 			const lines = new SessionHeaderComponent(() => data({ cwd: longCwd })).render(width);
 			for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
-			expect(strip(lines).some((line) => line.includes("…") && line.includes("leaf"))).toBe(true);
+			const location = strip(lines)[2];
+			expect(location).toContain("…");
+			expect(location).toContain("leaf");
+			expect(location).not.toContain("skills");
 		}
-		expect(strip(new SessionHeaderComponent(() => data()).render(50)).join("\n")).not.toContain("██");
 	});
 
-	test("falls back to plain rows on narrow terminals and appends help when expanded", () => {
+	test("drops the penguin on narrow terminals and appends help when expanded", () => {
 		const header = new SessionHeaderComponent(() => data({ mode: undefined, capabilities: [], loaded: "" }), true);
 		const lines = strip(header.render(30));
-		expect(lines[0]).toBe("❄ ICE  v1.2.3");
-		expect(lines.some((line) => line.startsWith("╭"))).toBe(false);
-		expect(lines.some((line) => line.startsWith("mode ") || line.startsWith("loaded "))).toBe(false);
+		expect(lines.slice(0, 3)).toEqual(["ICE v1.2.3", "gpt-test · high", "~/work/project"]);
 		expect(lines.slice(-2)).toEqual([" line one", " line two"]);
 	});
 });

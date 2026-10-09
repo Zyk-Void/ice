@@ -21,7 +21,11 @@ export interface AppKeybindings {
 	"app.model.select": true;
 	"app.model.toggleFavorite": true;
 	"app.tools.expand": true;
+	"app.tools.collapse": true;
 	"app.notices.show": true;
+	"app.notices.dismiss": true;
+	"app.notices.clear": true;
+	"app.notices.copy": true;
 	"app.tasks.background": true;
 	"app.shortcuts.show": true;
 	"app.subagents.attach": true;
@@ -102,7 +106,14 @@ export const KEYBINDINGS = {
 	"app.model.select": { defaultKeys: "ctrl+l", description: "Open model selector" },
 	"app.model.toggleFavorite": { defaultKeys: "shift+f", description: "Toggle favorite in model selector" },
 	"app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output" },
+	"app.tools.collapse": { defaultKeys: "alt+o", description: "Collapse all tool output" },
 	"app.notices.show": { defaultKeys: "f2", description: "Show warnings and notices" },
+	"app.notices.dismiss": { defaultKeys: "d", description: "Notices panel: dismiss the selected notice" },
+	"app.notices.clear": {
+		defaultKeys: "x",
+		description: "Notices panel: dismiss every notice in the selected filter",
+	},
+	"app.notices.copy": { defaultKeys: "c", description: "Notices panel: copy the selected notice" },
 	"app.shortcuts.show": {
 		defaultKeys: "?",
 		description: "Show keyboard shortcuts (only when the editor is empty)",

@@ -6,6 +6,15 @@
 
 ### Added
 
+- Added `app.tools.collapse` (Alt+O by default) to collapse all expanded tool output at once; Ctrl+O still expands the newest batch of collapsed tool calls per press.
+- Added a `❯` prompt in front of the editor (`>` with ASCII symbols), drawn in the editor border color; wrapped and later lines are indented to match.
+- Added a sticky prompt header to fullscreen mode: while scrolled up, the top row names the user prompt whose answer is on screen, and clicking it scrolls back to that prompt.
+- Added an immediate echo of a submitted prompt with a "Preparing" status that names the extension hook the prompt is waiting on (for example a memory recall in `before_agent_start`), until the turn starts.
+- Added slow `input` and `before_agent_start` extension handlers (1s or longer) to the notices view.
+- Rebuilt `/notices` (F2) as a panel like the Agent Hub: a filter bar (All, Problems, and each category with its count), a list with repeat counts and age, and an inspector with the full detail (stack traces, tool arguments and output) that scrolls with PageUp/PageDown. `d` dismisses, `x` clears the current filter, and `c` copies the selected notice (`app.notices.dismiss`, `app.notices.clear`, `app.notices.copy`).
+- Added notice sources: failed tool calls (MCP tools and the agent tool get their own categories), model request errors and retries, compaction failures, cancellations and results, failed, blocked, or approval-waiting subagents and invalid subagent settings, skill, prompt, theme, and extension load problems (also on quiet startup and after `/reload`), `models.json` errors, and warnings and errors from extension `notify` calls. Routine entries such as tool failures and retries are listed without counting toward the footer badge.
+- Added `/notices <prompt>`: sends the prompt with a bounded snapshot of the notices panel attached (problems first, up to 40 entries with capped details, marked as diagnostic data), shown in the chat as a collapsible notices card.
+- Console output written while the TUI owns the terminal (for example an MCP server failing after startup) is now kept in the notices panel instead of drawing over the screen.
 - Added collapsing for `[subagent_completed]` messages: long reports show their first 4 and last 3 lines until expanded with the tool-output expand key (Ctrl+O by default).
 - Added a `[Subagents]` section to Blackhole compaction summaries built from the journaled V2 child records (name, id, agent, state, outcome, assurance, validated conclusion, output artifact), replacing the legacy `[Running Agents]` section that read removed V1 job entries.
 - Added `ice agents prune [--apply] [--json]`: lists subagent transcripts and worktrees whose parent session no longer exists in any session directory, and removes them only with `--apply`. Folders changed in the last 10 minutes, worktrees with unapplied changes (and their transcripts), unrecognized worktrees, and symlinks are kept.
@@ -213,6 +222,7 @@
 
 ### Changed
 
+- Extension handler errors now go to the notices view (footer badge, `/notices`) with their stack trace instead of being printed into the chat; a one-line status points to them.
 - Changed the subagent footer strip to name the main agent `❄ ICE` instead of `[Main agent] MAIN`, and to drop the switch/manage key hints while the main agent is shown; viewing a child still shows how to return and switch.
 - Changed tool output expansion to work in batches: `app.tools.expand` (Ctrl+O) expands the newest 3 collapsed tool calls per press and collapses everything after the oldest batch, instead of expanding the whole transcript at once. In fullscreen mode, clicking a tool call's title row or its `+N lines` hint toggles just that call.
 - The Agent Hub shows each subagent's pending requests in its inspector, with a per-row `N to approve` count and a one-line summary of who is waiting; `y`/`n` answer only the selected subagent's selected request. Approval prompts, notices, and the RPC overview name the subagent.
@@ -252,9 +262,12 @@
 - Subagent settings reads clone only the `ice` settings namespace and reuse the resolved settings until they change; selected subagent context and prompt files are read once per child launch.
 - The extension `context` event no longer clones the full message history when no extension handles it.
 - Children may now read, but not write, the worktree of another child's open patch in the same parent session without an external-directory approval, so an independent reviewer can read the patched files.
+- Fullscreen scrolling no longer re-renders finished tool cells and exploration groups every frame, and the mouse wheel moves 3 lines per notch instead of 1.
 
 ### Fixed
 
+- Fixed clicking the fullscreen "Jump to bottom" pill doing nothing; it now scrolls to the end like the End key.
+- Fixed terminals underlining clickable tool rows and the "Jump to bottom" pill on hover in fullscreen mode; they now highlight in reverse video and are no longer sent to the terminal as hyperlinks.
 - Fixed subagents interrupted by closing `ice` staying idle after the session reopened: in interactive mode the main agent now gets a turn on reopen with the interrupted children, whose notice says their task is unfinished and how to resume them (an `agent` task with `resume`), instead of pointing at a final answer that does not exist.
 - Fixed the Agent Hub repeating and leaving stale rows when a subagent asked to approve a multi-line command: approval summaries are now one redacted line (line breaks shown as ` ↵ `), and every Hub row is forced onto one terminal row.
 - Fixed background gaps in system cards such as `[subagent_completed]`: a background reset (`\x1b[49m`) inside a line no longer clears the card background for the rest of the row.

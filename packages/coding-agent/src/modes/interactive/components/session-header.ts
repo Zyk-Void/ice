@@ -10,34 +10,26 @@ export interface SessionHeaderData {
 	/** Thinking level for reasoning models; undefined hides it. */
 	thinking?: string;
 	cwd: string;
-	/** Execution mode label (e.g. "build"); undefined hides the row. */
+	/** Execution mode label (e.g. "build"); undefined hides it. */
 	mode?: string;
-	/** Elevated capabilities shown in the mode row with risk color (e.g. "bash", "external"). */
+	/** Elevated capabilities shown after the mode with risk color (e.g. "bash", "external"). */
 	capabilities: readonly string[];
-	/** Loaded resource summary (e.g. "3 context files · 61 skills"); empty hides the row. */
+	/** Loaded resource summary (e.g. "3 context files · 61 skills"); empty hides it. */
 	loaded: string;
-	/** One-line dim hint shown under the card. */
+	/** One-line dim hint shown under the banner. */
 	hint: string;
-	/** Full startup help shown under the card when expanded. */
+	/** Full startup help shown under the banner when expanded. */
 	expandedHelp: string;
 }
 
-/** Block-letter wordmark. Full blocks render in the accent color, box-drawing shadows dimmed. */
-const BLOCK_ART = [
-	"██╗ ██████╗███████╗",
-	"██║██╔════╝██╔════╝",
-	"██║██║     █████╗  ",
-	"██║██║     ██╔══╝  ",
-	"██║╚██████╗███████╗",
-	"╚═╝ ╚═════╝╚══════╝",
-];
+/** Three-row pixel penguin mascot, rendered in the accent color. */
+const BLOCK_ART = [" ▄███▄ ", "█▀█▀█▀█", " ▀▄▄▄▀ "];
 
-const ASCII_ART = [" ___ ____ _____ ", "|_ _/ ___| ____|", " | | |   |  _|  ", " | | |___| |___ ", "|___\\____|_____|"];
+const ASCII_ART = [" (o>", "//\\\\", "V_/_"];
 
-const ART_GAP = 3;
-const LABEL_WIDTH = 11;
-const MIN_INFO_WIDTH = 34;
-const MAX_CARD_WIDTH = 100;
+const ART_GAP = 2;
+/** Below this many columns for the text, the penguin is dropped. */
+const MIN_TEXT_WIDTH = 24;
 
 /** Truncate a path in the middle so both the root and the leaf stay visible. */
 export function middleTruncate(text: string, maxWidth: number): string {
@@ -50,28 +42,10 @@ export function middleTruncate(text: string, maxWidth: number): string {
 	return `${text.slice(0, head)}${ellipsis}${text.slice(text.length - tail)}`;
 }
 
-function styleArtLine(line: string): string {
-	return line.replace(/(█+)|([^█]+)/g, (_match, blocks: string | undefined, rest: string | undefined) =>
-		blocks ? theme.bold(theme.fg("accent", blocks)) : theme.fg("dim", rest ?? ""),
-	);
-}
-
-interface InfoRow {
-	label: string;
-	/** Plain text, used for width and truncation. */
-	plain: string;
-	/** Styled rendering of `plain`. */
-	styled: string;
-	/** Optional dim command hint right-aligned on the row when it fits. */
-	hint?: string;
-	/** Truncate in the middle (paths) instead of at the end. */
-	middle?: boolean;
-}
-
 /**
- * Startup card: block-letter wordmark beside the session facts (model,
- * directory, mode with elevated capabilities, loaded resources). The wordmark
- * drops on narrow terminals; below 44 columns the box drops too.
+ * Compact startup banner: a small penguin beside three lines (name and
+ * version; model, mode, and elevated capabilities; directory and loaded
+ * resources). The penguin drops on narrow terminals.
  */
 export class SessionHeaderComponent implements Component {
 	private readonly getData: () => SessionHeaderData;
@@ -90,18 +64,19 @@ export class SessionHeaderComponent implements Component {
 
 	render(width: number): string[] {
 		const data = this.getData();
-		const title = `${theme.bold(theme.fg("accent", `${sym("logo")} ${data.appName.toUpperCase()}`))}  ${theme.fg("dim", `v${data.version}`)}`;
-		const rows = this.buildRows(data);
+		const art = getSymbolPreset() === "ascii" ? ASCII_ART : BLOCK_ART;
+		const artWidth = Math.max(...art.map((line) => visibleWidth(line)));
+		const showArt = width - artWidth - ART_GAP >= MIN_TEXT_WIDTH;
+		const textWidth = Math.max(1, showArt ? width - artWidth - ART_GAP : width);
+		const text = this.buildText(data, textWidth);
 
 		const lines: string[] = [];
-		if (width < 44) {
-			lines.push(truncateToWidth(title, width, sym("ellipsis")));
-			for (const row of rows) lines.push(this.formatRow(row, width, false));
-		} else {
-			lines.push(...this.renderCard(title, rows, width));
+		for (let row = 0; row < Math.max(text.length, showArt ? art.length : 0); row++) {
+			const left = showArt ? theme.fg("accent", (art[row] ?? "").padEnd(artWidth)) + " ".repeat(ART_GAP) : "";
+			lines.push(`${left}${text[row] ?? ""}`.trimEnd());
 		}
 
-		lines.push(truncateToWidth(`  ${theme.fg("dim", data.hint)}`, width, sym("ellipsis")));
+		lines.push(truncateToWidth(theme.fg("dim", data.hint), width, sym("ellipsis")));
 		if (this.expanded && data.expandedHelp) {
 			lines.push("");
 			for (const line of data.expandedHelp.split("\n")) {
@@ -111,73 +86,34 @@ export class SessionHeaderComponent implements Component {
 		return lines;
 	}
 
-	private buildRows(data: SessionHeaderData): InfoRow[] {
+	private buildText(data: SessionHeaderData, width: number): string[] {
+		const ellipsis = sym("ellipsis");
 		const separator = ` ${sym("separator")} `;
-		const rows: InfoRow[] = [];
-		const model = data.model ? `${data.model}${data.thinking ? `${separator}${data.thinking}` : ""}` : "no model";
-		rows.push({ label: "model", plain: model, styled: model, hint: "/model" });
-		rows.push({ label: "directory", plain: data.cwd, styled: data.cwd, middle: true });
-		if (data.mode) {
-			const plain = [data.mode, ...data.capabilities].join(separator);
-			const styled = [data.mode, ...data.capabilities.map((capability) => theme.fg("error", capability))].join(
-				theme.fg("dim", separator),
-			);
-			rows.push({ label: "mode", plain, styled });
-		}
-		if (data.loaded) rows.push({ label: "loaded", plain: data.loaded, styled: theme.fg("muted", data.loaded) });
-		return rows;
-	}
+		const dimSeparator = theme.fg("dim", separator);
 
-	private renderCard(title: string, rows: InfoRow[], width: number): string[] {
-		const art = getSymbolPreset() === "ascii" ? ASCII_ART : BLOCK_ART;
-		const artWidth = Math.max(...art.map((line) => visibleWidth(line)));
-		const naturalInfoWidth = Math.max(
-			visibleWidth(title),
-			...rows.map((row) => LABEL_WIDTH + visibleWidth(row.plain) + (row.hint ? 2 + visibleWidth(row.hint) : 0)),
-		);
-		const maxContent = Math.min(MAX_CARD_WIDTH, width) - 4;
-		const showArt = artWidth + ART_GAP + MIN_INFO_WIDTH <= maxContent;
-		const infoOffset = showArt ? artWidth + ART_GAP : 0;
-		const infoWidth = Math.max(1, Math.min(naturalInfoWidth, maxContent - infoOffset));
-		const contentWidth = infoOffset + infoWidth;
+		const title = `${theme.bold(data.appName.toUpperCase())} ${theme.fg("dim", `v${data.version}`)}`;
 
-		// Title, blank line, then facts; vertically centered against the wordmark.
-		const info = [
-			truncateToWidth(title, infoWidth, sym("ellipsis")),
-			"",
-			...rows.map((row) => this.formatRow(row, infoWidth, true)),
-		];
-		const height = showArt ? Math.max(art.length, info.length) : info.length;
-		const infoTop = showArt ? Math.floor((height - info.length) / 2) : 0;
-		const artTop = showArt ? Math.floor((height - art.length) / 2) : 0;
+		const modelPlain = data.model
+			? `${data.model}${data.thinking ? `${separator}${data.thinking}` : ""}`
+			: "no model";
+		const modePlain = data.mode ? [data.mode, ...data.capabilities] : [];
+		const sessionPlain = [modelPlain, ...modePlain].join(separator);
+		const sessionStyled = [
+			theme.fg("muted", modelPlain),
+			...(data.mode ? [theme.fg("muted", data.mode)] : []),
+			...(data.mode ? data.capabilities.map((capability) => theme.fg("error", capability)) : []),
+		].join(dimSeparator);
+		const session =
+			visibleWidth(sessionPlain) <= width
+				? sessionStyled
+				: theme.fg("muted", truncateToWidth(sessionPlain, width, ellipsis));
 
-		const border = (text: string) => theme.fg("dim", text);
-		const horizontal = sym("boxHorizontal").repeat(contentWidth + 2);
-		const lines = [border(`${sym("boxTopLeft")}${horizontal}${sym("boxTopRight")}`)];
-		for (let row = 0; row < height; row++) {
-			const artLine = showArt ? (art[row - artTop] ?? "") : "";
-			const left = showArt ? styleArtLine(artLine.padEnd(artWidth)) + " ".repeat(ART_GAP) : "";
-			const right = info[row - infoTop] ?? "";
-			const content = left + right;
-			const padding = " ".repeat(Math.max(0, contentWidth - visibleWidth(content)));
-			lines.push(`${border(sym("boxVertical"))} ${content}${padding} ${border(sym("boxVertical"))}`);
-		}
-		lines.push(border(`${sym("boxBottomLeft")}${horizontal}${sym("boxBottomRight")}`));
-		return lines;
-	}
+		const withLoaded = data.loaded ? `${data.cwd}${separator}${data.loaded}` : data.cwd;
+		const location =
+			visibleWidth(withLoaded) <= width
+				? `${theme.fg("muted", data.cwd)}${data.loaded ? `${dimSeparator}${theme.fg("dim", data.loaded)}` : ""}`
+				: theme.fg("muted", middleTruncate(data.cwd, width));
 
-	private formatRow(row: InfoRow, width: number, allowHint: boolean): string {
-		const label = theme.fg("dim", row.label.padEnd(LABEL_WIDTH));
-		const valueWidth = Math.max(4, width - LABEL_WIDTH);
-		const fits = visibleWidth(row.plain) <= valueWidth;
-		const value = fits
-			? row.styled
-			: row.middle
-				? middleTruncate(row.plain, valueWidth)
-				: truncateToWidth(row.plain, valueWidth, sym("ellipsis"));
-		const line = `${label}${value}`;
-		if (!allowHint || !row.hint) return truncateToWidth(line, width, sym("ellipsis"));
-		const gap = width - visibleWidth(line) - visibleWidth(row.hint);
-		return gap >= 2 ? `${line}${" ".repeat(gap)}${theme.fg("dim", row.hint)}` : line;
+		return [truncateToWidth(title, width, ellipsis), session, location];
 	}
 }

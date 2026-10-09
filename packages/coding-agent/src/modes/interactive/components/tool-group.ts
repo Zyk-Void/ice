@@ -23,6 +23,8 @@ const MAX_COLLAPSED_LINES = 6;
 export class ToolGroupComponent extends Container {
 	private readonly members: ToolExecutionComponent[] = [];
 	private expanded: boolean;
+	/** Lines of a settled group, reused until membership, expansion, or an invalidation changes them. */
+	private renderCache?: { width: number; lines: string[] };
 
 	constructor(expanded: boolean) {
 		super();
@@ -35,6 +37,7 @@ export class ToolGroupComponent extends Container {
 		member.setExpanded(this.expanded);
 		this.members.push(member);
 		this.addChild(member);
+		this.renderCache = undefined;
 	}
 
 	/** The group's identity for expansion state: its first member's tool call. */
@@ -49,13 +52,23 @@ export class ToolGroupComponent extends Container {
 
 	setExpanded(expanded: boolean): void {
 		this.expanded = expanded;
+		this.renderCache = undefined;
 		for (const member of this.members) member.setExpanded(expanded);
+	}
+
+	override invalidate(): void {
+		this.renderCache = undefined;
+		super.invalidate();
 	}
 
 	override render(width: number): string[] {
 		if (this.members.length === 0) return [];
+		if (this.renderCache?.width === width) return this.renderCache.lines;
 		// Expanded members link their own rows to this group.
-		return this.expanded ? this.renderCell(width) : linkToolToggle(this.renderCell(width), this.getToggleId());
+		const lines = this.expanded ? this.renderCell(width) : linkToolToggle(this.renderCell(width), this.getToggleId());
+		// Running members change without notifying the group, so only settled groups are cached.
+		if (this.members.every((member) => member.getState() !== "pending")) this.renderCache = { width, lines };
+		return lines;
 	}
 
 	private renderCell(width: number): string[] {

@@ -7,7 +7,14 @@
 import { stripAnsi } from "../../../utils/ansi.ts";
 import { keyText } from "./keybinding-hints.ts";
 
-const TOGGLE_URL_PREFIX = "ice-action:toggle-tool/";
+/** Scheme of links InteractiveMode handles itself; the fullscreen renderer keeps them out of terminal output. */
+export const ICE_ACTION_URL_PREFIX = "ice-action:";
+
+export function isIceActionUrl(url: string): boolean {
+	return url.startsWith(ICE_ACTION_URL_PREFIX);
+}
+
+const TOGGLE_URL_PREFIX = `${ICE_ACTION_URL_PREFIX}toggle-tool/`;
 
 let toggleLinksEnabled = false;
 
