@@ -364,6 +364,62 @@ export function getOsc8LinkAtColumn(line: string, column: number): string | unde
 	return undefined;
 }
 
+const OSC8_HYPERLINK = /^\x1b\]8;[^;]*;([^\x07\x1b]*)(?:\x07|\x1b\\)$/;
+
+/**
+ * Rewrite a line's OSC 8 hyperlinks. `visit` gets each text run with the URL of the link around it
+ * (undefined outside links) and returns its replacement; `keepLink` decides which link sequences stay.
+ */
+function rewriteOsc8Links(
+	line: string,
+	keepLink: (url: string) => boolean,
+	visit: (text: string, url: string | undefined) => string,
+): string {
+	if (!line.includes("\x1b]8;")) return line;
+	let result = "";
+	let activeUrl: string | undefined;
+	let i = 0;
+	while (i < line.length) {
+		const ansi = extractAnsiCode(line, i);
+		if (ansi) {
+			const hyperlink = OSC8_HYPERLINK.exec(ansi.code);
+			if (hyperlink) {
+				const url = hyperlink[1] || undefined;
+				// A closing sequence follows the link it closes.
+				if (keepLink(url ?? activeUrl ?? "")) result += ansi.code;
+				activeUrl = url;
+			} else {
+				result += ansi.code;
+			}
+			i += ansi.length;
+			continue;
+		}
+		let textEnd = i;
+		while (textEnd < line.length && !extractAnsiCode(line, textEnd)) textEnd++;
+		result += visit(line.slice(i, textEnd), activeUrl);
+		i = textEnd;
+	}
+	return result;
+}
+
+/** Remove the OSC 8 wrappers of links whose URL matches, keeping their text and styling. */
+export function stripOsc8Links(line: string, matches: (url: string) => boolean): string {
+	return rewriteOsc8Links(
+		line,
+		(url) => !matches(url),
+		(text) => text,
+	);
+}
+
+/** Wrap every text run inside the link to `url` in `open`/`close`, re-applied after inner style changes. */
+export function styleOsc8Link(line: string, url: string, open: string, close: string): string {
+	return rewriteOsc8Links(
+		line,
+		() => true,
+		(text, activeUrl) => (activeUrl === url ? `${open}${text}${close}` : text),
+	);
+}
+
 /**
  * Normalize text for terminal output without changing logical editor content.
  * Some terminals render precomposed Thai/Lao AM vowels inconsistently during

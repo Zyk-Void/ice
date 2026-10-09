@@ -21,9 +21,13 @@
 - Fixed alternate-screen Kitty images crossing vertical layout clip boundaries and overlapping sticky regions while scrolling.
 - Fixed alternate-screen redraws retransmitting Kitty image data when placements move or recently offscreen images return, dropping adjacent row content when reusing placements, rendering fixed-basis scroll content twice per frame, and scanning clipped transcript rows while painting.
 - Fixed fullscreen transcript navigation leaving no editor-accessible `Home`, `End`, `PageUp`, or `PageDown` variants by adding Ctrl-modified editor bindings ([#7574](https://github.com/earendil-works/pi/issues/7574)).
+- Fixed alternate-screen scrolling recompositing every visible row and scrollbar cell each frame; unchanged full-width rows are now reused from a bounded cache.
 
 ### Added
 
+- Added the `Editor` `prompt` option and `setPrompt()`: a gutter before the first line, drawn in the border color, with continuation lines indented to match.
+- Added `TUI.isRunning`, true between `start()` and `stop()`.
+- Added the `TuiAltScreen` `isActionUrl` option: matching OSC 8 links stay out of terminal output and are highlighted in reverse video while the pointer is over them.
 - Added the shared `TuiMode` type and `mode` discriminants to the main-screen and alternate-screen TUI renderers.
 - Added TUI lifecycle and render-state handoff APIs for replacing renderers without replaying main-screen content.
 - Exported the bundled `Marked` parser and token types.

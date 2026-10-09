@@ -7,6 +7,26 @@ import { extractAnsiCode, getGraphemeCellRange, sliceByColumn, visibleWidth } fr
 
 const OSC133_ZONE_PREFIX = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
 
+/**
+ * Painted rows keyed by every input that shapes them. Scrolling shifts the same transcript lines
+ * through the screen every frame, so most rows repeat; the cache is dropped when it grows past the limit.
+ */
+const paintedRowCache = new Map<string, string>();
+const PAINTED_ROW_CACHE_LIMIT = 4096;
+const PAINTED_ROW_CACHE_MAX_LINE_LENGTH = 4096;
+
+function cachedPaintedRow(key: string, line: string, paint: () => string): string {
+	// Oversized lines (unwrapped output, inline data) would pin memory for little reuse.
+	if (line.length > PAINTED_ROW_CACHE_MAX_LINE_LENGTH) return paint();
+	let row = paintedRowCache.get(key);
+	if (row === undefined) {
+		row = paint();
+		if (paintedRowCache.size >= PAINTED_ROW_CACHE_LIMIT) paintedRowCache.clear();
+		paintedRowCache.set(key, row);
+	}
+	return row;
+}
+
 export interface LayoutRect {
 	x: number;
 	y: number;
@@ -293,20 +313,25 @@ export function getScrollbarGeometry(box: LayoutBox): ScrollbarGeometry | undefi
 function paintScrollbar(box: LayoutBox, screen: string[], totalWidth: number): void {
 	const geometry = getScrollbarGeometry(box);
 	if (!geometry || !box.scrollView) return;
+	// Styles may read the theme when called, so their output on a sample cell is part of the key.
+	const styleCell = (line: string, style: (text: string) => string) =>
+		cachedPaintedRow(`s\0${geometry.column}\0${totalWidth}\0${style(" ")}\0${line}`, line, () =>
+			styleScrollbarCell(line, geometry.column, totalWidth, style),
+		);
 
 	const trackStyle = box.scrollView.getScrollbarTrackStyle();
 	if (trackStyle) {
 		for (let row = geometry.trackTop; row < geometry.trackTop + geometry.trackHeight; row++) {
 			if (row < box.clip.y || row >= box.clip.y + box.clip.height || row < 0 || row >= screen.length) continue;
 			if (row >= geometry.thumbTop && row < geometry.thumbTop + geometry.thumbHeight) continue;
-			screen[row] = styleScrollbarCell(screen[row] ?? "", geometry.column, totalWidth, trackStyle);
+			screen[row] = styleCell(screen[row] ?? "", trackStyle);
 		}
 	}
 
 	for (let offset = 0; offset < geometry.thumbHeight; offset++) {
 		const row = geometry.thumbTop + offset;
 		if (row < box.clip.y || row >= box.clip.y + box.clip.height || row < 0 || row >= screen.length) continue;
-		screen[row] = styleScrollbarCell(screen[row] ?? "", geometry.column, totalWidth, box.scrollView.scrollbarStyle);
+		screen[row] = styleCell(screen[row] ?? "", box.scrollView.scrollbarStyle);
 	}
 }
 
@@ -326,7 +351,11 @@ function paintBox(box: LayoutBox, screen: string[], totalWidth: number): void {
 				if (visibleRows < imageMetadata.rows) line = cropKittyImageLine(line, 0, visibleRows);
 			}
 			if (isImageLine(line) && box.rect.x === 0 && box.rect.width >= totalWidth) screen[row] = line;
-			else screen[row] = compositeTuiLine(screen[row] ?? "", line, box.rect.x, box.rect.width, totalWidth);
+			else if (box.rect.x === 0 && box.rect.width === totalWidth && !screen[row]) {
+				screen[row] = cachedPaintedRow(`f\0${totalWidth}\0${line}`, line, () =>
+					compositeTuiLine("", line, 0, totalWidth, totalWidth),
+				);
+			} else screen[row] = compositeTuiLine(screen[row] ?? "", line, box.rect.x, box.rect.width, totalWidth);
 		}
 	}
 	for (const child of box.children) paintBox(child, screen, totalWidth);

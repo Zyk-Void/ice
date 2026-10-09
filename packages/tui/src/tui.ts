@@ -295,6 +295,8 @@ export interface TUI extends Component {
 	terminal: Terminal;
 	onDebug?: () => void;
 	readonly fullRedraws: number;
+	/** True between start() and stop(), while the TUI owns the terminal. */
+	readonly isRunning: boolean;
 	addChild(component: Component): void;
 	removeChild(component: Component): void;
 	clear(): void;
@@ -351,6 +353,7 @@ export abstract class TuiBase extends Container implements TUI {
 	private clearOnShrink = getTuiEnv("ICE_CLEAR_ON_SHRINK") !== "0";
 	protected fullRedrawCount = 0;
 	protected stopped = false;
+	private running = false;
 	private pendingOsc11BackgroundReplies = 0;
 	private pendingOsc11BackgroundQueries: PendingOsc11BackgroundQuery[] = [];
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
@@ -694,8 +697,14 @@ export abstract class TuiBase extends Container implements TUI {
 		for (const overlay of this.overlayStack) overlay.component.invalidate();
 	}
 
+	/** True between start() and stop(), while the TUI owns the terminal. */
+	get isRunning(): boolean {
+		return this.running;
+	}
+
 	start(): void {
 		this.stopped = false;
+		this.running = true;
 		this.beforeTerminalStart();
 		this.terminal.start(
 			(data) => this.handleTerminalInput(data),
@@ -750,6 +759,7 @@ export abstract class TuiBase extends Container implements TUI {
 
 	stop(options: TuiStopOptions = {}): void {
 		this.stopped = true;
+		this.running = false;
 		if (this.renderTimer) {
 			clearTimeout(this.renderTimer);
 			this.renderTimer = undefined;
