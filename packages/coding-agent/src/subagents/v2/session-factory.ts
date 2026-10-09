@@ -22,7 +22,7 @@ import { createBashToolDefinition } from "../../core/tools/index.ts";
 import { redactCredentialText } from "../../utils/redact.ts";
 import type { ChildRuntimeContract } from "../contract/child-runtime-contract.ts";
 import { loadSelectedPromptContent } from "../runtime/prompt.ts";
-import { readValidatedResource, revalidateSubagentResources } from "../runtime/resources.ts";
+import { revalidateSubagentResources } from "../runtime/resources.ts";
 import { createIceDelegableToolDefinitions, type IceResolvedDelegableTool } from "../tools/adapters.ts";
 import { createScopedWriterToolDefinitions } from "../tools/scoped-tools.ts";
 import { createDelegatedShellEnvironment } from "../types.ts";
@@ -119,12 +119,14 @@ export async function createV2ChildSession(
 	const { contract } = options;
 	const resources = contract.prompt.resources;
 	// Fail closed if a selected skill, prompt, or context file changed since acceptance.
-	if (resources) revalidateSubagentResources(resources);
+	const validated = revalidateSubagentResources(resources ?? { skills: [], prompts: [], context: [] });
 	const selectedContext = (resources?.context ?? []).map((resource) => ({
 		path: resource.sourcePath,
-		content: redactCredentialText(readValidatedResource(resource).toString("utf8")),
+		content: redactCredentialText(validated.get(resource)!.toString("utf8")),
 	}));
-	const selectedPrompts = (resources?.prompts ?? []).map(loadSelectedPromptContent);
+	const selectedPrompts = (resources?.prompts ?? []).map((resource) =>
+		loadSelectedPromptContent(resource, validated.get(resource)),
+	);
 	const settingsManager = SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: false });
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: options.cwd,

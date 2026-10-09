@@ -193,9 +193,14 @@ export function readValidatedResource(resource: SubagentResourceProvenance): Buf
 	return bytes;
 }
 
-export function revalidateSubagentResources(resources: ResolvedSubagentResources): void {
+/** Revalidate every selected resource; returns the exact bytes that passed, so callers need not reread them. */
+export function revalidateSubagentResources(
+	resources: ResolvedSubagentResources,
+): Map<SubagentResourceProvenance, Buffer> {
 	assertSelectedResourceByteBudget(resources);
+	const validated = new Map<SubagentResourceProvenance, Buffer>();
 	for (const resource of [...resources.skills, ...resources.prompts, ...resources.context]) {
-		readValidatedResource(resource);
+		validated.set(resource, readValidatedResource(resource));
 	}
+	return validated;
 }

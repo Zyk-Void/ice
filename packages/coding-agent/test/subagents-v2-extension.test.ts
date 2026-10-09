@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../src/core/extensions/index.ts";
 import { V2_SUBAGENT_TOOL_NAMES } from "../src/subagents/api/tool-set.ts";
 import { ChildRegistry } from "../src/subagents/registry/registry.ts";
+import { getIceSubagentController } from "../src/subagents/v2/controller.ts";
 import iceSubagentsV2 from "../src/subagents/v2/extension.ts";
 import { SubagentV2Runtime } from "../src/subagents/v2/runtime.ts";
 import type { ChildTurnResult } from "../src/subagents/v2/runtime-support.ts";
@@ -33,6 +34,12 @@ describe("subagent V2 tool registration", () => {
 		for (const name of tools) expect(V2_SUBAGENT_TOOL_NAMES).toContain(name);
 		expect(flags).toEqual(["agents", "sub-yolo"]);
 		expect(events).toEqual(expect.arrayContaining(["before_agent_start", "session_shutdown", "agent_settled"]));
+	});
+
+	it("publishes the programmatic controller on its event-bus owner", () => {
+		const { api } = fakeApi();
+		iceSubagentsV2(api);
+		expect(getIceSubagentController(api.events)?.version).toBe(1);
 	});
 });
 

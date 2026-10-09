@@ -495,6 +495,16 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 */
 	executionMode?: ToolExecutionMode;
 
+	/**
+	 * ICE mode policy class for an extension tool.
+	 * - "read": never mutates workspace or external state; ICE exposes it in plan and build mode.
+	 * - "write": may mutate state; ICE exposes it only in a trusted build session.
+	 *
+	 * If omitted, ICE plan/build modes keep the tool inactive. Package tools stay behind
+	 * `--allow-external` regardless of this declaration. The tool must still enforce its own authorization.
+	 */
+	access?: "read" | "write";
+
 	/** Execute the tool. */
 	execute(
 		toolCallId: string,
@@ -1599,7 +1609,7 @@ export type GetSessionNameHandler = () => string | undefined;
 export type GetActiveToolsHandler = () => string[];
 
 /** Tool info with name, description, parameter schema, prompt guidelines, and source metadata. */
-export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters" | "promptGuidelines"> & {
+export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters" | "promptGuidelines" | "access"> & {
 	sourceInfo: SourceInfo;
 };
 

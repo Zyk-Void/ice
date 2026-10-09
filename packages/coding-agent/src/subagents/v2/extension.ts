@@ -53,6 +53,7 @@ import { getIceDelegableTools } from "../tools/adapters.ts";
 import { parentMcpAdapters, SUBAGENT_PRESENTATION_LIMIT_BYTES } from "../types.ts";
 import { AgentHubView, formatTokens, type HubSource, statusMark } from "../ui/hub.ts";
 import { createAgentDefinitionFile, formatAgentDefinitions } from "./agent-manager.ts";
+import { createIceSubagentController, registerIceSubagentController } from "./controller.ts";
 import { completionEvent, lifecycleEvents, SUBAGENT_EVENT_CHANNEL } from "./events.ts";
 import { SubagentV2Runtime } from "./runtime.ts";
 import { type ChildTurnResult, mcpDelegableTools, withContextPacket } from "./runtime-support.ts";
@@ -227,15 +228,19 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 	};
 	const formatNamedTurn = (result: ChildTurnResult) => formatTurn(result, nameOf(result.id));
 	const agentDir = options.agentDir ?? getAgentDir();
+	// Read on every child tool call: clone only the `ice` namespace and reuse the resolution while it is unchanged.
+	let settingsMemo: { key: string; settings: ReturnType<typeof resolveSubagentsV2Settings> } | undefined;
 	const settingsFor = (ctx: ExtensionContext | undefined) => {
 		// The footer can initialize the owner before session_start provides an extension context.
 		const manager = ctx?.settingsManager ?? options.agentViewBridge?.getParentSession()?.settingsManager;
 		const trusted = ctx?.isProjectTrusted?.() ?? manager?.isProjectTrusted() ?? false;
-		return resolveSubagentsV2Settings({
-			global: (manager?.getGlobalSettings() as { ice?: { subagents?: unknown } } | undefined)?.ice?.subagents,
-			project: (manager?.getProjectSettings() as { ice?: { subagents?: unknown } } | undefined)?.ice?.subagents,
-			projectTrusted: trusted,
-		});
+		const global = manager?.getIceSettingsValue("global")?.subagents;
+		const project = manager?.getIceSettingsValue("project")?.subagents;
+		const key = JSON.stringify([global, project, trusted]);
+		if (settingsMemo?.key !== key) {
+			settingsMemo = { key, settings: resolveSubagentsV2Settings({ global, project, projectTrusted: trusted }) };
+		}
+		return settingsMemo.settings;
 	};
 	const hubListeners = new Set<() => void>();
 	const notifyHub = () => {
@@ -519,9 +524,12 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			// No parent session yet.
 		}
 	});
+	// Trusted parent extensions launch children through the same runtime, preflight, and approvals.
+	const unregisterController = registerIceSubagentController(ice.events, createIceSubagentController(runtime));
 	ice.on("session_shutdown", async () => {
 		const parent = options.agentViewBridge?.getParentSession();
 		if (parent) shutDownParents.add(parent);
+		unregisterController();
 		unsubscribeRegistry?.();
 		controls.clear();
 		await runtime.shutdown();

@@ -834,12 +834,21 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 	const allowExternalRequested = () => ice.getFlag("allow-external") === true;
 	const allowExternalEffective = (ctx: ExtensionContext) =>
 		state?.mode === "build" && allowExternalRequested() && ctx.isProjectTrusted();
+	// Non-external extension tools that declare an access class: read tools in either mode,
+	// write tools only where Bash-level trust holds. Undeclared tools stay inactive.
+	const declaredTools = (access: "read" | "write") =>
+		ice
+			.getAllTools()
+			.filter((tool) => tool.access === access && !isExternalTool(tool))
+			.map((tool) => tool.name);
 	const effectiveTools = (ctx: ExtensionContext) => {
 		const tools =
 			state?.mode === "plan"
-				? PLAN_TOOLS
+				? [...PLAN_TOOLS, ...declaredTools("read")]
 				: [
 						...BUILD_TOOLS,
+						...declaredTools("read"),
+						...(state?.mode === "build" && ctx.isProjectTrusted() ? declaredTools("write") : []),
 						...(bashEffective(ctx) ? ["bash"] : []),
 						...(allowExternalEffective(ctx)
 							? ice

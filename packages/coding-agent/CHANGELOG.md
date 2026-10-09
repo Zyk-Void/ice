@@ -49,6 +49,8 @@
 - Added read-only shell classification to compact tool summaries: `cat`, `sed -n`, `git diff`, `rg`, `find`, `ls`, and similar commands count as reads, searches, or listings instead of "ran N shell commands". Classification is display-only.
 - Added a running background task count to the compact footer, and `/tasks` now lists background bash commands with their elapsed time.
 - Added Agent Hub approval navigation: opening the Hub selects the first subagent waiting for approval, `tab` (`app.agents.nextApproval`) steps through pending requests across subagents, and `a` (`app.agents.approveSession`) always allows the selected request's rule for that subagent.
+- Added a per-tool `access` class (`"read"` or `"write"`) for extension tools. ICE plan and build modes now expose declared `read` tools in both modes and `write` tools only in a trusted build session; undeclared tools stay inactive, and package tools still require `--allow-external`.
+- Added `getIceSubagentController(ice.events)` (`ICE_SUBAGENT_CONTROLLER_KEY`) for trusted parent extensions: `start` launches one Subagents V2 child through the `agent` tool's preflight, approvals and permission caps and returns its turn result (outcome, text, frozen model, worktree patch state, validated payload) without delivering it to the parent conversation; `stop` stops it; `preview` reads an open worktree patch without inspecting or pinning it.
 
 ### Breaking Changes
 
@@ -137,6 +139,7 @@
 - Removed the unused `app.subagents.expand` (`space`) and `app.subagents.inspect` (`ctrl+enter`) keybindings, left over from the removed agent list and job inspector.
 - Removed the legacy subagent job registry (`subagents/registry/jobs.ts`) and Observatory (`subagents/ui/observatory.ts`), which no V2 code path used, plus the observability recorder's subagent progress lanes they fed; recordings still carry an empty `lanes` list.
 - Removed the expandable agent list in the bottom dock. The Agent Hub (`/agents`, `left` on an empty editor, `ctrl+shift+a`) is the one place to browse and open subagents; the one-line agent strip remains.
+- Removed the unused writer-patch module (`subagents/isolation/writer-patch.ts`) with its writer-only types and failure codes; V2 worktree isolation and `agent_patch` replace it.
 - Removed caller/profile child and writer final-answer `maxOutputBytes`, batch/review `totalBudgetBytes` and output-byte reservation admission, durable planned/reserved output admission, and the synchronous `background: false` launch path. New calls reject removed inputs, and historical durable records are normalized without replaying work. Final-answer size does not stop execution; fixed host-owned artifact storage/read/presentation limits, provider/tool/hook/startup controls, queue/concurrency limits, explicit cancellation, and shutdown remain separate. Active aggregate token-budget controls and per-child `maxTurns`/`maxToolCalls` were also removed; provider usage remains observational telemetry.
 
 ### Added
@@ -244,6 +247,11 @@
 - Changed Blackhole `tailBehavior: "minimal"` from unused config into a real cut: the kept Ice tail is summarized and dropped so compact no longer leaves ~20k recent tokens in context. Minimal is now the Blackhole default.
 - Changed the Blackhole trigger threshold to percent-only against the active model context window (default `85`): `compactAfterTokens`, the `/blackhole tokens` command, and `ICE_BLACKHOLE_COMPACT_AFTER_TOKENS` were removed, and legacy numeric configs are ignored.
 - Expanded local Codex fast-mode matching to the verified `cx/gpt-6-luna` and `cx/gpt-6-sol` routes.
+- Sped up subagent worktree isolation: dirty-baseline snapshots hash all regular files through one `git hash-object --stdin-paths` call (verified against in-process blob IDs), worktree materialization reads blobs through one `git cat-file --batch` call, and one launch batch shares a single parent baseline. On this repository a worktree child now starts in about 0.7 s instead of 18 s.
+- `grep` and `find` resolve a system `rg`/`fd` once per process instead of probing it on every call.
+- Subagent settings reads clone only the `ice` settings namespace and reuse the resolved settings until they change; selected subagent context and prompt files are read once per child launch.
+- The extension `context` event no longer clones the full message history when no extension handles it.
+- Children may now read, but not write, the worktree of another child's open patch in the same parent session without an external-directory approval, so an independent reviewer can read the patched files.
 
 ### Fixed
 

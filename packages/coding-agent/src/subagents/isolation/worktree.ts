@@ -90,7 +90,9 @@ export function worktreeGit(
 				},
 				input: options.input,
 				maxBuffer:
-					args[0] === "cat-file" ? WORKTREE_LIMITS.maxSnapshotBytes : WORKTREE_LIMITS.maxPatchBytes + 1024 * 1024,
+					args[0] === "cat-file"
+						? WORKTREE_LIMITS.maxSnapshotBytes + 4 * 1024 * 1024
+						: WORKTREE_LIMITS.maxPatchBytes + 1024 * 1024,
 				timeout: 60_000,
 				stdio: ["pipe", "pipe", "pipe"],
 			},
@@ -159,6 +161,33 @@ export function readRawTree(root: string, tree: string): RawTreeEntry[] {
 	});
 }
 
+/** Raw blob bytes for each ID through one `cat-file --batch` process. */
+function readBlobs(root: string, blobs: readonly string[]): Map<string, Buffer> {
+	const unique = [...new Set(blobs)];
+	const contents = new Map<string, Buffer>();
+	if (unique.length === 0) return contents;
+	const out = worktreeGit(root, ["cat-file", "--batch"], { input: unique.map((blob) => `${blob}\n`).join("") }).stdout;
+	let offset = 0;
+	for (const blob of unique) {
+		const newline = out.indexOf(0x0a, offset);
+		const [oid, type, size] = (newline < 0 ? "" : out.toString("ascii", offset, newline)).split(" ");
+		const length = Number(size);
+		const end = newline + 1 + length;
+		if (
+			oid !== blob ||
+			type !== "blob" ||
+			!Number.isSafeInteger(length) ||
+			length < 0 ||
+			end >= out.length ||
+			out[end] !== 0x0a
+		)
+			throw new WorktreeIsolationError("git_failed", `git cat-file returned an unexpected record for ${blob}`);
+		contents.set(blob, out.subarray(newline + 1, end));
+		offset = end + 1;
+	}
+	return contents;
+}
+
 /** Bound all data before reading it; neither clean filters nor fsmonitor run. */
 export function snapshotWorktree(root: string): string {
 	const cached = splitZ(worktreeGit(root, ["ls-files", "--stage", "-z"]).stdout);
@@ -211,20 +240,46 @@ export function snapshotWorktree(root: string): string {
 			mode: stat.isSymbolicLink() ? "120000" : stat.mode & 0o111 ? "100755" : "100644",
 		});
 	}
+	const objectFormat = worktreeGitText(root, ["rev-parse", "--show-object-format"]);
+	if (objectFormat !== "sha1" && objectFormat !== "sha256")
+		throw new WorktreeIsolationError("git_failed", `Unsupported object format: ${objectFormat}`);
+	// Blob IDs are computed from the bytes read here. Regular files are written by one
+	// `--stdin-paths` process; any ID that differs means the file changed after it was read.
+	// --stdin-paths is line-based (absolute paths never start with its `"` quoting); paths with
+	// line breaks and symlinks, which it would follow, keep per-object writes.
+	const batchable = (file: (typeof files)[number]) => file.mode !== "120000" && !/[\n\r]/.test(file.absolute);
+	const blobs = files.map((file) => {
+		const content = file.mode === "120000" ? Buffer.from(readlinkSync(file.absolute)) : readFileSync(file.absolute);
+		if (content.length !== file.size)
+			throw new WorktreeIsolationError("git_failed", `File changed during snapshot: ${file.path}`);
+		const blob = createHash(objectFormat).update(`blob ${content.length}\0`).update(content).digest("hex");
+		return { ...file, blob, ...(batchable(file) ? {} : { content }) };
+	});
+	const batched = blobs.filter((file) => file.content === undefined);
+	if (batched.length > 0) {
+		const written = worktreeGit(root, ["hash-object", "-w", "--no-filters", "--stdin-paths"], {
+			input: batched.map((file) => `${file.absolute}\n`).join(""),
+		})
+			.stdout.toString("ascii")
+			.split("\n")
+			.filter(Boolean);
+		batched.forEach((file, index) => {
+			if (written[index] !== file.blob)
+				throw new WorktreeIsolationError("git_failed", `File changed during snapshot: ${file.path}`);
+		});
+	}
+	for (const file of blobs) {
+		if (file.content === undefined) continue;
+		const blob = worktreeGit(root, ["hash-object", "-w", "--no-filters", "--stdin"], { input: file.content })
+			.stdout.toString("ascii")
+			.trim();
+		if (blob !== file.blob) throw new WorktreeIsolationError("git_failed", `Blob ID mismatch: ${file.path}`);
+	}
 	const dir = mkdtempSync(join(tmpdir(), "ice-index-"));
 	try {
 		const env = { GIT_INDEX_FILE: join(dir, "index") };
 		worktreeGit(root, ["read-tree", "--empty"], { env });
-		const entries = files.map((file) => {
-			const content =
-				file.mode === "120000" ? Buffer.from(readlinkSync(file.absolute)) : readFileSync(file.absolute);
-			if (content.length !== file.size)
-				throw new WorktreeIsolationError("git_failed", `File changed during snapshot: ${file.path}`);
-			const blob = worktreeGit(root, ["hash-object", "-w", "--no-filters", "--stdin"], { input: content })
-				.stdout.toString("ascii")
-				.trim();
-			return `${file.mode} ${blob}\t${file.path}\0`;
-		});
+		const entries = blobs.map((file) => `${file.mode} ${file.blob}\t${file.path}\0`);
 		worktreeGit(root, ["update-index", "-z", "--index-info"], { env, input: entries.join("") });
 		return worktreeGitText(root, ["write-tree"], env);
 	} finally {
@@ -293,10 +348,15 @@ export function createIsolatedWorktree(baseline: WorktreeBaseline, worktreePath:
 			worktreePath,
 			baseline.baselineCommit,
 		]);
-		for (const entry of readRawTree(worktreePath, baseline.baselineTree)) {
+		const entries = readRawTree(worktreePath, baseline.baselineTree);
+		const contents = readBlobs(
+			baseline.repoRoot,
+			entries.map((entry) => entry.blob),
+		);
+		for (const entry of entries) {
 			const absolute = resolveWorktreePath(worktreePath, entry.path);
 			mkdirSync(dirname(absolute), { recursive: true });
-			const content = worktreeGit(baseline.repoRoot, ["cat-file", "blob", entry.blob]).stdout;
+			const content = contents.get(entry.blob)!;
 			if (entry.mode === "120000") symlinkSync(content.toString("utf8"), absolute);
 			else {
 				writeFileSync(absolute, content);

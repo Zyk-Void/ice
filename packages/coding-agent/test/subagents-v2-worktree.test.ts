@@ -81,6 +81,34 @@ describe("subagent V2 worktree isolation", () => {
 		expect(existsSync(worktree)).toBe(false);
 	});
 
+	it("snapshots raw bytes for batched, symlink, and line-unsafe paths without filters", () => {
+		const { repo, worktree } = dirtyRepo();
+		write(join(repo, ".gitattributes"), "* text=auto eol=crlf\n");
+		write(join(repo, "crlf.txt"), "x\r\ny\n");
+		write(join(repo, '"quoted.txt'), "quoted\n");
+		write(join(repo, "line\nbreak.txt"), "newline\n");
+		write(join(repo, "dup-1.txt"), "same\n");
+		write(join(repo, "dup-2.txt"), "same\n");
+		write(join(repo, "run.sh"), "#!/bin/sh\n");
+		chmodSync(join(repo, "run.sh"), 0o755);
+		symlinkSync("a.txt", join(repo, "link"));
+		const baseline = captureWorktreeBaseline(repo);
+		const rawBlob = (path: string) =>
+			execFileSync("git", ["hash-object", "--no-filters", "--stdin"], { cwd: repo, input: readFileSync(path) })
+				.toString()
+				.trim();
+		expect(git(repo, "rev-parse", `${baseline.baselineTree}:crlf.txt`)).toBe(rawBlob(join(repo, "crlf.txt")));
+		createIsolatedWorktree(baseline, worktree);
+		expect(readFileSync(join(worktree, "crlf.txt"), "utf8")).toBe("x\r\ny\n");
+		expect(readFileSync(join(worktree, '"quoted.txt'), "utf8")).toBe("quoted\n");
+		expect(readFileSync(join(worktree, "line\nbreak.txt"), "utf8")).toBe("newline\n");
+		expect(readFileSync(join(worktree, "dup-2.txt"), "utf8")).toBe("same\n");
+		expect(statSync(join(worktree, "run.sh")).mode & 0o111).not.toBe(0);
+		expect(git(worktree, "rev-parse", "--verify", "HEAD")).toBe(baseline.baselineCommit);
+		expect(readFileSync(join(worktree, "link"), "utf8")).toBe("a1 parent\na2\na3\na4\na5\n");
+		removeIsolatedWorktree(repo, worktree);
+	});
+
 	it("refuses child worktrees inside the parent without creating ownership metadata", () => {
 		const { repo } = dirtyRepo();
 		const destination = join(repo, "nested-child");

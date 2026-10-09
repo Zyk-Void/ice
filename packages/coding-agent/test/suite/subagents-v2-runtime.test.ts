@@ -1293,6 +1293,23 @@ describe("subagent V2 runtime", () => {
 		await runtime.shutdown();
 	});
 
+	it("starts every worktree child in one launch batch from one shared parent baseline", async () => {
+		const { host } = await setup({ repository: true });
+		const runtime = new SubagentV2Runtime(host());
+		const records = await runtime.launch([
+			{ ...task("general", "one"), isolation: "worktree" },
+			{ ...task("general", "two"), isolation: "worktree" },
+		]);
+		const heads = records.map((record) =>
+			execFileSync("git", ["rev-parse", "HEAD"], { cwd: SessionManager.open(record.transcriptPath).getCwd() })
+				.toString()
+				.trim(),
+		);
+		expect(new Set(heads).size).toBe(1);
+		expect(new Set(records.map((record) => SessionManager.open(record.transcriptPath).getCwd())).size).toBe(2);
+		await runtime.shutdown();
+	});
+
 	it("automatically removes unchanged worktrees without claiming integration", async () => {
 		const { harness, host } = await setup({ repository: true });
 		harness.setResponses([fauxAssistantMessage("No changes needed.")]);

@@ -21,9 +21,11 @@ describe("subagents V2 SDK wiring", () => {
 				settings: { ice: { subagents: { maxConcurrent: 3 } } },
 			});
 			harnesses.push(harness);
-			vi.spyOn(harness.session.settingsManager, "getProjectSettings").mockReturnValue({
-				ice: { subagents: { maxConcurrent: 1 } },
-			});
+			const settingsManager = harness.session.settingsManager;
+			const readIce = settingsManager.getIceSettingsValue.bind(settingsManager);
+			vi.spyOn(settingsManager, "getIceSettingsValue").mockImplementation((scope) =>
+				scope === "project" ? { subagents: { maxConcurrent: 1 } } : readIce(scope),
+			);
 			vi.spyOn(harness.session.settingsManager, "isProjectTrusted").mockReturnValue(trusted);
 			subagents.attach(harness.session);
 			expect(subagents.overview()?.capacity.max).toBe(trusted ? 1 : 3);

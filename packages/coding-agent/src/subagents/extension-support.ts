@@ -141,8 +141,8 @@ export function buildSubagentHookRuntime(
 	onJournal?: (entry: IceHookJournalEntry) => void,
 ): SubagentHookRuntime | undefined {
 	const resolvedHooks = resolveIceSubagentHooks({
-		globalHooks: settingsManager.getGlobalSettings(),
-		projectHooks: settingsManager.getProjectSettings(),
+		globalHooks: { ice: settingsManager.getIceSettingsValue("global") },
+		projectHooks: { ice: settingsManager.getIceSettingsValue("project") },
 		projectTrusted: target.projectTrusted,
 		role: target.role,
 		roleHookIds: target.roleHookIds,
@@ -164,8 +164,8 @@ export function buildSubagentHookRuntime(
 		(ctx.hasUI && ctx.mode !== "print" && ctx.mode !== "json" ? defaultApproval : undefined);
 	const records: IceHookDispatchRecord[] = [];
 	const pendingObservations = new Set<PendingSubagentHookObservation>();
-	const globalPolicy = parseIceSettings(settingsManager.getGlobalSettings().ice).hooks.commandPolicy;
-	const projectPolicy = parseIceSettings(settingsManager.getProjectSettings().ice).hooks.commandPolicy;
+	const globalPolicy = parseIceSettings(settingsManager.getIceSettingsValue("global")).hooks.commandPolicy;
+	const projectPolicy = parseIceSettings(settingsManager.getIceSettingsValue("project")).hooks.commandPolicy;
 	if (target.projectTrusted && projectPolicy?.enabled) {
 		throw new SubagentError(
 			"capability_denied",
@@ -190,7 +190,7 @@ export function buildSubagentHookRuntime(
 			workspace: target.cwd,
 			isAuthorized: () => {
 				const capabilities = options.getIceCapabilityState?.();
-				const current = parseIceSettings(settingsManager.getGlobalSettings().ice).hooks.commandPolicy;
+				const current = parseIceSettings(settingsManager.getIceSettingsValue("global")).hooks.commandPolicy;
 				return (
 					!target.readOnly &&
 					ctx.isProjectTrusted() &&

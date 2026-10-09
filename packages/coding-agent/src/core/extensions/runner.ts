@@ -1002,6 +1002,8 @@ export class ExtensionRunner {
 	}
 
 	async emitContext(messages: AgentMessage[]): Promise<AgentMessage[]> {
+		// The defensive clone below costs a full-history copy per model call; skip it when nobody listens.
+		if (!this.hasHandlers("context")) return messages;
 		const ctx = this.createContext();
 		let currentMessages = structuredClone(messages);
 

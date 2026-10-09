@@ -439,6 +439,16 @@ export {
 	registerIceSubagentMcpAdapter,
 } from "./subagents/types.ts";
 // Subagents V2 for SDK sessions: the launcher's extension and view bridge as an inline extension.
+// Programmatic child launch for trusted parent extensions (keyed by `ice.events`).
+export {
+	getIceSubagentController,
+	ICE_SUBAGENT_CONTROLLER_KEY,
+	type IceSubagentController,
+	type IceSubagentPatchPreview,
+	type IceSubagentRunResult,
+	type IceSubagentStartOptions,
+	type IceSubagentTask,
+} from "./subagents/v2/controller.ts";
 export { createIceSubagents, type IceSubagentsSdk, type IceSubagentsSdkOptions } from "./subagents/v2/sdk.ts";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.ts";

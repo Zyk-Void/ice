@@ -976,6 +976,7 @@ export class AgentSession {
 			description: definition.description,
 			parameters: definition.parameters,
 			promptGuidelines: definition.promptGuidelines,
+			...(definition.access ? { access: definition.access } : {}),
 			sourceInfo,
 		}));
 	}

@@ -188,7 +188,11 @@ function extensionFixture(
 		stopAfterTurn?: () => void;
 		idle?: boolean;
 		additionalToolNames?: string[];
-		additionalTools?: Array<{ name: string; sourceInfo: { source: string; origin: string } }>;
+		additionalTools?: Array<{
+			name: string;
+			access?: "read" | "write";
+			sourceInfo: { source: string; origin: string };
+		}>;
 	} = {},
 ) {
 	const { root } = fixture();
@@ -426,6 +430,47 @@ describe("ICE guarded extension", () => {
 		expect(
 			await runtime.emit("tool_call", { toolCallId: "direct", toolName: "cua-driver_list_windows", input: {} }),
 		).toBeUndefined();
+	});
+
+	it("exposes declared extension tools by access class, mode, and trust", async () => {
+		const declared = (name: string, access: "read" | "write", origin = "top-level") => ({
+			name,
+			access,
+			sourceInfo: { source: "local", origin },
+		});
+		const additionalTools = [
+			declared("wg_status", "read"),
+			declared("wg_claim", "write"),
+			declared("pkg_claim", "write", "package"),
+			{ name: "wg_undeclared", sourceInfo: { source: "local", origin: "top-level" } },
+		];
+		const active = async (flags: Record<string, string | boolean | undefined>, trusted = true) => {
+			const runtime = extensionFixture({ flags, additionalTools, trusted, hasUI: true });
+			await runtime.emit("session_start");
+			const tools = runtime.activeTools.at(-1) ?? [];
+			const claim = await runtime.emit("tool_call", { toolCallId: "c", toolName: "wg_claim", input: {} });
+			return { tools, claim };
+		};
+
+		const plan = await active({ "ice-mode": "plan" });
+		expect(plan.tools).toContain("wg_status");
+		expect(plan.tools).not.toContain("wg_claim");
+		expect(plan.claim).toMatchObject({ block: true });
+
+		const build = await active({ "ice-mode": "build" });
+		expect(build.tools).toEqual(expect.arrayContaining(["wg_status", "wg_claim"]));
+		expect(build.claim).toBeUndefined();
+
+		const untrusted = await active({ "ice-mode": "build" }, false);
+		expect(untrusted.tools).toContain("wg_status");
+		expect(untrusted.tools).not.toContain("wg_claim");
+		expect(untrusted.claim).toMatchObject({ block: true });
+
+		// A declaration never bypasses the external-tool policy or exposes undeclared tools.
+		for (const { tools } of [plan, build, untrusted]) {
+			expect(tools).not.toContain("pkg_claim");
+			expect(tools).not.toContain("wg_undeclared");
+		}
 	});
 
 	it("publishes external capability only for an approved trusted build", async () => {

@@ -61,8 +61,11 @@ function sortSubagentCacheCollection<T>(values: readonly T[]): T[] {
 	);
 }
 
-export function loadSelectedPromptContent(resource: SubagentResourceProvenance): SelectedPromptContent {
-	const { body } = parseFrontmatter<Record<string, unknown>>(readValidatedResource(resource).toString("utf8"));
+export function loadSelectedPromptContent(
+	resource: SubagentResourceProvenance,
+	bytes: Buffer = readValidatedResource(resource),
+): SelectedPromptContent {
+	const { body } = parseFrontmatter<Record<string, unknown>>(bytes.toString("utf8"));
 	return { name: resource.name, content: redactCredentialText(body.trim()) };
 }
 
@@ -196,7 +199,9 @@ export function deriveSubagentPromptCacheKey(
 
 export function buildSubagentPrompt(
 	request: NormalizedSubagentRequest,
-	selectedPromptContents: readonly SelectedPromptContent[] = request.resources.prompts.map(loadSelectedPromptContent),
+	selectedPromptContents: readonly SelectedPromptContent[] = request.resources.prompts.map((resource) =>
+		loadSelectedPromptContent(resource),
+	),
 	unsafeHostExec = false,
 	noLifetimeTimeout = false,
 	instructionFiles: readonly SelectedPromptContent[] = loadSubagentInstructionContents(request),

@@ -354,7 +354,7 @@ export class SubagentV2Runtime {
 					if (reason) throw new Error(reason);
 				}
 			}
-			const subjects = extractPermissionSubjects({
+			const extracted = extractPermissionSubjects({
 				tool: toolName,
 				args: permissionArgs,
 				cwd,
@@ -362,6 +362,17 @@ export class SubagentV2Runtime {
 					? { adapterAccess: access.get(toolName) }
 					: {}),
 			});
+			// Reading another child's open patch worktree (an independent review) is not external
+			// access: this parent owns that checkout. Writes and other outside paths are unchanged.
+			const external = extracted.filter((subject) => subject.tool === "external_directory");
+			const subjects =
+				external.length > 0 &&
+				extracted.every((subject) => subject.tool === "external_directory" || subject.subjectClass === "read") &&
+				external.every(
+					(subject) => subject.value !== undefined && this.isOpenPatchWorktreePath(subject.value, contract.id),
+				)
+					? extracted.filter((subject) => subject.tool !== "external_directory")
+					: extracted;
 			const grants = resident()?.grants ?? [];
 			const parentSubject = (subject: PermissionSubject): PermissionSubject => {
 				if (contract.isolation.mode !== "worktree" || !subject.pathMode || !subject.value) return subject;
@@ -429,6 +440,20 @@ export class SubagentV2Runtime {
 				throw new Error("Current parent permission denied the approved child operation.");
 			if (outcome.sessionRule) resident()?.grants.push(outcome.sessionRule);
 		};
+	}
+
+	/** True when `path` is inside the worktree of another child of this owner whose patch is still open. */
+	private isOpenPatchWorktreePath(path: string, selfId: string): boolean {
+		const state = this.state();
+		return state.registry.list(state.sessionId).some((record) => {
+			if (record.id === selfId || record.patchState !== "open") return false;
+			try {
+				const worktreePath = this.contractOf(record.id).contract.isolation.worktreePath;
+				return worktreePath !== undefined && pathIsWithin(worktreePath, path);
+			} catch {
+				return false;
+			}
+		});
 	}
 
 	// --- launch -----------------------------------------------------------
@@ -612,9 +637,8 @@ export class SubagentV2Runtime {
 	 * Capture the parent's dirty baseline, create the child's worktree, and
 	 * rewrite scope roots into it. Scope roots outside the repository are refused.
 	 */
-	private prepareWorktree(input: ChildRuntimeContractInput): ChildRuntimeContractInput {
+	private prepareWorktree(input: ChildRuntimeContractInput, baseline: WorktreeBaseline): ChildRuntimeContractInput {
 		const parent = this.parent();
-		const baseline = captureWorktreeBaseline(parent.sessionManager.getCwd());
 		const repoRoot = realpathSync(baseline.repoRoot);
 		const scopeRoots = input.capabilities.scopeRoots.map((root) => {
 			const rel = relative(repoRoot, root);
@@ -816,9 +840,14 @@ export class SubagentV2Runtime {
 			model: Model<Api>;
 		}> = [];
 		const worktrees: Array<{ repoRoot: string; path: string }> = [];
+		// One batch shares one parent snapshot: every worktree child starts from the same baseline.
+		let baseline: WorktreeBaseline | undefined;
 		try {
 			for (const { task, input, model } of prepared) {
-				const isolated = input.isolation.mode === "worktree" ? this.prepareWorktree(input) : input;
+				if (input.isolation.mode === "worktree" && !baseline)
+					baseline = captureWorktreeBaseline(parent.sessionManager.getCwd());
+				const isolated =
+					baseline && input.isolation.mode === "worktree" ? this.prepareWorktree(input, baseline) : input;
 				if (isolated.isolation.worktreePath && isolated.isolation.repoRoot)
 					worktrees.push({ repoRoot: isolated.isolation.repoRoot, path: isolated.isolation.worktreePath });
 				const contract = buildChildRuntimeContract(isolated);
@@ -1770,6 +1799,15 @@ export class SubagentV2Runtime {
 	private patchDirectory(id: string): string {
 		const parent = this.parent();
 		return join(childSessionDirectory(parent.sessionManager.getSessionDir(), parent.sessionId), "patches", id);
+	}
+
+	/** Current worktree delta of an open patch without pinning or inspecting it; `agent_patch` still gates integration. */
+	previewPatch(id: string): { delta: ChildDelta; worktreePath: string } | undefined {
+		const { record, contract, baseline } = this.worktreeOf(id);
+		if (record.patchState !== "open") return undefined;
+		this.assertPatchOpen(record);
+		const worktreePath = contract.isolation.worktreePath!;
+		return { delta: computeChildDelta(baseline, worktreePath), worktreePath };
 	}
 
 	inspectPatch(id: string): {
