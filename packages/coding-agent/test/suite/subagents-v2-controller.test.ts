@@ -98,6 +98,9 @@ describe("subagent V2 controller", () => {
 		expect(preview?.changedPaths).toEqual([{ status: "M", path: "a.txt" }]);
 		expect(preview?.patch).toContain("+child change");
 		expect(controller.preview(result.id, 8)?.truncated).toBe(true);
+		expect(controller.openPatches()).toEqual([
+			expect.objectContaining({ id: result.id, agent: "general", description: "write task" }),
+		]);
 		// Preview never pins an artifact: applying still requires inspection through agent_patch.
 		expect(runtime.registry.get(runtime.ownerSessionId(), result.id).patchArtifact).toBeUndefined();
 		await expect(runtime.applyPatch(result.id)).rejects.toThrow(/Inspect this patch/);
@@ -168,12 +171,14 @@ describe("subagent V2 controller", () => {
 			start: async () => ({}) as never,
 			stop: async () => {},
 			preview: () => undefined,
+			openPatches: () => [],
 		};
 		const second = {
 			version: 1 as const,
 			start: async () => ({}) as never,
 			stop: async () => {},
 			preview: () => undefined,
+			openPatches: () => [],
 		};
 		const unregisterFirst = registerIceSubagentController(owner, first);
 		expect(getIceSubagentController(owner)).toBe(first);

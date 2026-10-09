@@ -444,6 +444,7 @@ export {
 	getIceSubagentController,
 	ICE_SUBAGENT_CONTROLLER_KEY,
 	type IceSubagentController,
+	type IceSubagentOpenPatch,
 	type IceSubagentPatchPreview,
 	type IceSubagentRunResult,
 	type IceSubagentStartOptions,

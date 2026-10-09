@@ -59,6 +59,15 @@ export interface IceSubagentController {
 	stop(id: string): Promise<void>;
 	/** The open patch of a worktree child, without inspecting or pinning it; undefined when none is open. */
 	preview(id: string, maxBytes?: number): IceSubagentPatchPreview | undefined;
+	/** This session's children whose worktree patch is still open, awaiting an `agent_patch` decision. */
+	openPatches(): ReadonlyArray<IceSubagentOpenPatch>;
+}
+
+export interface IceSubagentOpenPatch {
+	id: string;
+	name?: string;
+	agent: string;
+	description: string;
 }
 
 /**
@@ -120,6 +129,16 @@ export function createIceSubagentController(runtime: SubagentV2Runtime): IceSuba
 			};
 		},
 		stop: (id) => runtime.stop(id),
+		openPatches: () =>
+			runtime.registry
+				.list(runtime.ownerSessionId())
+				.filter((record) => record.patchState === "open")
+				.map((record) => ({
+					id: record.id,
+					...(record.name ? { name: record.name } : {}),
+					agent: record.agent,
+					description: record.description,
+				})),
 		preview(id, maxBytes = 64 * 1024) {
 			const preview = runtime.previewPatch(id);
 			if (!preview) return undefined;

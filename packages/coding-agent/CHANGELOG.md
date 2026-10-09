@@ -50,7 +50,7 @@
 - Added a running background task count to the compact footer, and `/tasks` now lists background bash commands with their elapsed time.
 - Added Agent Hub approval navigation: opening the Hub selects the first subagent waiting for approval, `tab` (`app.agents.nextApproval`) steps through pending requests across subagents, and `a` (`app.agents.approveSession`) always allows the selected request's rule for that subagent.
 - Added a per-tool `access` class (`"read"` or `"write"`) for extension tools. ICE plan and build modes now expose declared `read` tools in both modes and `write` tools only in a trusted build session; undeclared tools stay inactive, and package tools still require `--allow-external`.
-- Added `getIceSubagentController(ice.events)` (`ICE_SUBAGENT_CONTROLLER_KEY`) for trusted parent extensions: `start` launches one Subagents V2 child through the `agent` tool's preflight, approvals and permission caps and returns its turn result (outcome, text, frozen model, worktree patch state, validated payload) without delivering it to the parent conversation; `stop` stops it; `preview` reads an open worktree patch without inspecting or pinning it.
+- Added `getIceSubagentController(ice.events)` (`ICE_SUBAGENT_CONTROLLER_KEY`) for trusted parent extensions: `start` launches one Subagents V2 child through the `agent` tool's preflight, approvals and permission caps and returns its turn result (outcome, text, frozen model, worktree patch state, validated payload) without delivering it to the parent conversation; `stop` stops it; `preview` reads an open worktree patch without inspecting or pinning it; `openPatches` lists children whose patch awaits `agent_patch`.
 
 ### Breaking Changes
 
