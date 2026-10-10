@@ -24,6 +24,9 @@
 
 ### Fixed
 
+- Fixed proxy SSE dropping unterminated final event lines and leaving results unresolved on premature EOF; terminal events stop reading and release the response reader.
+- Recheck cancellation immediately before dispatching a prepared tool, preventing host execution when the run aborts between preparation and dispatch in parallel or sequential mode.
+
 - Fixed an error stop reason reported after the run signal was aborted being surfaced, retried, and compacted as a provider failure: the agent loop now reclassifies such responses as `aborted`.
 - Fixed Windows path handling for `NodeExecutionEnv` file basenames, recursive skill loading, and prompt template names.
 

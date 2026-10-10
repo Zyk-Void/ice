@@ -186,13 +186,11 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 
 			while (true) {
 				const { done, value } = await reader.read();
-				if (done) break;
-
 				if (options.signal?.aborted) {
 					throw new Error("Request aborted by user");
 				}
 
-				buffer += decoder.decode(value, { stream: true });
+				buffer += done ? `${decoder.decode()}\n` : decoder.decode(value, { stream: true });
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
 
@@ -204,12 +202,17 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 							const event = processProxyEvent(proxyEvent, partial);
 							if (event) {
 								stream.push(event);
+								if (event.type === "done" || event.type === "error") break;
 							}
 						}
 					}
 				}
+				if (done || partial.stopReason !== "pending") break;
 			}
 
+			if (partial.stopReason === "pending") {
+				throw new Error("Proxy stream ended before a terminal response event");
+			}
 			if (options.signal?.aborted) {
 				throw new Error("Request aborted by user");
 			}
@@ -227,6 +230,8 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 			});
 			stream.end();
 		} finally {
+			await reader?.cancel().catch(() => {});
+			reader?.releaseLock();
 			if (options.signal) {
 				options.signal.removeEventListener("abort", abortHandler);
 			}

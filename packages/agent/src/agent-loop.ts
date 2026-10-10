@@ -677,6 +677,10 @@ async function executePreparedToolCall(
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallOutcome> {
+	// Preparation yields to the event loop; cancellation may arrive after its last check.
+	if (signal?.aborted) {
+		return { result: createErrorToolResult("Operation aborted"), isError: true };
+	}
 	const updateEvents: Promise<void>[] = [];
 	let acceptingUpdates = true;
 

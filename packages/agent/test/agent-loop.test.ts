@@ -1092,6 +1092,66 @@ describe("agentLoop with AgentMessage", () => {
 		expect(toolResultIds).toEqual(["tool-1", "tool-2"]);
 	});
 
+	it.each(["parallel", "sequential"] as const)(
+		"does not dispatch a %s tool aborted after preparation resolves",
+		async (toolExecution) => {
+			const controller = new AbortController();
+			const toolSchema = Type.Object({ value: Type.String() });
+			const executed: string[] = [];
+			const tool: AgentTool<typeof toolSchema, { value: string }> = {
+				name: "echo",
+				label: "Echo",
+				description: "Echo tool",
+				parameters: toolSchema,
+				async execute(_id, params) {
+					executed.push(params.value);
+					return { content: [{ type: "text", text: params.value }], details: params };
+				},
+			};
+			const config: AgentLoopConfig = {
+				model: createModel(),
+				convertToLlm: identityConverter,
+				toolExecution,
+				beforeToolCall: async () => {
+					// The first microtask runs before preparation resumes; the second runs
+					// after its signal check but before the caller dispatches the tool.
+					queueMicrotask(() => queueMicrotask(() => controller.abort()));
+					return undefined;
+				},
+				shouldStopAfterTurn: () => true,
+			};
+			const stream = agentLoop(
+				[createUserMessage("echo")],
+				{ systemPrompt: "", messages: [], tools: [tool] },
+				config,
+				controller.signal,
+				() => {
+					const response = new MockAssistantStream();
+					queueMicrotask(() => {
+						response.push({
+							type: "done",
+							reason: "toolUse",
+							message: createAssistantMessage(
+								[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+								"toolUse",
+							),
+						});
+					});
+					return response;
+				},
+			);
+			const events: AgentEvent[] = [];
+			for await (const event of stream) events.push(event);
+			const messages = await stream.result();
+			const results = messages.filter((message) => message.role === "toolResult");
+			expect(executed).toEqual([]);
+			expect(results).toHaveLength(1);
+			expect(results[0].isError).toBe(true);
+			expect(results[0].content).toEqual([{ type: "text", text: "Operation aborted" }]);
+			expect(events.filter((event) => event.type === "tool_execution_end")).toHaveLength(1);
+		},
+	);
+
 	it("should use prepareNextTurn snapshot before continuing", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const tool: AgentTool<typeof toolSchema, { value: string }> = {
