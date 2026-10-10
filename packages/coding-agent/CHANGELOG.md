@@ -266,6 +266,7 @@
 
 ### Fixed
 
+- Fixed repeated Cognee recall failures pausing queued remembers (including compaction summaries): recall and remember now have separate circuit breakers, and `/cognee status` reports both.
 - Fixed `edit` rejecting a unique exact match as ambiguous when fuzzy-equivalent text (curly quotes, Unicode dashes or spaces) existed elsewhere; uniqueness is now judged in the mode that found each edit, and an exact edit keeps its own occurrence when another edit in the batch needs fuzzy matching.
 - Fixed `find` patterns starting with `./` (for example `./src/**/*.ts`) matching nothing; the leading `./` now refers to the search directory.
 - Fixed Cognee leaving `.tmp` files behind when a pending-remember, config, session-map, or checkpoint-recall write failed; all private atomic writes now share one helper that removes the temporary file.

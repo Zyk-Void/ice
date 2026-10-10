@@ -593,7 +593,9 @@ interface CogneeRuntime {
 	client: CogneeClient | undefined;
 	loaded: boolean;
 	loading: Promise<void> | undefined;
-	circuit: CircuitState;
+	/** Recall and remember fail independently, so a slow recall never pauses queued remembers. */
+	recallCircuit: CircuitState;
+	rememberCircuit: CircuitState;
 	lastError: string | undefined;
 	lastRecallKey: string | undefined;
 	lastRecallAt: number;
@@ -637,7 +639,8 @@ export interface DoctorReport {
 	compactionSummaryMode: CompactionSummaryMode;
 	blackholeActive: boolean;
 	ownCompactionSummary: boolean;
-	circuit: "closed" | "open";
+	recallCircuit: "closed" | "open";
+	rememberCircuit: "closed" | "open";
 	lastError?: string;
 	saves: { prompt: number; trace: number; answer: number };
 	lastRecallHits: number;
@@ -749,7 +752,8 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 		client: undefined,
 		loaded: false,
 		loading: undefined,
-		circuit: createCircuitState(),
+		recallCircuit: createCircuitState(),
+		rememberCircuit: createCircuitState(),
 		lastError: undefined,
 		lastRecallKey: undefined,
 		lastRecallAt: 0,
@@ -1145,7 +1149,8 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			compactionSummaryMode: runtime.config.compactionSummaryMode,
 			blackholeActive,
 			ownCompactionSummary,
-			circuit: canAttemptCircuit(runtime.circuit) ? "closed" : "open",
+			recallCircuit: canAttemptCircuit(runtime.recallCircuit) ? "closed" : "open",
+			rememberCircuit: canAttemptCircuit(runtime.rememberCircuit) ? "closed" : "open",
 			lastError: runtime.lastError,
 			saves: { ...runtime.saves },
 			lastRecallHits: runtime.lastRecallHits,
@@ -1185,7 +1190,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 				.filter((record) => record.state === "pending" || (allowUncertain && record.state === "uncertain"))
 				.slice(0, 4);
 			for (const record of records) {
-				if (!canAttemptCircuit(runtime.circuit)) return;
+				if (!canAttemptCircuit(runtime.rememberCircuit)) return;
 				const requestId = randomUUID();
 				const startedAt = Date.now();
 				observe("remember", "started", {
@@ -1196,7 +1201,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 				try {
 					await runtime.client.remember({ dataset: record.dataset, nodeSet: record.nodeSet, text: record.text });
 					await removePendingRemember(pendingDir, record.operationId);
-					runtime.circuit = resetCircuitState();
+					runtime.rememberCircuit = resetCircuitState();
 					observe("remember", "succeeded", {
 						requestId,
 						latencyMs: Date.now() - startedAt,
@@ -1219,7 +1224,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 						meta: { operationId: record.operationId, state: record.state },
 					});
 					runtime.lastError = kind;
-					runtime.circuit = noteCircuitFailure(runtime.circuit, kind);
+					runtime.rememberCircuit = noteCircuitFailure(runtime.rememberCircuit, kind);
 					if (kind === "timeout" || kind === "aborted")
 						await updatePendingRememberState(pendingDir, record.operationId, "uncertain");
 					appendOperation(ice, {
@@ -1231,7 +1236,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 						state: kind === "timeout" || kind === "aborted" ? "uncertain" : "pending",
 						error: kind,
 					});
-					if (!canAttemptCircuit(runtime.circuit))
+					if (!canAttemptCircuit(runtime.rememberCircuit))
 						notify(ctx, "Cognee remember paused after repeated failures", "warning");
 				}
 			}
@@ -1272,7 +1277,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			}
 			try {
 				const results = await runtime.client.recall(query, { topK: runtime.config.topK });
-				runtime.circuit = resetCircuitState();
+				runtime.recallCircuit = resetCircuitState();
 				runtime.lastError = undefined;
 				notify(
 					ctx,
@@ -1282,7 +1287,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			} catch (error) {
 				const kind = errorKind(error);
 				runtime.lastError = kind;
-				runtime.circuit = noteCircuitFailure(runtime.circuit, kind);
+				runtime.recallCircuit = noteCircuitFailure(runtime.recallCircuit, kind);
 				notify(ctx, `Cognee search failed: ${kind}`, "error");
 			}
 		};
@@ -1304,13 +1309,13 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			}
 			try {
 				await runtime.client.remember({ dataset: activeDataset(), nodeSet, text: safeText });
-				runtime.circuit = resetCircuitState();
+				runtime.rememberCircuit = resetCircuitState();
 				runtime.lastError = undefined;
 				notify(ctx, "Cognee memory stored", "info");
 			} catch (error) {
 				const kind = errorKind(error);
 				runtime.lastError = kind;
-				runtime.circuit = noteCircuitFailure(runtime.circuit, kind);
+				runtime.rememberCircuit = noteCircuitFailure(runtime.rememberCircuit, kind);
 				const record = createPendingRemember(safeText, activeDataset(), nodeSet, options.now?.() ?? Date.now());
 				const queued = await enqueuePendingRemember(pendingDir, record, runtime.config.queueLimit);
 				notify(
@@ -1340,7 +1345,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 						topK: runtime.config.topK,
 						signal,
 					});
-					runtime.circuit = resetCircuitState();
+					runtime.recallCircuit = resetCircuitState();
 					return {
 						content: [
 							{
@@ -1356,7 +1361,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 				} catch (error) {
 					const kind = errorKind(error);
 					runtime.lastError = kind;
-					runtime.circuit = noteCircuitFailure(runtime.circuit, kind);
+					runtime.recallCircuit = noteCircuitFailure(runtime.recallCircuit, kind);
 					return {
 						content: [{ type: "text", text: `Cognee search failed: ${kind}` }],
 						details: { enabled: true, count: 0, dataset: activeDataset(), error: kind },
@@ -1393,7 +1398,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 					const report = await collectDoctor();
 					notify(
 						ctx,
-						`Cognee ${report.enabled ? "on" : "off"}; health ${report.health}; recall ${report.autoRecall ? "on" : "off"}; remember ${report.autoRemember}; capture ${report.captureSession ? "on" : "off"}; tools ${report.captureTools ? "on" : "off"}; improve ${report.autoImprove ? "on" : "off"}; compact=${report.compactionSummaryMode}${report.blackholeActive ? "+blackhole" : ""}${report.ownCompactionSummary ? "(own-summary)" : "(defer-summary)"}; endpoint ${report.baseUrl}; dataset ${report.dataset}; session ${report.sessionId ?? "none"}; key ${report.apiKeySource}; saves p/t/a=${report.saves.prompt}/${report.saves.trace}/${report.saves.answer}; lastRecall=${report.lastRecallHits}; queue pending=${report.queuePending} uncertain=${report.queueUncertain}; breaker ${report.circuit}; lastError=${report.lastError ?? "none"}`,
+						`Cognee ${report.enabled ? "on" : "off"}; health ${report.health}; recall ${report.autoRecall ? "on" : "off"}; remember ${report.autoRemember}; capture ${report.captureSession ? "on" : "off"}; tools ${report.captureTools ? "on" : "off"}; improve ${report.autoImprove ? "on" : "off"}; compact=${report.compactionSummaryMode}${report.blackholeActive ? "+blackhole" : ""}${report.ownCompactionSummary ? "(own-summary)" : "(defer-summary)"}; endpoint ${report.baseUrl}; dataset ${report.dataset}; session ${report.sessionId ?? "none"}; key ${report.apiKeySource}; saves p/t/a=${report.saves.prompt}/${report.saves.trace}/${report.saves.answer}; lastRecall=${report.lastRecallHits}; queue pending=${report.queuePending} uncertain=${report.queueUncertain}; breaker recall=${report.recallCircuit} remember=${report.rememberCircuit}; lastError=${report.lastError ?? "none"}`,
 						"info",
 					);
 					updateStatusLine(ctx);
@@ -1416,7 +1421,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 							`compactMode=${report.compactionSummaryMode}`,
 							`blackhole=${report.blackholeActive}`,
 							`ownSummary=${report.ownCompactionSummary}`,
-							`breaker=${report.circuit}`,
+							`breaker=recall:${report.recallCircuit},remember:${report.rememberCircuit}`,
 							`saves=${JSON.stringify(report.saves)}`,
 							`queue=${report.queuePending}/${report.queueUncertain}`,
 							`detail=${report.healthDetail ?? ""}`,
@@ -1665,7 +1670,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 					runtime.saves.prompt += 1;
 				}
 
-				if (!runtime.config.autoRecall || !canAttemptCircuit(runtime.circuit)) {
+				if (!runtime.config.autoRecall || !canAttemptCircuit(runtime.recallCircuit)) {
 					observe("recall", "succeeded", {
 						requestId,
 						latencyMs: Date.now() - startedAt,
@@ -1689,7 +1694,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 					scope: ["session", "trace", "graph"],
 					signal: ctx.signal,
 				});
-				runtime.circuit = resetCircuitState();
+				runtime.recallCircuit = resetCircuitState();
 				runtime.lastRecallHits = results.length;
 				runtime.lastRecallKey = recallKey;
 				runtime.lastRecallAt = now;
@@ -1706,7 +1711,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			} catch (error) {
 				const kind = errorKind(error);
 				runtime.lastError = kind;
-				runtime.circuit = noteCircuitFailure(runtime.circuit, kind);
+				runtime.recallCircuit = noteCircuitFailure(runtime.recallCircuit, kind);
 				observe("recall", "failed", { requestId, latencyMs: Date.now() - startedAt, error: kind });
 				return turnScopedMemory(event.systemPrompt);
 			} finally {
@@ -1830,7 +1835,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			await clearCheckpointRecallForSession(hostSessionId);
 			if (!runtime.config.checkpointRecall) return;
 			try {
-				if (!runtime.client || !canAttemptCircuit(runtime.circuit)) return;
+				if (!runtime.client || !canAttemptCircuit(runtime.recallCircuit)) return;
 				const query = checkpointRecallQuery(event.preparation);
 				if (!query) return;
 				const client = runtime.client;
@@ -1840,7 +1845,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 					scope: ["session", "trace", "graph"],
 					signal: event.signal,
 				});
-				runtime.circuit = resetCircuitState();
+				runtime.recallCircuit = resetCircuitState();
 				if (results.length === 0) return;
 				let remainingChars = runtime.config.recallMaxChars;
 				const boundedResults: Array<{ text: string; score?: number }> = [];
@@ -1866,7 +1871,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			} catch (error) {
 				const kind = errorKind(error);
 				runtime.lastError = kind;
-				runtime.circuit = noteCircuitFailure(runtime.circuit, kind);
+				runtime.recallCircuit = noteCircuitFailure(runtime.recallCircuit, kind);
 			}
 		};
 

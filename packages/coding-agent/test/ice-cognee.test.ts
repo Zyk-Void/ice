@@ -931,6 +931,35 @@ describe("ice-cognee lifecycle regressions", () => {
 		}
 	});
 
+	it("keeps remembering after repeated recall failures open the recall breaker", async () => {
+		const storageDir = mkdtempSync(join(tmpdir(), "ice-cognee-split-circuit-"));
+		const calls: string[] = [];
+		try {
+			const runtime = extensionHookFixture(storageDir, false, {}, async (input) => {
+				const url = String(input);
+				calls.push(url);
+				if (url.endsWith("/recall")) return new Response("down", { status: 500 });
+				return new Response(null, { status: 202 });
+			});
+			await runtime.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, runtime.ctx);
+			for (const prompt of ["first", "second", "third", "fourth"]) {
+				await runtime.handlers.get("before_agent_start")?.(
+					{ type: "before_agent_start", prompt, systemPrompt: "sys" },
+					runtime.ctx,
+				);
+			}
+			// The fourth prompt is skipped by the open recall breaker.
+			expect(calls.filter((url) => url.endsWith("/recall"))).toHaveLength(3);
+			await runtime.handlers.get("session_compact")?.(
+				{ type: "session_compact", compactionEntry: { summary: "compact summary" }, reason: "manual" },
+				runtime.ctx,
+			);
+			await waitFor(() => calls.some((url) => url.endsWith("/remember")));
+		} finally {
+			rmSync(storageDir, { recursive: true, force: true });
+		}
+	});
+
 	it("serializes pending queue drains", async () => {
 		const storageDir = mkdtempSync(join(tmpdir(), "ice-cognee-drain-"));
 		let releaseRemember!: () => void;
