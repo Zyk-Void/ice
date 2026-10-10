@@ -87,6 +87,48 @@ describe("observe recorder", () => {
 		recorder.stop();
 	});
 
+	it("broadcasts tool progress live without persisting it", () => {
+		const session = createFakeSession();
+		const persisted: ObserveRecorderEvent[] = [];
+		const recorder = startObserveRecorder(session, {
+			pollMs: 0,
+			persistence: {
+				recordRun: () => {},
+				recordEvent: (event) => persisted.push(structuredClone(event)),
+				finishRun: () => {},
+				close: () => {},
+			},
+		});
+		const live = collect(recorder);
+
+		session.emit({ type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args: { command: "ls" } });
+		for (const chunk of ["a", "b", "c"]) {
+			session.emit({
+				type: "tool_execution_update",
+				toolCallId: "t1",
+				toolName: "bash",
+				args: {},
+				partialResult: chunk,
+			});
+		}
+		session.emit({
+			type: "tool_execution_end",
+			toolCallId: "t1",
+			toolName: "bash",
+			result: { content: [{ type: "text", text: "ok" }] },
+			isError: false,
+		});
+
+		expect(live.filter((event) => event.type === "activity_update")).toHaveLength(4);
+		const durableUpdates = persisted.filter(
+			(event): event is Extract<ObserveRecorderEvent, { type: "activity_update" }> =>
+				event.type === "activity_update",
+		);
+		expect(durableUpdates).toHaveLength(1);
+		expect(durableUpdates[0].item).toMatchObject({ state: "done", updates: 3, result: "ok" });
+		recorder.stop();
+	});
+
 	it("keeps oversized tool arguments and results for forensic inspection", () => {
 		const session = createFakeSession();
 		const recorder = startObserveRecorder(session, { pollMs: 0 });

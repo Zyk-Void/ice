@@ -233,12 +233,13 @@ export function startObserveRecorder(session: ObserveSessionLike, options?: Obse
 	let usageTotals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
 	let lastPersistedHeader: string | undefined;
 
-	function emit(event: ObserveRecorderEvent): void {
+	/** `persist: false` broadcasts live-only progress; the item's next durable event carries its final state. */
+	function emit(event: ObserveRecorderEvent, persist = true): void {
 		try {
 			const header = buildHeader();
 			// The poll timer emits a header every tick; persist only real changes so idle sessions stay bounded.
 			const serialized = event.type === "header" ? JSON.stringify(header) : undefined;
-			if (serialized === undefined || serialized !== lastPersistedHeader) {
+			if (persist && (serialized === undefined || serialized !== lastPersistedHeader)) {
 				persistence?.recordEvent(event, header);
 				if (serialized !== undefined) lastPersistedHeader = serialized;
 			}
@@ -358,7 +359,9 @@ export function startObserveRecorder(session: ObserveSessionLike, options?: Obse
 				const item = findToolItem(String(e.toolCallId));
 				if (item) {
 					item.updates = (item.updates ?? 0) + 1;
-					emit({ type: "activity_update", item });
+					// Progress only bumps the counter; persisting the whole item (args and raw payload,
+					// up to 1 MB each) per update made these rows most of the history database.
+					emit({ type: "activity_update", item }, false);
 				}
 				break;
 			}

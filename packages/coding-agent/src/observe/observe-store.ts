@@ -273,6 +273,8 @@ export async function openObserveRunStore(
 	await mkdir(dirname(databasePath), { recursive: true });
 	const db = await factory.open(databasePath);
 	db.exec("PRAGMA journal_mode=WAL");
+	// Checkpoints reuse the WAL file but never shrink it; truncate it back to 64 MiB after each one.
+	db.exec("PRAGMA journal_size_limit=67108864");
 	db.exec("PRAGMA synchronous=FULL");
 	db.exec("PRAGMA busy_timeout=5000");
 	const store = new SqliteObserveRunStore(db);

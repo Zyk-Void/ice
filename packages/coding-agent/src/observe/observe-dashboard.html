@@ -61,11 +61,11 @@
 		outline: 2px solid var(--cyan);
 		outline-offset: 2px;
 	}
-	::selection { background: rgba(99, 230, 213, 0.3); color: var(--text); }
+	::selection { background: rgba(50, 145, 255, 0.32); color: var(--text); }
 	::-webkit-scrollbar { width: 9px; height: 9px; }
 	::-webkit-scrollbar-track { background: var(--bg-deep); }
-	::-webkit-scrollbar-thumb { background: #2a3e55; border: 2px solid var(--bg-deep); border-radius: 8px; }
-	::-webkit-scrollbar-thumb:hover { background: #3c5671; }
+	::-webkit-scrollbar-thumb { background: #2e2e2e; border: 2px solid var(--bg-deep); border-radius: 8px; }
+	::-webkit-scrollbar-thumb:hover { background: #444; }
 	.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 	.sr-only {
 		position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
@@ -111,17 +111,17 @@
 		padding: 0 11px;
 		border: 1px solid var(--line-strong);
 		border-radius: var(--radius-sm);
-		background: rgba(20, 34, 53, 0.72);
+		background: var(--panel-raised);
 		color: var(--text-soft);
 		cursor: pointer;
 		transition: background 160ms var(--ease), border-color 160ms var(--ease), color 160ms var(--ease), transform 160ms var(--ease);
 	}
-	.icon-button:hover { background: var(--panel-hover); border-color: #48627e; color: var(--text); transform: translateY(-1px); }
+	.icon-button:hover { background: var(--panel-hover); border-color: #3f3f3f; color: var(--text); transform: translateY(-1px); }
 	.icon-button .icon svg { width: 15px; height: 15px; }
-	.icon-button[aria-pressed="true"] { border-color: rgba(99, 230, 213, 0.7); background: var(--cyan-wash); color: var(--cyan); }
+	.icon-button[aria-pressed="true"] { border-color: rgba(50, 145, 255, 0.6); background: var(--cyan-wash); color: var(--cyan); }
 	.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex: none; }
-	.status-dot.live { background: var(--cyan); box-shadow: 0 0 0 4px rgba(99, 230, 213, 0.1); }
-	.status-dot.lost { background: var(--coral); box-shadow: 0 0 0 4px rgba(255, 123, 130, 0.1); }
+	.status-dot.live { background: var(--cyan); box-shadow: 0 0 0 4px rgba(70, 168, 255, 0.14); }
+	.status-dot.lost { background: var(--coral); box-shadow: 0 0 0 4px rgba(255, 99, 105, 0.1); }
 
 	/* ---------- overview metrics ---------- */
 	#overview { padding: 10px 20px 0; min-width: 0; }
@@ -169,14 +169,14 @@
 	.metric-unit { color: var(--text-muted); font-size: 11px; font-weight: 500; letter-spacing: 0; }
 	.metric-note { color: var(--text-faint); font-size: 11px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 	.context-readout { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
-	.context-meter { height: 4px; margin-top: 7px; overflow: hidden; border-radius: 4px; background: #1d2b3b; }
+	.context-meter { height: 4px; margin-top: 7px; overflow: hidden; border-radius: 4px; background: #1f1f1f; }
 	.context-meter span { display: block; height: 100%; min-width: 2px; border-radius: inherit; background: var(--cyan); transition: width 300ms var(--ease), background 200ms var(--ease); }
 	.context-meter.warn span { background: var(--amber); }
 	.context-meter.danger span { background: var(--coral); }
 
 	/* ---------- pulse / lanes ---------- */
-	#pulse-wrap { padding: 14px 24px 0; min-width: 0; }
-	.pulse-panel { padding: 13px 15px 12px; border-color: var(--pulse-border, var(--line)); box-shadow: inset 0 2px 0 var(--pulse-accent, var(--cyan)); transition: border-color 180ms var(--ease), box-shadow 180ms var(--ease); }
+	#pulse-wrap { padding: 10px 20px 0; min-width: 0; }
+	.pulse-panel { padding: 12px 15px 10px; box-shadow: inset 0 1px 0 color-mix(in srgb, var(--pulse-accent, var(--cyan)) 55%, transparent); transition: box-shadow 180ms var(--ease); }
 	.pulse-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 	.pulse-title { display: flex; align-items: center; gap: 9px; min-width: 0; }
 	.pulse-title h2 { font-size: 13px; font-weight: 650; }
@@ -195,12 +195,13 @@
 	.legend-swatch { width: 7px; height: 7px; border-radius: 2px; }
 	.legend-swatch.tool { background: var(--blue); }
 	.legend-swatch.message { background: var(--cyan); }
-	.legend-swatch.system { background: var(--amber); }
+	.legend-swatch.error { background: var(--coral); }
 	.legend-swatch.agent { background: var(--violet); }
+	#pulse-scope-rail[hidden] { display: none; }
 	#pulse-scope-rail { display: flex; gap: 2px; height: 3px; margin-top: 12px; overflow: hidden; border-radius: 999px; background: var(--line); }
 	.pulse-scope-segment { min-width: 3px; border-radius: 999px; opacity: 0.9; }
 	#pulse { display: grid; grid-template-columns: repeat(42, minmax(3px, 1fr)); align-items: end; gap: 4px; height: 64px; margin-top: 9px; padding: 0 2px 10px; border-bottom: 1px solid var(--line); }
-	.pulse-bar { position: relative; display: flex; align-items: stretch; width: 100%; min-height: 3px; padding: 0; border: 0; border-radius: 3px 3px 1px 1px; background: #1d2b3d; opacity: 0.9; cursor: pointer; transition: height 220ms var(--ease), opacity 160ms var(--ease), background 160ms var(--ease), outline 160ms var(--ease); }
+	.pulse-bar { position: relative; display: flex; align-items: stretch; width: 100%; min-height: 3px; padding: 0; border: 0; border-radius: 3px 3px 1px 1px; background: #1f1f1f; opacity: 0.9; cursor: pointer; transition: height 220ms var(--ease), opacity 160ms var(--ease), background 160ms var(--ease), outline 160ms var(--ease); }
 	.pulse-bar:hover, .pulse-bar:focus-visible { opacity: 1; }
 	.pulse-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 	.pulse-bar.selected { opacity: 1; outline: 2px solid var(--cyan); outline-offset: 2px; box-shadow: 0 0 12px rgba(70, 168, 255, 0.45); }
@@ -216,11 +217,11 @@
 	.pulse-segment.indigo, .pulse-scope-segment.indigo { background: var(--indigo); }
 	.pulse-segment.slate, .pulse-scope-segment.slate { background: var(--slate); }
 	.pulse-bar.has-error { box-shadow: inset 0 -2px 0 var(--coral); }
-	.pulse-bar.empty { height: 3px !important; background: #1c2a3a; opacity: 1; cursor: default; }
+	.pulse-bar.empty { height: 3px !important; background: #1a1a1a; opacity: 1; cursor: default; }
 	.pulse-bar.empty .pulse-segments { display: none; }
 	.pulse-bar.empty:disabled { pointer-events: none; }
 	.pulse-bar::after { content: ""; position: absolute; right: 0; bottom: -11px; left: 0; height: 2px; background: transparent; }
-	.pulse-bar:last-child::after { background: var(--cyan); box-shadow: 0 0 9px rgba(99, 230, 213, 0.8); }
+	.pulse-bar:last-child::after { background: var(--cyan); box-shadow: 0 0 9px rgba(70, 168, 255, 0.7); }
 	.pulse-axis { display: flex; justify-content: space-between; color: var(--text-faint); font: 10px/1 var(--mono); margin-top: 8px; }
 	.lanes-row { display: flex; align-items: center; gap: 8px; min-height: 25px; margin-top: 10px; overflow: hidden; }
 	.lanes-label { color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; flex: none; }
@@ -233,14 +234,14 @@
 		padding: 0 8px;
 		border: 1px solid var(--line-strong);
 		border-radius: 999px;
-		background: rgba(20, 34, 53, 0.8);
+		background: var(--panel-raised);
 		color: var(--text-soft);
 		font-size: 11px;
 		white-space: nowrap;
 	}
 	.lane-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--blue); }
 	.lane-chip.done::before { background: var(--mint); }
-	.lane-chip.fault { border-color: rgba(255, 123, 130, 0.5); color: #ffc3c6; }
+	.lane-chip.fault { border-color: rgba(255, 99, 105, 0.5); color: #ffc3c6; }
 	.lane-chip.fault::before { background: var(--coral); }
 	.lane-chip.terminal { opacity: 0.62; }
 	.lane-phase { color: var(--text-muted); }
@@ -282,7 +283,6 @@
 	.inspector-resizer:focus-visible { outline: 2px solid var(--cyan); outline-offset: -1px; }
 	body.is-resizing { cursor: col-resize; user-select: none; }
 	.stream-panel { display: flex; flex-direction: column; }
-	.stream-panel { display: flex; flex-direction: column; }
 	.stream-head { padding: 14px 15px 0; flex: none; }
 	.stream-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 	.stream-heading h2 { font-size: 15px; font-weight: 650; }
@@ -305,9 +305,9 @@
 		transition: background 150ms var(--ease), border-color 150ms var(--ease), color 150ms var(--ease);
 	}
 	.filter-tab:hover { color: var(--text-soft); background: rgba(255,255,255,0.035); }
-	.filter-tab[aria-pressed="true"] { border-color: rgba(99, 230, 213, 0.35); background: var(--cyan-wash); color: var(--cyan); }
+	.filter-tab[aria-pressed="true"] { border-color: rgba(50, 145, 255, 0.4); background: var(--cyan-wash); color: var(--cyan); }
 	.filter-key { color: var(--text-faint); font: 10px var(--mono); }
-	.filter-tab[aria-pressed="true"] .filter-key { color: rgba(99, 230, 213, 0.72); }
+	.filter-tab[aria-pressed="true"] .filter-key { color: rgba(70, 168, 255, 0.8); }
 	.filter-count { color: var(--text-faint); font: 10px var(--mono); }
 	.search-box { position: relative; width: 190px; flex: none; }
 	.search-box input {
@@ -328,40 +328,40 @@
 	.follow-button { margin-left: auto; flex: none; }
 	.follow-button .follow-live { display: inline-flex; align-items: center; gap: 6px; }
 	.follow-button .follow-live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); }
-	.follow-button.is-paused { border-color: rgba(245, 191, 103, 0.45); background: var(--amber-wash); color: var(--amber); }
+	.follow-button.is-paused { border-color: rgba(245, 196, 81, 0.45); background: var(--amber-wash); color: var(--amber); }
 	#event-scroll { min-height: 0; flex: 1; overflow-y: auto; padding: 7px 8px 12px; }
-	#event-list { display: flex; flex-direction: column; gap: 5px; }
+	#event-list { display: flex; flex-direction: column; gap: 4px; }
 	.event-row {
 		position: relative;
 		display: grid;
-		grid-template-columns: 4px 70px 30px minmax(0, 1fr) auto 14px;
+		grid-template-columns: 3px 58px 28px minmax(0, 1fr) auto 14px;
 		align-items: center;
 		gap: 10px;
-		min-height: 62px;
-		padding: 9px 10px 9px 0;
-		border: 1px solid transparent;
-		border-radius: 10px;
-		background: rgba(20, 34, 53, 0.55);
+		min-height: 46px;
+		padding: 7px 10px 7px 0;
+		border: 1px solid var(--line);
+		border-radius: var(--radius-md);
+		background: var(--panel-raised);
 		cursor: pointer;
 		transition: background 150ms var(--ease), border-color 150ms var(--ease), color 150ms var(--ease), transform 150ms var(--ease);
 	}
 	.event-row.row-enter { animation: row-in 220ms var(--ease) both; }
 	@keyframes row-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-	.event-row:hover { background: var(--panel-hover); border-color: #2b425b; transform: translateX(2px); }
-	.event-row.selected { border-color: rgba(99, 230, 213, 0.5); background: rgba(99, 230, 213, 0.095); }
+	.event-row:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+	.event-row.selected { border-color: rgba(50, 145, 255, 0.55); background: rgba(50, 145, 255, 0.08); }
 	.event-row.pulse-match:not(.selected) { border-color: rgba(70, 168, 255, 0.28); background: rgba(50, 145, 255, 0.045); }
-	.event-row.error { border-color: rgba(255, 123, 130, 0.22); }
-	.event-row.selected.error { border-color: rgba(255, 123, 130, 0.6); background: var(--coral-wash); }
-	.event-rail { align-self: stretch; min-height: 42px; border-radius: 0 4px 4px 0; background: var(--blue); }
+	.event-row.error { border-color: rgba(255, 99, 105, 0.22); }
+	.event-row.selected.error { border-color: rgba(255, 99, 105, 0.6); background: var(--coral-wash); }
+	.event-rail { align-self: stretch; min-height: 30px; border-radius: 0 4px 4px 0; background: var(--blue); }
 	.event-rail.message { background: var(--cyan); }
 	.event-rail.system { background: var(--amber); }
 	.event-rail.done { background: var(--mint); }
 	.event-rail.error { background: var(--coral); }
 	.event-rail.agent { background: var(--violet); }
-	.event-time { align-self: start; padding-top: 2px; color: var(--text-faint); font-size: 10px; }
+	.event-time { align-self: center; color: var(--text-faint); font-size: 10px; }
 	.event-icon {
-		width: 28px;
-		height: 28px;
+		width: 26px;
+		height: 26px;
 		display: grid;
 		place-items: center;
 		border: 1px solid var(--line-strong);
@@ -369,15 +369,15 @@
 		background: var(--bg-deep);
 		color: var(--blue);
 	}
-	.event-icon.message { color: var(--cyan); background: var(--cyan-wash); border-color: rgba(99, 230, 213, 0.28); }
-	.event-icon.system { color: var(--amber); background: var(--amber-wash); border-color: rgba(245, 191, 103, 0.28); }
-	.event-icon.error { color: var(--coral); background: var(--coral-wash); border-color: rgba(255, 123, 130, 0.3); }
+	.event-icon.message { color: var(--cyan); background: var(--cyan-wash); border-color: rgba(70, 168, 255, 0.3); }
+	.event-icon.system { color: var(--amber); background: var(--amber-wash); border-color: rgba(245, 196, 81, 0.28); }
+	.event-icon.error { color: var(--coral); background: var(--coral-wash); border-color: rgba(255, 99, 105, 0.3); }
 	.event-icon.agent { color: var(--violet); background: rgba(167, 139, 250, 0.12); border-color: rgba(167, 139, 250, 0.3); }
 	.event-icon svg { width: 15px; height: 15px; }
 	.event-body { min-width: 0; }
 	.event-topline { display: flex; align-items: center; gap: 7px; min-width: 0; }
 	.event-kind { color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
-	.event-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 12px; font-weight: 650; }
+	.event-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 12px; font-weight: 600; }
 	.thread-badge { display: inline-flex; align-items: center; gap: 5px; max-width: 42%; margin-left: auto; overflow: hidden; color: var(--text-faint); font: 9px var(--mono); white-space: nowrap; }
 	.thread-badge span:last-child { overflow: hidden; text-overflow: ellipsis; }
 	.thread-badge { border: 1px solid transparent; border-radius: 999px; padding: 2px 5px; }
@@ -392,7 +392,7 @@
 	.thread-swatch.orange { background: var(--orange); }
 	.thread-swatch.indigo { background: var(--indigo); }
 	.thread-swatch.slate { background: var(--slate); }
-	.event-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px; color: var(--text-soft); font-size: 12px; }
+	.event-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; color: var(--text-muted); font: 11px var(--mono); }
 	.event-subject.muted { color: var(--text-muted); }
 	.event-status {
 		display: inline-flex;
@@ -457,7 +457,7 @@
 		border: 1px solid var(--line);
 		border-radius: 8px;
 		background: var(--bg-deep);
-		color: #c7d7e4;
+		color: #d4d4d4;
 		font: 10px/1.55 var(--mono);
 		white-space: normal;
 	}
@@ -474,15 +474,15 @@
 	.code-number { padding-right: 10px; color: var(--text-faint); text-align: right; user-select: none; }
 	.code-marker { color: var(--text-faint); text-align: center; user-select: none; }
 	.code-text { white-space: pre; }
-	.code-line.diff-added { background: rgba(143, 227, 177, 0.12); color: #c6f3d4; }
+	.code-line.diff-added { background: rgba(74, 222, 128, 0.1); color: #c6f3d4; }
 	.code-line.diff-added .code-marker { color: var(--mint); }
-	.code-line.diff-removed { background: rgba(255, 123, 130, 0.12); color: #ffc3c6; }
+	.code-line.diff-removed { background: rgba(255, 99, 105, 0.12); color: #ffc3c6; }
 	.code-line.diff-removed .code-marker { color: var(--coral); }
 	.code-line.diff-header { color: var(--blue); font-weight: 650; }
 	.raw-disclosure {
 		border: 1px solid var(--line);
 		border-radius: 8px;
-		background: rgba(6, 10, 16, 0.42);
+		background: var(--bg-deep);
 	}
 	.raw-disclosure summary {
 		padding: 9px 10px;
@@ -497,7 +497,7 @@
 	.raw-disclosure[open] summary::before { transform: rotate(90deg); }
 	.raw-disclosure summary:hover { color: var(--text); background: rgba(255,255,255,0.035); }
 	.raw-disclosure .detail-pre { border: 0; border-top: 1px solid var(--line); border-radius: 0 0 8px 8px; }
-	.diff-section { background: rgba(20, 34, 53, 0.25); }
+	.diff-section { background: transparent; }
 	.drawer-backdrop { display: none; }
 
 	/* ---------- responsive ---------- */
@@ -511,7 +511,7 @@
 		.inspector { position: fixed; z-index: 30; top: 0; right: 0; bottom: 0; width: min(420px, 92vw); border-radius: var(--radius-lg) 0 0 var(--radius-lg); box-shadow: var(--shadow-drawer); transform: translateX(105%); transition: transform 220ms var(--ease); }
 		.inspector.open { transform: translateX(0); }
 		.inspector-close { display: grid; place-items: center; }
-		.drawer-backdrop { position: fixed; z-index: 20; inset: 0; display: block; background: rgba(2, 6, 11, 0.68); opacity: 0; pointer-events: none; transition: opacity 220ms var(--ease); }
+		.drawer-backdrop { position: fixed; z-index: 20; inset: 0; display: block; background: rgba(0, 0, 0, 0.66); opacity: 0; pointer-events: none; transition: opacity 220ms var(--ease); }
 		.drawer-backdrop.open { opacity: 1; pointer-events: auto; }
 	}
 	@media (max-width: 780px) {
@@ -519,17 +519,20 @@
 		#frame { min-height: 100vh; height: auto; overflow: visible; grid-template-rows: auto auto minmax(520px, 1fr); }
 		.icon-button { width: 34px; padding: 0; }
 		#overview, #pulse-wrap { padding-left: 14px; padding-right: 14px; }
-		.overview-head { align-items: start; }
+		.overview-head { flex-direction: column; align-items: stretch; gap: 8px; }
+		.run-selector-wrap { justify-content: flex-start; }
+		#run-select { flex: 1; max-width: none; }
 		.overview-meta { display: none; }
 		.metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 		.metric-card:last-child { display: block; }
+		.metric-card.context { grid-column: 1 / -1; }
 		.metric-card { min-height: 84px; }
 		#workspace { min-height: 520px; margin: 12px 14px 14px; }
 		.stream-tools { flex-wrap: wrap; }
 		.filter-tabs { order: 2; width: 100%; }
 		.search-box { flex: 1; width: auto; }
 		.follow-button { margin-left: 0; }
-		.stream-tools .follow-button { display: none; }
+		.follow-button { width: auto; padding: 0 10px; }
 		#pulse { height: 56px; gap: 3px; }
 		.pulse-controls { gap: 7px; }
 		.pulse-stats { display: none; }
@@ -543,8 +546,10 @@
 		.metric-card { padding: 11px; }
 		.metric-value { font-size: 18px; }
 		.metric-value.mono { font-size: 16px; }
-		.event-row { grid-template-columns: 4px 32px minmax(0, 1fr) auto 12px; gap: 8px; min-height: 66px; padding-right: 8px; }
+		.event-row { grid-template-columns: 3px 28px minmax(0, 1fr) auto 12px; gap: 8px; min-height: 50px; padding-right: 8px; }
 		.event-time { display: none; }
+		.event-kind { display: none; }
+		.thread-badge { display: none; }
 		.event-icon { width: 28px; height: 28px; }
 		.event-subject { font-size: 11px; }
 		.event-duration { font-size: 9px; }
@@ -610,9 +615,9 @@
 						<button class="range-tab" type="button" role="tab" data-range="10m" aria-selected="false">10m</button>
 					</div>
 					<div class="pulse-legend" aria-label="Pulse legend">
-						<span class="legend-key"><span class="legend-swatch tool"></span>volume</span>
-						<span class="legend-key"><span class="legend-swatch agent"></span>agent share</span>
-						<span class="legend-key"><span class="legend-swatch system"></span>error edge</span>
+						<span class="legend-key">height = volume</span>
+						<span class="legend-key"><span class="legend-swatch tool"></span>color = agent</span>
+						<span class="legend-key"><span class="legend-swatch error"></span>error</span>
 					</div>
 				</div>
 			</div>
@@ -712,7 +717,7 @@ function iconSvg(name) {
 		subagent: '<circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><path d="M3.5 19c.8-3.1 2.3-4.6 4.5-4.6s3.7 1.5 4.5 4.6M11.5 19c.8-3.1 2.3-4.6 4.5-4.6s3.7 1.5 4.5 4.6"/>',
 		error: '<path d="M12 3 2.8 20h18.4z"/><path d="M12 9v5M12 17.5v.1"/>',
 		info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 10v5M12 7.5v.1"/>',
-		chevron: '<path d="m6 4 6 4-6 4 6 4"/>',
+		chevron: '<path d="m9 6 6 6-6 6"/>',
 		copy: '<rect x="6" y="6" width="9" height="9" rx="1"/><path d="M9 6V4h9v9h-3"/>',
 	};
 	return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.info}</svg>`;
@@ -849,24 +854,41 @@ function toolDiff(item) {
 function kindMeta(item) {
 	if (item.kind === "tool") return { label: "Tool", icon: item.state === "error" ? "error" : "tool", group: "tool" };
 	if (item.kind === "subagent") return { label: "Subagent", icon: item.state === "error" ? "error" : "subagent", group: "agent" };
-	if (item.kind === "message") return { label: item.role === "user" ? "User message" : "Assistant", icon: "message", group: "message" };
+	if (item.kind === "message") return { label: item.role === "user" ? "User" : "Assistant", icon: "message", group: "message" };
 	if (item.kind === "skill") return { label: "Skill", icon: "skill", group: "system" };
 	if (item.kind === "compaction") return { label: "Compaction", icon: "compaction", group: "system" };
 	if (item.kind === "retry") return { label: "Retry", icon: "retry", group: "system" };
 	return { label: "Queue", icon: "queue", group: "system" };
 }
 
+/** The argument a reader identifies a tool call by (path, command, pattern...), if any. */
+function argSummary(item) {
+	const args = parsePayload(item.args);
+	if (!args || typeof args !== "object" || Array.isArray(args)) return "";
+	for (const key of ["path", "file_path", "command", "pattern", "query", "url", "task", "description", "prompt"]) {
+		if (typeof args[key] === "string" && args[key].trim()) return firstLine(args[key]);
+	}
+	return "";
+}
+
 function subjectOf(item) {
 	if (item.kind === "tool") return item.toolName || "tool execution";
 	if (item.kind === "subagent") return item.toolName ? `${item.threadName} · ${item.toolName}` : item.threadName || "subagent";
-	if (item.kind === "message") return item.role === "user" ? "User prompt" : "Assistant response";
+	if (item.kind === "message") return firstLine(item.text) || (item.role === "user" ? "Prompt" : "Response");
 	if (item.kind === "skill") return firstLine(item.text || "skill invocation");
 	return firstLine(item.text || kindMeta(item).label);
 }
 
 function detailOf(item) {
-	if (item.kind === "tool") return firstLine(item.result || item.args || "Awaiting result…");
-	return firstLine(item.text || item.result || "");
+	if (item.kind === "tool") {
+		const target = argSummary(item);
+		if (item.state === "running") return target || "Awaiting result…";
+		const outcome = firstLine(item.result);
+		return target && outcome ? `${target} → ${outcome}` : target || outcome || firstLine(item.args);
+	}
+	// A message's first line is already its title; show the rest as detail.
+	if (item.kind === "message") return firstLine(String(item.text || "").split("\n").slice(1).join(" "));
+	return firstLine(item.result || "");
 }
 
 function stateLabel(item) {
@@ -973,9 +995,11 @@ function renderRow(item, isNew = true) {
 	const topline = element("div", "event-topline");
 	topline.append(element("span", "event-kind", meta.label), element("span", "event-title", subjectOf(item)));
 	appendThreadBadge(topline, item);
-	const status = element("span", `event-status ${item.state || ""}`, stateLabel(item));
-	topline.append(status);
-	body.append(topline, element("div", `event-subject${detailOf(item) ? "" : " muted"}`, detailOf(item) || "No additional detail"));
+	// Only stateful events (tools, subagents) carry a status chip; "recorded"/"observed" is noise.
+	if (item.state) topline.append(element("span", `event-status ${item.state}`, stateLabel(item)));
+	body.append(topline);
+	const detail = detailOf(item);
+	if (detail) body.append(element("div", "event-subject", detail));
 	const duration = element("span", "event-duration mono", fmtDuration(item.durationMs));
 	const chevron = element("span", "event-chevron icon");
 	chevron.innerHTML = iconSvg("chevron");
@@ -1010,7 +1034,10 @@ function renderStream(changedId) {
 			row = renderRow(item);
 			existing.set(id, row);
 		} else if (id === changedId) {
+			// Replace in place and advance the cursor past it; the old row may be the cursor itself,
+			// and inserting before a detached node throws.
 			const replacement = renderRow(item, false);
+			if (row === cursor) cursor = replacement;
 			row.replaceWith(replacement);
 			row = replacement;
 			existing.set(id, row);
@@ -1045,6 +1072,11 @@ function appendItem(item) {
 
 function patchItem(item) {
 	const key = eventKey(item);
+	// An update for an item this view never saw (or already evicted) is still live activity.
+	if (!state.items.has(key)) {
+		appendItem(item);
+		return;
+	}
 	state.items.set(key, item);
 	renderStream(key);
 	renderOverview();
@@ -1229,6 +1261,11 @@ function addRawSection(content) {
 
 function renderInspector(item, options = {}) {
 	if (options.openDrawer !== false && window.matchMedia("(max-width: 1060px)").matches) openInspector();
+	// Live updates re-render the selected event; keep the reader's scroll position and open disclosures.
+	const sameItem = inspectorBody.dataset.key === eventKey(item);
+	const previousScroll = inspectorBody.scrollTop;
+	const previousOpen = [...inspectorBody.querySelectorAll("details")].map((details) => details.open);
+	inspectorBody.dataset.key = eventKey(item);
 	inspectorBody.replaceChildren();
 	const meta = kindMeta(item);
 	const hero = element("div", "detail-hero");
@@ -1290,9 +1327,16 @@ function renderInspector(item, options = {}) {
 	if (item.text) addDetailSection(item.kind === "message" ? "Message" : item.kind === "compaction" && item.result ? "Lifecycle" : "Detail", item.text);
 	if (item.result) addDetailSection(item.kind === "compaction" ? "Compaction summary" : "Result", item.result, "pre", true);
 	if (item.raw && item.raw !== item.args && item.raw !== item.result) addRawSection(item.raw);
+	if (sameItem) {
+		for (const [index, details] of [...inspectorBody.querySelectorAll("details")].entries()) {
+			if (previousOpen[index]) details.open = true;
+		}
+		inspectorBody.scrollTop = previousScroll;
+	}
 }
 
 function renderEmptyInspector() {
+	delete inspectorBody.dataset.key;
 	inspectorBody.replaceChildren();
 	const empty = element("div", "inspector-empty");
 	const icon = element("div", "empty-icon");
@@ -1316,7 +1360,7 @@ function renderHeader(header) {
 	$("tokens-value").textContent = fmtCompact(total);
 	$("tokens-note").textContent = `${fmtCompact(usage.input)} in · ${fmtCompact(usage.output)} out`;
 	$("cost-value").textContent = `$${Number(usage.cost || 0).toFixed(3)}`;
-	$("overview-meta").textContent = `${header.thinkingLevel || "default"} reasoning · started ${fmtDate(header.startedAt)}`;
+	$("overview-meta").textContent = `${header.model || "no model"} · ${header.thinkingLevel || "default"} · started ${fmtDate(header.startedAt)}`;
 	renderOverview();
 }
 
@@ -1378,6 +1422,8 @@ function renderPulse() {
 		scopeTotals.set(trace.key, current);
 	}
 	const traces = [...scopeTotals.values()].sort((left, right) => right.volume - left.volume);
+	// The share rail compares agents; with one agent it is a meaningless full bar.
+	pulseScopeRail.hidden = traces.length < 2;
 	pulseScopeRail.replaceChildren(...traces.map((trace) => {
 		const segment = element("span", `pulse-scope-segment ${trace.color}`);
 		segment.style.flex = String(Math.max(0.1, trace.volume));
@@ -1385,11 +1431,7 @@ function renderPulse() {
 		return segment;
 	}));
 	const panel = pulse.closest(".pulse-panel");
-	if (panel) {
-		const accent = traces.length === 1 ? traces[0].color : "cyan";
-		panel.style.setProperty("--pulse-accent", `var(--${accent})`);
-		panel.style.setProperty("--pulse-border", traces.length ? `color-mix(in srgb, var(--${accent}) 42%, var(--line))` : "var(--line)");
-	}
+	if (panel) panel.style.setProperty("--pulse-accent", `var(--${traces.length === 1 ? traces[0].color : "cyan"})`);
 	const maxVolume = Math.max(1, ...bins.map((bin) => bin.reduce((sum, item) => sum + pulseWeight(item), 0)));
 	pulse.replaceChildren(...bins.map((bin, index) => {
 		const volume = bin.reduce((sum, item) => sum + pulseWeight(item), 0);
@@ -1505,14 +1547,24 @@ async function refreshRuns() {
 		state.runs = Array.isArray(result.runs) ? result.runs : [];
 		if (state.scope !== "all" && !state.selectedRunId && state.liveRunId) state.selectedRunId = state.liveRunId;
 		renderRunSelector();
-		if (state.scope !== "all" && state.selectedRunId && state.selectedRunId !== state.liveRunId) await loadSelectedRun(state.selectedRunId);
 	} catch {
 		// Older/shared servers without replay support leave the live view usable.
 	}
 }
 
-function acceptsLiveEvent() {
-	return state.scope === "all" || !state.selectedRunId || state.selectedRunId === state.liveRunId;
+/**
+ * Live events carry their run id; a single-run view takes only its own run's events, so a run
+ * still being written by another ICE process keeps streaming without refetching its snapshot.
+ */
+function acceptsLiveEvent(runId) {
+	if (state.scope === "all") return true;
+	return !runId || runId === (state.selectedRunId || state.liveRunId);
+}
+
+/** Overview metrics describe one run: the live run in the combined view, else the selected run. */
+function acceptsHeader(header) {
+	const target = state.scope === "all" ? state.liveRunId : state.selectedRunId;
+	return !target || !header.runId || header.runId === target;
 }
 
 function loadSnapshot(snapshot) {
@@ -1553,20 +1605,42 @@ function loadSnapshot(snapshot) {
 	}
 	if (state.selectedId !== null && state.items.has(state.selectedId)) renderInspector(state.items.get(state.selectedId), { openDrawer: false });
 	else renderEmptyInspector();
+	if (!state.paused) eventScroll.scrollTop = eventScroll.scrollHeight;
 }
 
 function connect() {
 	const source = new EventSource("/events");
 	source.addEventListener("snapshot", (event) => {
 		const snapshot = JSON.parse(event.data);
-		if (snapshot.view === "all" || state.scope === "all" || snapshot.runId === state.selectedRunId) loadSnapshot(snapshot);
+		// The server sends the combined snapshot on connect and when a new run appears; a reader
+		// inspecting one run stays on it and only refreshes the run list.
+		if (state.scope === "all" || snapshot.view !== "all") loadSnapshot(snapshot);
+		else if (Array.isArray(snapshot.runs)) {
+			state.runs = snapshot.runs;
+			if (snapshot.liveRunId) state.liveRunId = snapshot.liveRunId;
+			renderRunSelector();
+		}
 	});
 	source.addEventListener("runs", (event) => { state.runs = JSON.parse(event.data); renderRunSelector(); });
-	source.addEventListener("activity", (event) => { if (acceptsLiveEvent()) appendItem(JSON.parse(event.data)); });
-	source.addEventListener("activity_update", (event) => { if (acceptsLiveEvent()) patchItem(JSON.parse(event.data)); });
-	source.addEventListener("lane", (event) => { if (!acceptsLiveEvent()) return; const lane = JSON.parse(event.data); const laneKey = `${lane.runId || "current"}:${lane.streamKey}`; const index = state.lanes.findIndex((item) => `${item.runId || "current"}:${item.streamKey}` === laneKey); if (index < 0) state.lanes.push(lane); else state.lanes[index] = lane; renderLanes(state.lanes); renderOverview(); });
-	source.addEventListener("thread", (event) => { if (!acceptsLiveEvent()) return; const thread = JSON.parse(event.data); state.threads.set(`${thread.runId || thread.mainThreadId}:${thread.threadKey}`, thread); if (state.lanes.length) renderLanes(state.lanes); });
-	source.addEventListener("header", (event) => { if (acceptsLiveEvent()) renderHeader(JSON.parse(event.data)); });
+	source.addEventListener("activity", (event) => { const item = JSON.parse(event.data); if (acceptsLiveEvent(item.runId)) appendItem(item); });
+	source.addEventListener("activity_update", (event) => { const item = JSON.parse(event.data); if (acceptsLiveEvent(item.runId)) patchItem(item); });
+	source.addEventListener("lane", (event) => {
+		const lane = JSON.parse(event.data);
+		if (!acceptsLiveEvent(lane.runId)) return;
+		const laneKey = `${lane.runId || "current"}:${lane.streamKey}`;
+		const index = state.lanes.findIndex((item) => `${item.runId || "current"}:${item.streamKey}` === laneKey);
+		if (index < 0) state.lanes.push(lane);
+		else state.lanes[index] = lane;
+		renderLanes(state.lanes);
+		renderOverview();
+	});
+	source.addEventListener("thread", (event) => {
+		const thread = JSON.parse(event.data);
+		if (!acceptsLiveEvent(thread.runId)) return;
+		state.threads.set(`${thread.runId || thread.mainThreadId}:${thread.threadKey}`, thread);
+		if (state.lanes.length) renderLanes(state.lanes);
+	});
+	source.addEventListener("header", (event) => { const header = JSON.parse(event.data); if (acceptsHeader(header)) renderHeader(header); });
 }
 
 $("follow-button-mobile").addEventListener("click", togglePaused);
@@ -1607,7 +1681,9 @@ void refreshRuns();
 setInterval(() => { void refreshRuns(); }, 1500);
 setInterval(() => {
 	const historicalRun = state.scope !== "all" && state.selectedRunId !== null && state.selectedRunId !== state.liveRunId;
-	if (!historicalRun && state.order.length > 0) renderPulse();
+	// Rebuilding the bars would drop keyboard focus from a pulse bar every second.
+	const pulseFocused = $("pulse").contains(document.activeElement);
+	if (!historicalRun && !pulseFocused && state.order.length > 0) renderPulse();
 }, 1000);
 connect();
 </script>
