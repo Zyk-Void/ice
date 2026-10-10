@@ -649,7 +649,7 @@ describe("ExtensionRunner", () => {
 				export default function(ice) {
 					ice.registerFlag("my-flag", {
 						description: "My flag",
-						handler: async () => {},
+						type: "boolean",
 					});
 				}
 			`;
@@ -697,7 +697,7 @@ describe("ExtensionRunner", () => {
 				export default function(ice) {
 					ice.registerFlag("test-flag", {
 						description: "Test flag",
-						handler: async () => {},
+						type: "boolean",
 					});
 				}
 			`;

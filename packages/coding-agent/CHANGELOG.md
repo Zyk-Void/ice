@@ -67,6 +67,9 @@
 
 - Replaced the legacy subagent tools (`delegate`, `delegate_async`, `delegate_batch`, `review_batch`, `delegate_write`, `manage_subagent`, and the job, batch, output, and writer-patch tools) with subagents V2 (`agent`, `agent_control`, `agent_patch`). The `ice.subagents.v2` setting and `ICE_SUBAGENTS_V2` are no longer needed. Legacy agent files that use `fallbackModel`, `thinkingLevel`, `mcpTools`, or other removed keys are reported with the V2 replacement by `ice agents validate`. The live subagent quality benchmark (`npm run quality:live`) was removed with the legacy runner.
 - Renamed the product to ICE. The only supported executable is `ice`.
+- Extension registration now validates its input and throws during the factory, failing the extension load: `registerTool` requires an object `parameters` schema, `registerCommand` requires a handler and a name without whitespace or `/`, and `registerFlag` requires `type` `"boolean"` or `"string"` with a matching `default`.
+- `ice.sendMessage()` while the agent is streaming, without `deliverAs` or `triggerTurn`, no longer steers the run: the message is recorded at the next turn boundary and reaches the next provider request without starting an extra turn. `triggerTurn: false` defers the same way even with `deliverAs: "steer"` or `"followUp"`; pass one of those without `triggerTurn: false` to keep the previous behavior.
+- `user_bash` handlers that throw or return a malformed response now fail the command instead of falling through to the next handler or host Bash. Return `undefined` to pass through.
 - `ice.subagents` now has one schema, the subagents V2 one. RPC settings replace `ice.subagents.defaults.thinking`, `defaults.startupTimeoutMs`, `allowedRoles`, and `concurrency.default`/`max` with `defaultAgent`, `maxConcurrent`, `maxDepth`, `askTimeoutMs`, and `disabledAgents`. `ice.subagents.enabled: false` now blocks new V2 launches. Unknown `ice.subagents` keys fail closed; keys of the removed legacy system are ignored and reported as `ice_deprecated_setting` RPC diagnostics and `ice agents validate` warnings.
 - Moved configuration to `.ice` and agent state to `~/.ice/agent`. `.pi` is not a discovery root. Existing state must be migrated explicitly.
 - Renamed every environment variable to the `ICE_*` prefix. `PI_*` / `PIV_*` values are not read.
@@ -268,6 +271,17 @@
 
 ### Fixed
 
+- Fixed runtime forks changing in-memory history before active turns settled, imports overwriting same-basename sessions, and shutdown racing pending compaction/tree hooks.
+- Fixed failed extension factories retaining provider registrations, flag defaults, and event-bus listeners; loader-owned APIs are revoked on failure and listener cleanup runs on reload/disposal. Extension event subscriptions now return an unsubscribe function.
+- Fixed context-only custom messages triggering follow-up turns or missing the next provider context; messages are recorded after tool results at a safe turn boundary.
+- Fixed queued steering/follow-up input bypassing extension input handlers and prompts being rejected during compaction. Successful manual compaction runs queued input after `compact()` settles (the RPC `compact` response and `ctx.compact` callbacks no longer wait for that run); cancellation preserves it without starting a new run. Prompts during `/tree` branch summarization are rejected instead of being queued with no run to drain them.
+- Bounded native session retry backoff to a timer-safe 60-second default.
+- Fixed appending to unterminated session JSONL tails joining records; new entries are separated without erasing the original tail.
+- Fixed forks losing retained context when a compaction boundary points at a filtered label, and branch summaries recording the destination instead of the abandoned leaf.
+- Fixed compaction cancellation during authentication/start callbacks, cancelled tree hooks still navigating, overlapping tree navigation, and automatic compaction restarting after post-save cancellation.
+- Fixed failed or malformed `user_bash` extension routing falling back to host Bash; interactive mode shows the error and RPC fails the command.
+- Fixed native compaction and branch summaries accepting truncated, tool-calling, blank, or aborted provider responses.
+- Fixed losing the first user request before an assistant reply by saving persistent sessions and user-only forks immediately; metadata-only startup remains lazy.
 - Fixed the compact footer dropping the working directory before shortening the branch; already-shortened segments now stay visible while other segments can still shrink.
 - Fixed one-row user and assistant messages emitting OSC 133 markers out of order (`B C A`), which hid single-line prompts from fullscreen prompt navigation and the sticky prompt; markers stay at line starts in zone order.
 - Fixed unbounded Cognee local storage and capture: tool traces are capped at 24 per prompt, the failed-write warmup buffer holds at most 256 entries, and `observations.jsonl` rotates to one `.1` generation past 2 MB while the observer view still shows the latest 500 events.

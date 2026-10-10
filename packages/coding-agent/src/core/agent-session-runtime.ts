@@ -1,4 +1,5 @@
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { constants, copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { resolvePath } from "../utils/paths.ts";
 import type { AgentSession } from "./agent-session.ts";
@@ -167,7 +168,7 @@ export class AgentSessionRuntime {
 	private async teardownCurrent(reason: SessionShutdownEvent["reason"], targetSessionFile?: string): Promise<void> {
 		// Settle any active response first so the aborted turn (including tool
 		// results) is persisted to the outgoing session before it is replaced.
-		await this.session.abort();
+		await this.session.abortAndWaitForSettlement();
 		await emitSessionShutdownEvent(this.session.extensionRunner, {
 			type: "session_shutdown",
 			reason,
@@ -286,6 +287,8 @@ export class AgentSessionRuntime {
 			selectedText = extractUserMessageText(selectedEntry.message.content);
 		}
 
+		// Stop outgoing writes before copying or mutating the branch, especially in memory-only sessions.
+		await this.session.abortAndWaitForSettlement();
 		const previousSessionFile = this.session.sessionFile;
 		if (this.session.sessionManager.isPersisted()) {
 			const currentSessionFile = this.session.sessionFile;
@@ -369,7 +372,10 @@ export class AgentSessionRuntime {
 			mkdirSync(sessionDir, { recursive: true });
 		}
 
-		const destinationPath = join(sessionDir, basename(resolvedPath));
+		let destinationPath = join(sessionDir, basename(resolvedPath));
+		if (resolve(destinationPath) !== resolvedPath && existsSync(destinationPath)) {
+			destinationPath = join(sessionDir, `${basename(resolvedPath, ".jsonl")}_${randomUUID()}.jsonl`);
+		}
 		const beforeResult = await this.emitBeforeSwitch("resume", destinationPath);
 		if (beforeResult.cancelled) {
 			return beforeResult;
@@ -377,7 +383,8 @@ export class AgentSessionRuntime {
 
 		const previousSessionFile = this.session.sessionFile;
 		if (resolve(destinationPath) !== resolvedPath) {
-			copyFileSync(resolvedPath, destinationPath);
+			// Exclusivity also protects against a writer winning the race after the existence check.
+			copyFileSync(resolvedPath, destinationPath, constants.COPYFILE_EXCL);
 		}
 
 		const sessionManager = SessionManager.open(destinationPath, sessionDir, cwdOverride);
@@ -396,12 +403,7 @@ export class AgentSessionRuntime {
 	}
 
 	async dispose(): Promise<void> {
-		await emitSessionShutdownEvent(this.session.extensionRunner, {
-			type: "session_shutdown",
-			reason: "quit",
-		});
-		this.beforeSessionInvalidate?.();
-		this.session.dispose();
+		await this.teardownCurrent("quit");
 	}
 }
 

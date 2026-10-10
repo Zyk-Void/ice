@@ -6,6 +6,8 @@ Ice saves conversations as sessions so you can continue work, branch from earlie
 
 Sessions auto-save to `~/.ice/agent/sessions/`, organized by working directory. Each session is a JSONL file with a tree structure.
 
+A new persistent session stays unwritten during metadata-only startup. Its first user or assistant message writes the header and buffered entries immediately, before waiting for a provider response. Later entries append normally. A user-only fork is also written immediately, so its request survives interruption before the first reply. `--no-session` and SDK memory-only sessions still write no session file. Ordinary saves do not promise power-loss durability; `SessionManager.flushDurably()` is the explicit fsync barrier.
+
 ```bash
 ice -c                  # Continue most recent session
 ice -r                  # Browse and select from past sessions
@@ -16,6 +18,8 @@ ice --fork <path|id>    # Fork a session file or partial session ID into a new s
 ```
 
 Use `/session` in interactive mode to see the current session file, session ID, message count, tokens, and cost.
+
+Before an ordinary append, ICE checks the existing file's final byte and inserts a newline if needed. This preserves valid unterminated records and keeps new entries separate from malformed partial tails without deleting their bytes. Opening a current-version session alone does not repair its tail; malformed lines remain skipped by the existing loader. This is not a concurrent-writer lock.
 
 For the JSONL file format and SessionManager API, see [Session Format](session-format.md).
 
@@ -124,11 +128,11 @@ Selecting the root user message resets the leaf to an empty conversation and pla
 | Typical use | Explore alternatives in place | Start a new session from an earlier prompt | Duplicate current work before continuing |
 | Summary | Optional branch summary | None | None |
 
-Use `/tree` when you want to keep alternatives together. Use `/fork` or `/clone` when you want a separate session file.
+Use `/tree` when you want to keep alternatives together. Use `/fork` or `/clone` when you want a separate session file. When creating a fork, filtered label entries are removed from the path and retained entries are rechained. If a compaction's kept boundary names a removed label, it is remapped to the next retained entry, preserving the original active context. The source session is not changed.
 
 ## Branch Summaries
 
-When `/tree` switches away from one branch to another, ice can summarize the abandoned branch and attach that summary at the new position. This preserves important context from the path you left without replaying the whole branch.
+When `/tree` switches away from one branch to another, ice can summarize the abandoned branch and attach that summary at the new position. This preserves important context from the path you left without replaying the whole branch. The summary's `fromId` identifies the abandoned leaf, while its `parentId` identifies the destination.
 
 When prompted, choose one of:
 

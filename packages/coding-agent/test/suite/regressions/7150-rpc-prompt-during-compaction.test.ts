@@ -11,7 +11,7 @@ describe("issue #7150: RPC prompt during manual compaction", () => {
 		}
 	});
 
-	it("rejects an RPC prompt while manual compaction is in progress", async () => {
+	it("accepts and preserves an RPC prompt during manual compaction", async () => {
 		let markCompactionStarted = () => {};
 		const compactionStarted = new Promise<void>((resolve) => {
 			markCompactionStarted = resolve;
@@ -72,6 +72,8 @@ describe("issue #7150: RPC prompt during manual compaction", () => {
 			releaseCompaction();
 			await compactPromise;
 		}
+		// compact() settles with its own result; the queued prompt then runs detached.
+		await harness.session.waitForIdle();
 
 		const persistedUserTexts = harness.sessionManager
 			.getEntries()
@@ -79,13 +81,11 @@ describe("issue #7150: RPC prompt during manual compaction", () => {
 				entry.type === "message" && entry.message.role === "user" ? [getMessageText(entry.message)] : [],
 			);
 
-		expect(preflightResult).toBe(false);
-		expect(promptError).toEqual(
-			expect.objectContaining({ message: expect.stringContaining("compaction is in progress") }),
-		);
-		expect(getUserTexts(harness)).not.toContain("PROBE-7150");
-		expect(persistedUserTexts).not.toContain("PROBE-7150");
-		expect(harness.eventsOfType("agent_start")).toHaveLength(0);
-		expect(harness.eventsOfType("agent_settled")).toHaveLength(0);
+		expect(preflightResult).toBe(true);
+		expect(promptError).toBeUndefined();
+		expect(getUserTexts(harness)).toContain("PROBE-7150");
+		expect(persistedUserTexts).toContain("PROBE-7150");
+		expect(harness.eventsOfType("agent_start")).toHaveLength(1);
+		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
 	});
 });

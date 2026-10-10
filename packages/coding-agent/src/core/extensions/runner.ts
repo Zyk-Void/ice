@@ -568,6 +568,7 @@ export class ExtensionRunner {
 		if (!this.staleMessage) {
 			this.staleMessage = message;
 			this.runtime.invalidate(message);
+			for (const extension of this.extensions) extension.dispose?.();
 		}
 	}
 
@@ -1025,10 +1026,31 @@ export class ExtensionRunner {
 
 			for (const handler of handlers) {
 				try {
-					const handlerResult = await handler(event, ctx);
-					if (handlerResult) {
-						return handlerResult as UserBashEventResult;
+					const handlerResult: unknown = await handler(event, ctx);
+					if (handlerResult === undefined) continue;
+					if (handlerResult === null || typeof handlerResult !== "object") {
+						throw new Error("user_bash handlers must return undefined, operations, or a BashResult");
 					}
+					const result = handlerResult as UserBashEventResult;
+					if (result.operations !== undefined && typeof result.operations?.exec !== "function") {
+						throw new Error("user_bash operations must provide an exec function");
+					}
+					if (
+						result.result !== undefined &&
+						(result.result === null ||
+							typeof result.result !== "object" ||
+							typeof result.result.output !== "string" ||
+							(result.result.exitCode !== undefined && !Number.isFinite(result.result.exitCode)) ||
+							typeof result.result.cancelled !== "boolean" ||
+							typeof result.result.truncated !== "boolean" ||
+							(result.result.fullOutputPath !== undefined && typeof result.result.fullOutputPath !== "string"))
+					) {
+						throw new Error("user_bash result must be a valid BashResult");
+					}
+					if (result.operations === undefined && result.result === undefined) {
+						throw new Error("user_bash response must provide operations or a result");
+					}
+					return result;
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
@@ -1038,6 +1060,7 @@ export class ExtensionRunner {
 						error: message,
 						stack,
 					});
+					throw new Error(`User Bash routing failed (${ext.path}): ${message}`, { cause: err });
 				}
 			}
 		}
