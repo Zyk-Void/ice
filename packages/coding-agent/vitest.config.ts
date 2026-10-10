@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { defineConfig, mergeConfig } from "vitest/config";
+import { configDefaults, defineConfig, mergeConfig } from "vitest/config";
 import baseConfig, { workspaceSourcePaths } from "../../vitest.base.ts";
 
 export default mergeConfig(
@@ -8,6 +8,8 @@ export default mergeConfig(
 		test: {
 			globals: true,
 			environment: "node",
+			// node:test suites (they use t.mock); `npm test` runs them with `node --test`.
+			exclude: [...configDefaults.exclude, "test/**/*.test.mjs"],
 			testTimeout: 30000,
 			// Tests run offline by default; opt in with allowNetwork() from test/test-network-env.ts.
 			env: { ICE_OFFLINE: "1" },
