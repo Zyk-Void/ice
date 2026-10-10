@@ -81,6 +81,7 @@ const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
 	"app.model.select",
 	"app.tools.expand",
 	"app.tools.collapse",
+	"app.tools.expandLast",
 	"app.thinking.toggle",
 	"app.editor.external",
 	"app.message.copy",

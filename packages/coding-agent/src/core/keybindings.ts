@@ -22,6 +22,7 @@ export interface AppKeybindings {
 	"app.model.toggleFavorite": true;
 	"app.tools.expand": true;
 	"app.tools.collapse": true;
+	"app.tools.expandLast": true;
 	"app.notices.show": true;
 	"app.notices.dismiss": true;
 	"app.notices.clear": true;
@@ -107,6 +108,7 @@ export const KEYBINDINGS = {
 	"app.model.toggleFavorite": { defaultKeys: "shift+f", description: "Toggle favorite in model selector" },
 	"app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output" },
 	"app.tools.collapse": { defaultKeys: "alt+o", description: "Collapse all tool output" },
+	"app.tools.expandLast": { defaultKeys: "shift+alt+o", description: "Toggle the newest tool call" },
 	"app.notices.show": { defaultKeys: "f2", description: "Show warnings and notices" },
 	"app.notices.dismiss": { defaultKeys: "d", description: "Notices panel: dismiss the selected notice" },
 	"app.notices.clear": {

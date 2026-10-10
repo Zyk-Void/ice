@@ -276,6 +276,19 @@ describe("InteractiveMode tool expansion", () => {
 		expect(fake.handleUiAction("https://example.com")).toBe(false);
 		expect(fake.handleUiAction("ice-action:toggle-tool/missing")).toBe(true);
 	});
+
+	test("the newest-call key toggles only the newest cell and keeps batch expansion", () => {
+		const cells = ["a", "b", "c", "d", "e"].map(cell);
+		const fake = mode(cells);
+		fake.toggleNewestToolCell();
+		expect(expandedIds(cells)).toEqual(["e"]);
+		fake.toggleToolOutputExpansion();
+		expect(expandedIds(cells)).toEqual(["c", "d", "e"]);
+		fake.toggleNewestToolCell();
+		expect(expandedIds(cells)).toEqual(["c", "d"]);
+		expect(fake.showStatus).toHaveBeenLastCalledWith("Newest tool call: collapsed");
+		expect(mode([]).toggleNewestToolCell()).toBeUndefined();
+	});
 });
 
 describe("InteractiveMode.createExtensionUIContext setTheme", () => {

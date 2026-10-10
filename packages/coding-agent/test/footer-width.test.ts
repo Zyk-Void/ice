@@ -1,5 +1,5 @@
 import { visibleWidth } from "@zykairotis/ice-tui";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
 import type { IceSubagentOverview } from "../src/ice-agent-view-bridge.ts";
@@ -109,6 +109,10 @@ function createFooterData(providerCount: number): ReadonlyFooterDataProvider {
 describe("compact footer git counts", () => {
 	beforeAll(() => {
 		initTheme("dark");
+	});
+
+	beforeEach(() => {
+		setSymbolPreset("unicode");
 	});
 
 	it("shows ahead, behind, and dirty counts after the branch and omits zero counts", () => {

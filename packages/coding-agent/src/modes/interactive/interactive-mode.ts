@@ -3605,6 +3605,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.model.select", () => this.showModelSelector());
 		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
 		this.defaultEditor.onAction("app.tools.collapse", () => this.setToolsExpanded(false));
+		this.defaultEditor.onAction("app.tools.expandLast", () => this.toggleNewestToolCell());
 		this.defaultEditor.onAction("app.notices.show", () => this.showNoticesView());
 		this.defaultEditor.onConditionalAction(
 			"app.shortcuts.show",
@@ -5450,6 +5451,22 @@ export class InteractiveMode {
 				? `Tool output: all expanded (${key} collapses)`
 				: `Tool output: last ${cells.length - start} of ${cells.length} expanded (${key} for more)`,
 		);
+	}
+
+	/** Toggle only the newest tool cell, leaving the batch expansion of older cells unchanged. */
+	private toggleNewestToolCell(): void {
+		const cells = this.toolCells();
+		const newest = cells.at(-1);
+		if (!newest) {
+			this.showStatus("No tool output yet");
+			return;
+		}
+		const id = toolCellId(newest);
+		const from = this.toolExpandFromIndex(cells);
+		const expanded = !(this.toolExpandOverrides.get(id) ?? (from !== undefined && cells.length - 1 >= from));
+		this.toolExpandOverrides.set(id, expanded);
+		this.applyToolCellExpansion();
+		this.showStatus(`Newest tool call: ${expanded ? "expanded" : "collapsed"}`);
 	}
 
 	private setToolsExpanded(expanded: boolean): void {
@@ -7730,6 +7747,7 @@ export class InteractiveMode {
 				rows: [
 					row(key("app.tools.expand"), "Expand tool output"),
 					row(key("app.tools.collapse"), "Collapse all tool output"),
+					row(key("app.tools.expandLast"), "Toggle the newest tool call"),
 					row(key("app.thinking.toggle"), "Show thinking"),
 					row(key("app.notices.show"), "Notices"),
 					row(key("app.message.copy"), "Copy last reply"),
