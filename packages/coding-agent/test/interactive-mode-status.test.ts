@@ -127,7 +127,7 @@ describe("InteractiveMode.showStatus", () => {
 describe("InteractiveMode preparing prompt", () => {
 	beforeAll(() => initTheme("dark"));
 
-	function mode(active?: { extensionPath: string; event: string; startedAt: number }) {
+	function mode(active?: { extensionPath: string; event: string; startedAt: number }, commands: string[] = []) {
 		const fake = Object.assign(Object.create(InteractiveMode.prototype), {
 			chatContainer: new Container(),
 			statusContainer: new Container(),
@@ -147,7 +147,14 @@ describe("InteractiveMode preparing prompt", () => {
 			showStatus: vi.fn(),
 		});
 		// `session` is a getter on the prototype, so the fake defines its own value.
-		Object.defineProperty(fake, "session", { value: { extensionRunner: { getActiveHandler: () => active } } });
+		Object.defineProperty(fake, "session", {
+			value: {
+				extensionRunner: {
+					getActiveHandler: () => active,
+					getCommand: (name: string) => (commands.includes(name) ? { name } : undefined),
+				},
+			},
+		});
 		return fake as any;
 	}
 
@@ -179,6 +186,18 @@ describe("InteractiveMode preparing prompt", () => {
 		fake.showStatusIndicator(working);
 		fake.endPreparingPrompt();
 		expect(fake.activeStatusIndicator).toBe(working);
+	});
+
+	test("shows no preparing timer for extension commands, which run their own UI", () => {
+		const fake = mode(undefined, ["agents"]);
+		fake.beginPreparingPrompt("/agents");
+		fake.beginPreparingPrompt("/agents stop ag_1");
+		expect(fake.preparingPrompt).toBeUndefined();
+		expect(fake.statusContainer.children).toEqual([]);
+		// A slash command that is not an extension command (a skill or template) still becomes a prompt.
+		fake.beginPreparingPrompt("/review the diff");
+		expect(normalizeRenderedOutput(fake.statusContainer)).toContain("Sending prompt");
+		fake.endPreparingPrompt();
 	});
 
 	test("sends extension errors and slow hooks to notices instead of the chat", () => {

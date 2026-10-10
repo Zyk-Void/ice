@@ -1489,6 +1489,10 @@ export class InteractiveMode {
 	/** Echo a submitted prompt and show what it waits on until the session starts the turn. */
 	private beginPreparingPrompt(text: string): void {
 		this.endPreparingPrompt();
+		// Extension commands run their own UI (often a modal such as /agents) and may never send a
+		// prompt; a "Sending prompt" timer would keep counting behind them until they return.
+		const commandName = text.startsWith("/") ? text.slice(1).split(/\s/, 1)[0] : undefined;
+		if (commandName && this.session.extensionRunner.getCommand(commandName)) return;
 		const showsParent = !this.agentViewBridge || this.displayView?.kind === "parent";
 		// Slash commands may never become a user message, so only plain prompts are echoed.
 		const echo =
