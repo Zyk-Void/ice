@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -26,6 +26,7 @@ import {
 	shouldOwnCompactionSummary,
 	truncateForCapture,
 	updatePendingRememberState,
+	writePrivateFileAtomic,
 } from "../src/ice-cognee.ts";
 import { type CogneeClientConfig, CogneeError, createCogneeClient } from "../src/ice-cognee-client.ts";
 import { parseEnvFile } from "../src/ice-cognee-env.ts";
@@ -263,6 +264,18 @@ describe("ice-cognee state helpers", () => {
 			expect(await enqueuePendingRemember(directory, first, 1)).toBe(true);
 			expect(await enqueuePendingRemember(directory, second, 1)).toBe(false);
 			expect(await readPendingRemember(directory)).toEqual([first]);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("removes the temporary file when an atomic write fails", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "ice-cognee-atomic-"));
+		try {
+			// A directory at the target makes rename fail after the temporary file exists.
+			mkdirSync(join(directory, "target.json"));
+			await expect(writePrivateFileAtomic(join(directory, "target.json"), "{}\n")).rejects.toThrow();
+			expect(readdirSync(directory)).toEqual(["target.json"]);
 		} finally {
 			rmSync(directory, { recursive: true, force: true });
 		}

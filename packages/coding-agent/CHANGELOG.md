@@ -266,6 +266,7 @@
 
 ### Fixed
 
+- Fixed Cognee leaving `.tmp` files behind when a pending-remember, config, session-map, or checkpoint-recall write failed; all private atomic writes now share one helper that removes the temporary file.
 - Fixed clicking the fullscreen "Jump to bottom" pill doing nothing; it now scrolls to the end like the End key.
 - Fixed terminals underlining clickable tool rows and the "Jump to bottom" pill on hover in fullscreen mode; they now highlight in reverse video and are no longer sent to the terminal as hyperlinks.
 - Fixed subagents interrupted by closing `ice` staying idle after the session reopened: in interactive mode the main agent now gets a turn on reopen with the interrupted children, whose notice says their task is unfinished and how to resume them (an `agent` task with `resume`), instead of pointing at a final answer that does not exist.

@@ -439,6 +439,19 @@ export function createPendingRemember(
 	};
 }
 
+/** Write a private (0600) file through a temporary sibling; the temporary file never outlives a failure. */
+export async function writePrivateFileAtomic(target: string, content: string): Promise<void> {
+	const temporary = `${target}.${randomUUID()}.tmp`;
+	try {
+		await writeFile(temporary, content, { mode: 0o600 });
+		await chmod(temporary, 0o600);
+		await rename(temporary, target);
+	} catch (error) {
+		await unlink(temporary).catch(() => undefined);
+		throw error;
+	}
+}
+
 export async function enqueuePendingRemember(
 	directory: string,
 	record: PendingRemember,
@@ -450,11 +463,7 @@ export async function enqueuePendingRemember(
 	const filename = `${record.operationId}.json`;
 	if (files.includes(filename)) return true;
 	if (files.filter((file) => file.endsWith(".json")).length >= limit) return false;
-	const target = join(directory, filename);
-	const temporary = `${target}.${randomUUID()}.tmp`;
-	await writeFile(temporary, `${JSON.stringify(record)}\n`, { mode: 0o600 });
-	await chmod(temporary, 0o600);
-	await rename(temporary, target);
+	await writePrivateFileAtomic(join(directory, filename), `${JSON.stringify(record)}\n`);
 	return true;
 }
 
@@ -494,11 +503,7 @@ export async function updatePendingRememberState(
 	const records = await readPendingRemember(directory);
 	const record = records.find((item) => item.operationId === operationId);
 	if (!record) return;
-	const target = join(directory, `${operationId}.json`);
-	const temporary = `${target}.${randomUUID()}.tmp`;
-	await writeFile(temporary, `${JSON.stringify({ ...record, state })}\n`, { mode: 0o600 });
-	await chmod(temporary, 0o600);
-	await rename(temporary, target);
+	await writePrivateFileAtomic(join(directory, `${operationId}.json`), `${JSON.stringify({ ...record, state })}\n`);
 }
 
 export async function removePendingRemember(directory: string, operationId: string): Promise<void> {
@@ -543,10 +548,7 @@ export async function saveIceCogneeConfig(configPath: string, config: IceCogneeC
 		captureMaxChars: config.captureMaxChars,
 		queueLimit: config.queueLimit,
 	};
-	const temporary = `${configPath}.${randomUUID()}.tmp`;
-	await writeFile(temporary, `${JSON.stringify(persisted, null, 2)}\n`, { mode: 0o600 });
-	await chmod(temporary, 0o600);
-	await rename(temporary, configPath);
+	await writePrivateFileAtomic(configPath, `${JSON.stringify(persisted, null, 2)}\n`);
 }
 
 export function createCircuitState(): CircuitState {
@@ -851,7 +853,6 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
 			await chmod(sessionsDir, 0o700);
 			const path = join(sessionsDir, `${hostId.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 80)}.json`);
-			const temporary = `${path}.${randomUUID()}.tmp`;
 			const body = {
 				host_key: hostId,
 				session_id: id,
@@ -859,9 +860,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 				base_url: runtime.config.baseUrl,
 				updated_at: new Date().toISOString(),
 			};
-			await writeFile(temporary, `${JSON.stringify(body)}\n`, { mode: 0o600 });
-			await chmod(temporary, 0o600);
-			await rename(temporary, path);
+			await writePrivateFileAtomic(path, `${JSON.stringify(body)}\n`);
 		} catch {
 			// session map is best-effort
 		}
@@ -1863,15 +1862,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 					results: boundedResults,
 				};
 				await mkdir(storageDir, { recursive: true });
-				const temporaryPath = `${checkpointRecallPath}.${randomUUID()}.tmp`;
-				try {
-					await writeFile(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
-					await rename(temporaryPath, checkpointRecallPath);
-				} finally {
-					await unlink(temporaryPath).catch((error: NodeJS.ErrnoException) => {
-						if (error.code !== "ENOENT") throw error;
-					});
-				}
+				await writePrivateFileAtomic(checkpointRecallPath, `${JSON.stringify(payload, null, 2)}\n`);
 			} catch (error) {
 				const kind = errorKind(error);
 				runtime.lastError = kind;
