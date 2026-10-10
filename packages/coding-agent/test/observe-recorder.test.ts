@@ -151,8 +151,35 @@ describe("observe recorder", () => {
 		const item = recorder.getState().items[0];
 		expect(item.args).toContain(content);
 		expect(item.result).toBe(content);
-		expect(item.raw).toContain(content);
+		// A text-only result is kept once, in `result`; no raw copy repeats it.
+		expect(item.raw).toBeUndefined();
 		expect(item.args).not.toContain("(+");
+		recorder.stop();
+	});
+
+	it("keeps result details and non-text blocks in raw without repeating the text", () => {
+		const session = createFakeSession();
+		const recorder = startObserveRecorder(session, { pollMs: 0 });
+		session.emit({ type: "tool_execution_start", toolCallId: "t1", toolName: "edit", args: { path: "a.ts" } });
+		session.emit({
+			type: "tool_execution_end",
+			toolCallId: "t1",
+			toolName: "edit",
+			result: {
+				content: [
+					{ type: "text", text: "Applied 1 edit" },
+					{ type: "image", data: "aGk=", mimeType: "image/png" },
+				],
+				details: { diff: "-1 old\n+1 new" },
+			},
+			isError: false,
+		});
+		const item = recorder.getState().items[0];
+		expect(item.result).toBe("Applied 1 edit");
+		const raw = JSON.parse(item.raw ?? "{}");
+		expect(raw.details).toEqual({ diff: "-1 old\n+1 new" });
+		expect(raw.content).toEqual([{ type: "image", data: "aGk=", mimeType: "image/png" }]);
+		expect(item.raw).not.toContain("Applied 1 edit");
 		recorder.stop();
 	});
 

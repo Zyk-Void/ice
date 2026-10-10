@@ -215,6 +215,23 @@ function resultText(result: unknown): string {
 	return JSON.stringify(result);
 }
 
+/**
+ * Raw tool result minus the text blocks already kept in the item's `result`, so a stored
+ * tool does not carry its output twice. Details (such as an edit diff) and non-text blocks
+ * stay; a result that is only text yields "" and the item has no separate raw payload.
+ */
+function rawToolResult(result: unknown): string {
+	if (!result || typeof result !== "object" || Array.isArray(result)) return serializePayload(result);
+	const record = result as Record<string, unknown>;
+	if (!Array.isArray(record.content)) return serializePayload(result);
+	const nonText = record.content.filter(
+		(block) => !(block && typeof block === "object" && (block as { type?: string }).type === "text"),
+	);
+	const { content: _content, ...rest } = record;
+	const remainder = { ...rest, ...(nonText.length > 0 ? { content: nonText } : {}) };
+	return Object.values(remainder).some((value) => value !== undefined) ? serializePayload(remainder) : "";
+}
+
 function shortThreadId(value: string): string {
 	return value.length > 10 ? value.slice(0, 10) : value;
 }
@@ -349,8 +366,8 @@ export function startObserveRecorder(session: ObserveSessionLike, options?: Obse
 					toolCallId: String(e.toolCallId),
 					toolName: String(e.toolName),
 					state: "running",
+					// The start event's only payload is the args; storing the event again would duplicate them.
 					args: serializePayload(e.args ?? null),
-					raw: serializePayload(e),
 					updates: 0,
 				});
 				break;
@@ -372,7 +389,7 @@ export function startObserveRecorder(session: ObserveSessionLike, options?: Obse
 					item.state = e.isError ? "error" : "done";
 					item.eventType = e.type;
 					item.result = retainPayload(resultText(e.result));
-					item.raw = serializePayload(e.result);
+					item.raw = rawToolResult(e.result) || undefined;
 					item.durationMs = Math.max(0, Date.now() - item.ts);
 					emit({ type: "activity_update", item });
 				} else {
@@ -383,7 +400,7 @@ export function startObserveRecorder(session: ObserveSessionLike, options?: Obse
 						toolName: String(e.toolName),
 						state: e.isError ? "error" : "done",
 						result: retainPayload(resultText(e.result)),
-						raw: serializePayload(e.result),
+						raw: rawToolResult(e.result) || undefined,
 						durationMs: 0,
 					});
 				}
