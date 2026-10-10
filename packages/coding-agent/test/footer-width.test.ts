@@ -106,6 +106,34 @@ function createFooterData(providerCount: number): ReadonlyFooterDataProvider {
 	return provider;
 }
 
+describe("compact footer git counts", () => {
+	beforeAll(() => {
+		initTheme("dark");
+	});
+
+	it("shows ahead, behind, and dirty counts after the branch and omits zero counts", () => {
+		const footer = new FooterComponent(createSession({ sessionName: "" }), {
+			...createFooterData(1),
+			getGitStatus: () => ({ ahead: 2, behind: 0, dirty: 5 }),
+		});
+		footer.setStyle("compact");
+		const line = stripAnsi(footer.render(160)[0]!);
+		expect(line).toMatch(/main\s+↑2 ±5/);
+		expect(line).not.toContain("↓");
+	});
+
+	it("drops the counts before the branch on narrow terminals", () => {
+		const footer = new FooterComponent(createSession({ sessionName: "" }), {
+			...createFooterData(1),
+			getGitStatus: () => ({ ahead: 1, behind: 1, dirty: 1 }),
+		});
+		footer.setStyle("compact");
+		for (const width of [40, 60, 80]) {
+			for (const line of footer.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+		}
+	});
+});
+
 describe("formatCwdForFooter", () => {
 	it("does not abbreviate sibling paths that share the home prefix", () => {
 		expect(formatCwdForFooter("/home/user2", "/home/user")).toBe("/home/user2");

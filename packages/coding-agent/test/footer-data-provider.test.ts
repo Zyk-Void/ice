@@ -37,7 +37,7 @@ vi.mock("child_process", () => ({
 	}),
 }));
 
-import { FooterDataProvider } from "../src/core/footer-data-provider.ts";
+import { FooterDataProvider, parseGitStatusPorcelainV2 } from "../src/core/footer-data-provider.ts";
 
 type WorktreeFixture = {
 	worktreeDir: string;
@@ -261,5 +261,27 @@ describe("FooterDataProvider reftable branch detection", () => {
 			provider.dispose();
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe("parseGitStatusPorcelainV2", () => {
+	it("reads ahead/behind and counts changed, untracked, and conflicted paths", () => {
+		const stdout = [
+			"# branch.oid 0123",
+			"# branch.head main",
+			"# branch.upstream origin/main",
+			"# branch.ab +3 -1",
+			"1 .M N... 100644 100644 100644 a b src/a.ts",
+			"2 R. N... 100644 100644 100644 a b R100 src/new.ts\tsrc/old.ts",
+			"u UU N... 100644 100644 100644 100644 a b c src/c.ts",
+			"? notes.md",
+			"! ignored.log",
+			"",
+		].join("\n");
+		expect(parseGitStatusPorcelainV2(stdout)).toEqual({ ahead: 3, behind: 1, dirty: 4 });
+	});
+
+	it("reports zero ahead/behind without an upstream", () => {
+		expect(parseGitStatusPorcelainV2("# branch.head main\n")).toEqual({ ahead: 0, behind: 0, dirty: 0 });
 	});
 });

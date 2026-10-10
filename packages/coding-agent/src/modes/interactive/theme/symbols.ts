@@ -12,6 +12,9 @@ export type SymbolKey =
 	| "toolPending"
 	| "toolSuccess"
 	| "branch"
+	| "ahead"
+	| "behind"
+	| "dirty"
 	| "gutter"
 	| "boxTopLeft"
 	| "boxTopRight"
@@ -32,6 +35,9 @@ const UNICODE: Record<SymbolKey, string> = {
 	toolPending: "›",
 	toolSuccess: "✓",
 	branch: "⎇",
+	ahead: "↑",
+	behind: "↓",
+	dirty: "±",
 	gutter: "⎿",
 	boxTopLeft: "╭",
 	boxTopRight: "╮",
@@ -57,6 +63,9 @@ const SYMBOL_PRESETS: Record<SymbolPreset, Record<SymbolKey, string>> = {
 		toolPending: ">",
 		toolSuccess: "+",
 		branch: "@",
+		ahead: "+",
+		behind: "-",
+		dirty: "~",
 		gutter: "L",
 		boxTopLeft: "+",
 		boxTopRight: "+",

@@ -80,6 +80,30 @@ function resolveBranchWithGitAsync(repoDir: string): Promise<string | null> {
 	});
 }
 
+/** Commits ahead of/behind the upstream and changed paths (staged, unstaged, untracked, conflicted). */
+export interface GitWorkingStatus {
+	ahead: number;
+	behind: number;
+	dirty: number;
+}
+
+/** Parse `git status --porcelain=v2 --branch`. Ahead/behind are 0 without an upstream. */
+export function parseGitStatusPorcelainV2(stdout: string): GitWorkingStatus {
+	const status: GitWorkingStatus = { ahead: 0, behind: 0, dirty: 0 };
+	for (const line of stdout.split("\n")) {
+		if (line.startsWith("# branch.ab ")) {
+			const match = /^# branch\.ab \+(\d+) -(\d+)/.exec(line);
+			if (match) {
+				status.ahead = Number(match[1]);
+				status.behind = Number(match[2]);
+			}
+		} else if (/^[12u?] /.test(line)) {
+			status.dirty++;
+		}
+	}
+	return status;
+}
+
 function isWslEnvironment(): boolean {
 	return process.platform === "linux" && !!(process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP);
 }
@@ -99,6 +123,9 @@ function shouldPollGitHead(repoDir: string): boolean {
 export class FooterDataProvider {
 	private cwd: string;
 	private static readonly WATCH_DEBOUNCE_MS = 500;
+	/** Working-tree edits do not touch HEAD, so status refreshes on demand, at most this often. */
+	private static readonly STATUS_REFRESH_MS = 2000;
+	private static readonly STATUS_TIMEOUT_MS = 2000;
 
 	private extensionStatuses = new Map<string, string>();
 	private cachedBranch: string | null | undefined = undefined;
@@ -116,6 +143,9 @@ export class FooterDataProvider {
 	private refreshInFlight = false;
 	private refreshPending = false;
 	private disposed = false;
+	private cachedStatus: GitWorkingStatus | undefined;
+	private statusRefreshedAt = 0;
+	private statusInFlight = false;
 
 	constructor(cwd: string) {
 		this.cwd = cwd;
@@ -129,6 +159,37 @@ export class FooterDataProvider {
 			this.cachedBranch = this.resolveGitBranchSync();
 		}
 		return this.cachedBranch;
+	}
+
+	/**
+	 * Last known ahead/behind/dirty counts, undefined outside a repository or before the first refresh.
+	 * Each call may start a throttled background `git status`; a changed result notifies branch listeners.
+	 */
+	getGitStatus(): GitWorkingStatus | undefined {
+		this.refreshGitStatus();
+		return this.cachedStatus;
+	}
+
+	private refreshGitStatus(): void {
+		if (this.disposed || !this.gitPaths || this.statusInFlight) return;
+		const now = Date.now();
+		if (now - this.statusRefreshedAt < FooterDataProvider.STATUS_REFRESH_MS) return;
+		this.statusInFlight = true;
+		this.statusRefreshedAt = now;
+		const repoDir = this.gitPaths.repoDir;
+		execFile(
+			"git",
+			["--no-optional-locks", "status", "--porcelain=v2", "--branch"],
+			{ cwd: repoDir, encoding: "utf8", timeout: FooterDataProvider.STATUS_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
+			(error: ExecFileException | null, stdout: string) => {
+				this.statusInFlight = false;
+				if (this.disposed || this.gitPaths?.repoDir !== repoDir) return;
+				const next = error ? undefined : parseGitStatusPorcelainV2(stdout);
+				const previous = this.cachedStatus;
+				this.cachedStatus = next;
+				if (JSON.stringify(previous) !== JSON.stringify(next)) this.notifyBranchChange();
+			},
+		);
 	}
 
 	/** Extension status texts set via ctx.ui.setStatus() */
@@ -178,6 +239,8 @@ export class FooterDataProvider {
 		}
 		this.clearGitWatchers();
 		this.cachedBranch = undefined;
+		this.cachedStatus = undefined;
+		this.statusRefreshedAt = 0;
 		this.gitPaths = findGitPaths(cwd);
 		this.setupGitWatcher();
 		this.notifyBranchChange();
@@ -385,4 +448,5 @@ export class FooterDataProvider {
 export type ReadonlyFooterDataProvider = Pick<
 	FooterDataProvider,
 	"getGitBranch" | "getExtensionStatuses" | "getAvailableProviderCount" | "onBranchChange"
->;
+> &
+	Partial<Pick<FooterDataProvider, "getGitStatus">>;

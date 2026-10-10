@@ -195,6 +195,13 @@ export class FooterComponent implements Component {
 				shrink: (max) => dim(truncateToWidth(`${sym("branch")} ${branch}`, max, sym("ellipsis"))),
 				minWidth: 12,
 			});
+			const git = this.footerData.getGitStatus?.();
+			const counts = [
+				git?.ahead ? theme.fg("success", `${sym("ahead")}${git.ahead}`) : "",
+				git?.behind ? theme.fg("warning", `${sym("behind")}${git.behind}`) : "",
+				git?.dirty ? theme.fg("warning", `${sym("dirty")}${git.dirty}`) : "",
+			].filter(Boolean);
+			if (counts.length > 0) left.push({ text: counts.join(" "), priority: 45 });
 		}
 		const sessionName = this.session.sessionManager.getSessionName();
 		if (sessionName) left.push({ text: dim(sanitizeStatusText(sessionName)), priority: 30 });

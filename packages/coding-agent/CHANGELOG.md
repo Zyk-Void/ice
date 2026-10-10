@@ -6,6 +6,7 @@
 
 ### Added
 
+- Added git ahead, behind, and changed-path counts after the branch in the compact footer (`↑2 ↓1 ±5`; ASCII `+2 -1 ~5`), refreshed by a throttled background `git status` at most every 2 seconds and dropped first on narrow terminals.
 - Added `app.tools.collapse` (Alt+O by default) to collapse all expanded tool output at once; Ctrl+O still expands the newest batch of collapsed tool calls per press.
 - Added a `❯` prompt in front of the editor (`>` with ASCII symbols), drawn in the editor border color; wrapped and later lines are indented to match.
 - Added a sticky prompt header to fullscreen mode: while scrolled up, the top row names the user prompt whose answer is on screen, and clicking it scrolls back to that prompt.
