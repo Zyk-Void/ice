@@ -182,10 +182,14 @@ export function buildLocalPrecompactAnchor(
 
 /** Claude-compatible Cognee session id: ice_<hostSessionId>. */
 export function cogneeSessionId(hostSessionId: string): string {
-	const cleaned = hostSessionId
-		.trim()
-		.replace(/[^A-Za-z0-9._-]+/g, "_")
-		.slice(0, 120);
+	const trimmed = hostSessionId.trim();
+	const sanitized = trimmed.replace(/[^A-Za-z0-9._-]+/g, "_");
+	let cleaned = sanitized.slice(0, 120);
+	// Sanitizing or truncating can map distinct host ids to one Cognee session; a short hash of
+	// the original keeps them apart. Ordinary ids (UUIDs) are unchanged, so existing sessions keep their id.
+	if (cleaned !== trimmed) {
+		cleaned = `${sanitized.slice(0, 111)}_${createHash("sha256").update(trimmed).digest("hex").slice(0, 8)}`;
+	}
 	if (cleaned.startsWith("ice_")) return cleaned;
 	return `ice_${cleaned || "session"}`;
 }
@@ -749,7 +753,6 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 	const storageDir = options.storageDir ?? compatibleCogneeStorageDir(getAgentDir());
 	const configPath = join(storageDir, "config.json");
 	const pendingDir = join(storageDir, "pending");
-	const sessionsDir = join(storageDir, "sessions");
 	const warmupDir = join(storageDir, "warmup");
 	const skillsDir = join(dirname(fileURLToPath(import.meta.url)), "ice-cognee-skills");
 	let environment = normalizeLegacyEnvironment(options.env ?? process.env);
@@ -861,21 +864,6 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 		const id = cogneeSessionId(hostId);
 		runtime.sessionId = id;
 		runtime.hostSessionId = hostId;
-		try {
-			await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
-			await chmod(sessionsDir, 0o700);
-			const path = join(sessionsDir, `${hostId.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 80)}.json`);
-			const body = {
-				host_key: hostId,
-				session_id: id,
-				dataset: activeDataset(),
-				base_url: runtime.config.baseUrl,
-				updated_at: new Date().toISOString(),
-			};
-			await writePrivateFileAtomic(path, `${JSON.stringify(body)}\n`);
-		} catch {
-			// session map is best-effort
-		}
 		return id;
 	};
 
@@ -950,6 +938,8 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			.rememberEntry({ entry, sessionId, dataset: activeDataset() })
 			.then(() => {
 				runtime.saves[kind] += 1;
+				// A QA entry is what stores the captured prompt, so prompts count only once it is saved.
+				if (kind === "answer") runtime.saves.prompt += 1;
 				observe(operation, "succeeded", { requestId, latencyMs: Date.now() - startedAt, meta: { kind } });
 			})
 			.catch(async (error: unknown) => {
@@ -1679,7 +1669,6 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 						truncateForCapture(event.prompt, runtime.config.captureMaxChars),
 						runtime.config.captureMaxChars,
 					);
-					runtime.saves.prompt += 1;
 				}
 
 				if (!runtime.config.autoRecall || !canAttemptCircuit(runtime.recallCircuit)) {

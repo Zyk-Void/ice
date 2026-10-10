@@ -271,6 +271,7 @@
 
 ### Fixed
 
+- - Fixed Cognee hygiene: the write-only `ice-cognee/sessions/` map is no longer written (existing files are unused), the unread `COGNEE_RECALL_TIMEOUT`/`COGNEE_RECALL_BUDGET` keys are no longer loaded, `/cognee` status counts a prompt only once its QA entry is stored, and host session ids that sanitizing or truncation would merge get a short hash suffix (ordinary ids are unchanged).
 - - Fixed cancelling an automatic compaction still running prompts queued during it; they now stay queued, as after a cancelled manual compaction.
 - - Fixed `observability.sqlite` storing each tool's arguments and output several times: the start event no longer keeps a raw copy of its arguments, and a finished tool's raw payload keeps only what its text result does not (details such as an edit diff, and non-text blocks).
 - - Fixed extension commands such as `/agents` showing a "Preparing · Sending prompt" timer that kept counting while their panel was open; only input that becomes a prompt shows it.

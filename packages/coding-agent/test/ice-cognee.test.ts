@@ -895,6 +895,13 @@ describe("ice-cognee extension hooks", () => {
 			expect(JSON.stringify(traceBody)).not.toContain("output-secret");
 			expect(JSON.stringify(traceBody)).toContain("[REDACTED]");
 			expect(cogneeSessionId("session-1")).toBe("ice_session-1");
+			expect(cogneeSessionId("019a3c7e-5b2f-7d10-9a1e-3f2c8d4b6e01")).toBe(
+				"ice_019a3c7e-5b2f-7d10-9a1e-3f2c8d4b6e01",
+			);
+			// Ids that sanitizing or truncating would merge stay distinct.
+			expect(cogneeSessionId("a/b")).not.toBe(cogneeSessionId("a:b"));
+			expect(cogneeSessionId(`${"x".repeat(130)}1`)).not.toBe(cogneeSessionId(`${"x".repeat(130)}2`));
+			expect(cogneeSessionId("y".repeat(300)).length).toBeLessThanOrEqual(124);
 			expect(extractMessageText({ role: "assistant", content: [{ type: "text", text: "hi" }] })).toBe("hi");
 			expect(truncateForCapture("x".repeat(20), 10)).toContain("…[truncated]");
 		} finally {
