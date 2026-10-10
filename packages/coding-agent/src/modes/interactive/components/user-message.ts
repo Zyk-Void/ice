@@ -9,10 +9,7 @@ import {
 } from "../appearance/user-message-presentation.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
-
-const OSC133_ZONE_START = "\x1b]133;A\x07";
-const OSC133_ZONE_END = "\x1b]133;B\x07";
-const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
+import { markOsc133Zone } from "./osc133-zone.ts";
 
 /**
  * Component that renders a user message.
@@ -127,7 +124,7 @@ export class UserMessageComponent extends Container {
 			const outerTarget = Math.max(1, Math.min(safeWidth, target));
 			const contentTarget = Math.max(1, outerTarget - sideWidth);
 			lines = super.render(outerTarget).map((line) => fitLineToWidth(line, outerTarget));
-			if (borderStyle === "none") return this.markZones(lines);
+			if (borderStyle === "none") return markOsc133Zone(lines);
 			const border = renderUserMessageBorder(borderStyle, outerTarget, borderColor);
 			if (border.left || border.right) {
 				lines = super.render(outerTarget).map((line) => fitLineToWidth(line, outerTarget));
@@ -135,26 +132,17 @@ export class UserMessageComponent extends Container {
 			}
 			if (border.top) lines.unshift(border.top);
 			if (border.bottom) lines.push(border.bottom);
-			return this.markZones(lines);
+			return markOsc133Zone(lines);
 		}
 		lines = super.render(safeWidth).map((line) => fitLineToWidth(line, innerWidth + sideWidth));
-		if (borderStyle === "none") return this.markZones(lines);
+		if (borderStyle === "none") return markOsc133Zone(lines);
 		const border = renderUserMessageBorder(borderStyle, safeWidth, borderColor);
 		if (border.left || border.right) {
 			lines = lines.map((line) => `${border.left}${fitLineToWidth(line, innerWidth)}${border.right}`);
 		}
 		if (border.top) lines.unshift(border.top);
 		if (border.bottom) lines.push(border.bottom);
-		return this.markZones(lines.map((line) => fitLineToWidth(line, safeWidth)));
-	}
-
-	private markZones(lines: string[]): string[] {
-		if (lines.length === 0) {
-			return lines;
-		}
-		lines[0] = OSC133_ZONE_START + lines[0];
-		lines[lines.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[lines.length - 1];
-		return lines;
+		return markOsc133Zone(lines.map((line) => fitLineToWidth(line, safeWidth)));
 	}
 }
 

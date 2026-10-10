@@ -268,6 +268,7 @@
 
 ### Fixed
 
+- Fixed one-row user and assistant messages emitting OSC 133 markers out of order (`B C A`), which hid single-line prompts from fullscreen prompt navigation and the sticky prompt; markers stay at line starts in zone order.
 - Fixed unbounded Cognee local storage and capture: tool traces are capped at 24 per prompt, the failed-write warmup buffer holds at most 256 entries, and `observations.jsonl` rotates to one `.1` generation past 2 MB while the observer view still shows the latest 500 events.
 - Fixed repeated Cognee recall failures pausing queued remembers (including compaction summaries): recall and remember now have separate circuit breakers, and `/cognee status` reports both.
 - Fixed `edit` rejecting a unique exact match as ambiguous when fuzzy-equivalent text (curly quotes, Unicode dashes or spaces) existed elsewhere; uniqueness is now judged in the mode that found each edit, and an exact edit keeps its own occurrence when another edit in the batch needs fuzzy matching.
