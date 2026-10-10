@@ -795,6 +795,8 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 	let lastPlanAssistantHadToolCall = false;
 	let lastPlanAssistantHadDecision = false;
 	let planContinuationScheduled = false;
+	// A user abort (Escape) ends the run on purpose; reminding would restart it.
+	let lastPlanRunAborted = false;
 	let activeVerifier:
 		| {
 				controller: AbortController;
@@ -1534,6 +1536,11 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 		lastPlanAssistantHadToolCall = false;
 		lastPlanAssistantHadDecision = false;
 		planContinuationScheduled = false;
+		lastPlanRunAborted = false;
+	});
+	ice.on("agent_end", async (event) => {
+		const last = event.messages.at(-1);
+		if (last?.role === "assistant" && last.stopReason === "aborted") lastPlanRunAborted = true;
 	});
 	ice.on("turn_end", async (event) => {
 		if (!state || state.mode !== "plan" || event.message.role !== "assistant") return;
@@ -1555,6 +1562,7 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 			!lastPlanAssistantHadToolCall &&
 			!lastPlanAssistantHadDecision &&
 			!planContinuationScheduled &&
+			!lastPlanRunAborted &&
 			state.plan.decisionReminderCount < MAX_PLAN_DECISION_REMINDERS
 		) {
 			state = {

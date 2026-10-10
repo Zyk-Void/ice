@@ -1028,6 +1028,29 @@ describe("ICE guarded extension", () => {
 		expect(runtime.appended.at(-1)?.data).toMatchObject({ plan: { decisionReminderCount: 3 } });
 	});
 
+	it("does not remind or restart a plan run the user aborted", async () => {
+		const runtime = extensionFixture({ hasUI: true });
+		await runtime.emit("session_start");
+		const aborted = { role: "assistant", content: [], stopReason: "aborted" };
+		await runtime.emit("agent_start");
+		await runtime.emit("turn_end", { message: aborted });
+		await runtime.emit("agent_end", { messages: [aborted] });
+		await runtime.emit("agent_settled");
+		expect(runtime.steeredMessages.filter((message) => message.includes("PLAN MODE DECISION REQUIRED"))).toHaveLength(
+			0,
+		);
+		// The next ordinary prose-only run is still reminded.
+		await runtime.emit("agent_start");
+		await runtime.emit("turn_end", {
+			message: { role: "assistant", content: [{ type: "text", text: "Still thinking" }] },
+		});
+		await runtime.emit("agent_end", { messages: [] });
+		await runtime.emit("agent_settled");
+		expect(runtime.steeredMessages.filter((message) => message.includes("PLAN MODE DECISION REQUIRED"))).toHaveLength(
+			1,
+		);
+	});
+
 	it("does not schedule plan continuations in print mode", async () => {
 		const runtime = extensionFixture();
 		await runtime.emit("session_start");

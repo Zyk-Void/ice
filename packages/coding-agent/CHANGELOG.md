@@ -271,6 +271,7 @@
 
 ### Fixed
 
+- - Fixed plan mode restarting a run the user interrupted: pressing Escape left an assistant message without tool calls, so the plan decision reminder started a new turn after every abort (up to three times).
 - - Fixed the `--observe` dashboard: tool rows froze at `running` because every live update threw while re-rendering the row; viewing one run was reset to the combined view whenever another ICE run appeared and refetched the run every 1.5 s, collapsing the inspector; other runs' metrics overwrote the overview; live updates reset the inspector's scroll and open raw-payload sections; the pulse rebuilt its bars under keyboard focus every second; and the follow toggle was hidden on narrow screens. Rows now name the tool target (path, command, pattern) and its outcome, the overview shows the model, the legend matches the bar colors, and the palette is consistently neutral. Tool progress updates are no longer written to `observability.sqlite`, and its WAL file is truncated back to 64 MiB after checkpoints.
 - Fixed runtime forks changing in-memory history before active turns settled, imports overwriting same-basename sessions, and shutdown racing pending compaction/tree hooks.
 - Fixed failed extension factories retaining provider registrations, flag defaults, and event-bus listeners; loader-owned APIs are revoked on failure and listener cleanup runs on reload/disposal. Extension event subscriptions now return an unsubscribe function.
