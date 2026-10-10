@@ -28,6 +28,7 @@ function createSession(options: {
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
 	subagentUsage?: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number };
+	cwd?: string;
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
@@ -81,7 +82,7 @@ function createSession(options: {
 		sessionManager: {
 			getEntries: () => entries,
 			getSessionName: () => options.sessionName,
-			getCwd: () => "/tmp/project",
+			getCwd: () => options.cwd ?? "/tmp/project",
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
 		modelRuntime: {
@@ -126,7 +127,62 @@ describe("compact footer git counts", () => {
 		expect(line).not.toContain("↓");
 	});
 
-	it("drops the counts before the branch on narrow terminals", () => {
+	it("shortens the cwd before the branch and keeps the counts with the branch", () => {
+		const footer = new FooterComponent(
+			createSession({ sessionName: "", cwd: "/home/user/projects/a/very/long/workspace/path/for/testing" }),
+			{
+				...createFooterData(1),
+				getGitBranch: () => "integration/all-worktrees-experimental",
+				getGitStatus: () => ({ ahead: 3, behind: 0, dirty: 7 }),
+			},
+		);
+		footer.setStyle("compact");
+		const line = stripAnsi(footer.render(110)[0]!);
+		expect(line).toContain("integration/all-worktrees-experimental ↑3 ±7");
+		expect(line).toContain("…");
+	});
+
+	it("keeps the cwd and git counts with the normal runtime badges at 120 columns", () => {
+		const data = {
+			...createFooterData(1),
+			getExtensionStatuses: () => new Map([["ice-mode", "plan"]]),
+			getGitBranch: () => "integration/all-worktrees-experimental",
+			getGitStatus: () => ({ ahead: 93, behind: 0, dirty: 10 }),
+		};
+		const footer = new FooterComponent(
+			createSession({
+				sessionName: "",
+				cwd: "/home/user/projects/a/very/long/workspace/path/for/testing",
+				modelId: "cx/gpt-6.1-sol",
+				reasoning: true,
+				thinkingLevel: "max",
+			}),
+			data,
+		);
+		footer.setStyle("compact");
+		footer.setSubagentSource(() => ({
+			enabled: true,
+			capacity: { running: 0, queued: 0, max: 8 },
+			maxDepth: 0,
+			children: [],
+			approvals: [],
+			diagnostics: [],
+		}));
+		footer.setNoticeSource(
+			() => ({ warning: 1, error: 0, update: 1 }),
+			() => "f2",
+		);
+		const lines = footer.render(120);
+		expect(lines).toHaveLength(1);
+		const line = stripAnsi(lines[0]!);
+		expect(line).toContain("/testing");
+		expect(line).toContain("↑93 ±10");
+		expect(line).toContain("agents 0/8");
+		expect(line).toContain("⚠ 1 ↑ f2");
+		expect(visibleWidth(lines[0]!)).toBeLessThanOrEqual(120);
+	});
+
+	it("keeps the footer within narrow widths", () => {
 		const footer = new FooterComponent(createSession({ sessionName: "" }), {
 			...createFooterData(1),
 			getGitStatus: () => ({ ahead: 1, behind: 1, dirty: 1 }),

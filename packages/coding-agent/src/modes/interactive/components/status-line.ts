@@ -25,12 +25,14 @@ function join(segments: readonly StatusSegment[]): string {
 
 /**
  * Lay out left- and right-aligned segments on one row. When they do not fit,
- * the lowest-priority segment shrinks once if it can, otherwise it drops. If
- * required segments still overflow, left and right render on two rows.
+ * the lowest-priority segment shrinks once if it can, otherwise it drops.
+ * Before dropping a shortened segment, try shortening the remaining segments.
+ * If required segments still overflow, left and right render on two rows.
  */
 export function layoutStatusLine(left: StatusSegment[], right: StatusSegment[], width: number): string[] {
 	const leftSegments = left.map((segment) => ({ ...segment }));
 	const rightSegments = right.map((segment) => ({ ...segment }));
+	const shortened = new Set<StatusSegment>();
 	const used = () =>
 		joinedWidth(leftSegments) +
 		joinedWidth(rightSegments) +
@@ -39,20 +41,27 @@ export function layoutStatusLine(left: StatusSegment[], right: StatusSegment[], 
 	// Act on the lowest-priority segment first: shrink it when it can still shrink, otherwise drop it.
 	while (used() > width) {
 		let target: { list: StatusSegment[]; index: number } | undefined;
+		let shrinkTarget: { list: StatusSegment[]; index: number } | undefined;
 		for (const list of [leftSegments, rightSegments]) {
 			list.forEach((segment, index) => {
 				const canShrink = segment.shrink !== undefined && visibleWidth(segment.text) > (segment.minWidth ?? 1);
+				if (canShrink && (!shrinkTarget || segment.priority < shrinkTarget.list[shrinkTarget.index]!.priority))
+					shrinkTarget = { list, index };
 				if (segment.priority >= REQUIRED_PRIORITY && !canShrink) return;
 				if (!target || segment.priority < target.list[target.index]!.priority) target = { list, index };
 			});
 		}
 		if (!target) break;
+		if (shortened.has(target.list[target.index]!) && shrinkTarget) target = shrinkTarget;
 		const segment = target.list[target.index]!;
 		if (segment.shrink && visibleWidth(segment.text) > (segment.minWidth ?? 1)) {
 			const goal = Math.max(segment.minWidth ?? 1, visibleWidth(segment.text) - (used() - width));
 			const shrunk = segment.shrink(goal);
 			segment.shrink = undefined;
-			if (visibleWidth(shrunk) < visibleWidth(segment.text)) segment.text = shrunk;
+			if (visibleWidth(shrunk) < visibleWidth(segment.text)) {
+				segment.text = shrunk;
+				shortened.add(segment);
+			}
 			continue;
 		}
 		if (segment.priority >= REQUIRED_PRIORITY) break;

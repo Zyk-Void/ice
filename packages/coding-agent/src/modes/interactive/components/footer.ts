@@ -189,19 +189,23 @@ export class FooterComponent implements Component {
 		left.push({ text: dim(cwd), priority: 60, shrink: (max) => dim(middleTruncate(cwd, max)), minWidth: 16 });
 		const branch = this.footerData.getGitBranch();
 		if (branch) {
-			left.push({
-				text: dim(`${sym("branch")} ${branch}`),
-				priority: 50,
-				shrink: (max) => dim(truncateToWidth(`${sym("branch")} ${branch}`, max, sym("ellipsis"))),
-				minWidth: 12,
-			});
+			// Counts ride with the branch: shrinking truncates the branch name, never the counts.
 			const git = this.footerData.getGitStatus?.();
 			const counts = [
 				git?.ahead ? theme.fg("success", `${sym("ahead")}${git.ahead}`) : "",
 				git?.behind ? theme.fg("warning", `${sym("behind")}${git.behind}`) : "",
 				git?.dirty ? theme.fg("warning", `${sym("dirty")}${git.dirty}`) : "",
 			].filter(Boolean);
-			if (counts.length > 0) left.push({ text: counts.join(" "), priority: 45 });
+			const suffix = counts.length > 0 ? ` ${counts.join(" ")}` : "";
+			const label = `${sym("branch")} ${branch}`;
+			left.push({
+				text: dim(label) + suffix,
+				// Above the cwd (60): a long path middle-truncates before the branch name is cut.
+				priority: 65,
+				shrink: (max) =>
+					dim(truncateToWidth(label, Math.max(1, max - visibleWidth(suffix)), sym("ellipsis"))) + suffix,
+				minWidth: 12 + visibleWidth(suffix),
+			});
 		}
 		const sessionName = this.session.sessionManager.getSessionName();
 		if (sessionName) left.push({ text: dim(sanitizeStatusText(sessionName)), priority: 30 });
