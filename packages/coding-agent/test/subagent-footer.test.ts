@@ -1,11 +1,12 @@
 import { visibleWidth } from "@zykairotis/ice-tui";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import { IceAgentViewBridge, type IceAgentViewDescriptor } from "../src/ice-agent-view-bridge.ts";
 import {
 	createSubagentFooterSnapshot,
 	SubagentFooterSwitcher,
 } from "../src/modes/interactive/components/subagent-view-switcher.ts";
+import { setSymbolPreset } from "../src/modes/interactive/theme/symbols.ts";
 import {
 	createSubagentLiveSessionControl,
 	SubagentLiveSessionRegistry,
@@ -72,6 +73,11 @@ function view(overrides: Partial<IceAgentViewDescriptor> = {}): IceAgentViewDesc
 }
 
 describe("subagent footer observability", () => {
+	// Assertions use Unicode glyphs; the default preset is ASCII under a non-UTF-8 locale.
+	beforeEach(() => {
+		setSymbolPreset("unicode");
+	});
+
 	it("derives a frozen bounded snapshot with counts, attention, selection, and safe activity", () => {
 		const activities = Array.from({ length: 64 }, (_, index) => ({
 			toolCallId: `call-${index}`,
