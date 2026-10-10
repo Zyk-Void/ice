@@ -357,6 +357,8 @@ export class AgentSession {
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
 	private _branchSummarySettled: Promise<void> = Promise.resolve();
+	/** Set when the user cancels an automatic compaction; queued input then waits, as after a manual cancel. */
+	private _autoCompactionCancelled = false;
 
 	// Retry state
 	private _retryAbortController: AbortController | undefined = undefined;
@@ -1208,6 +1210,11 @@ export class AgentSession {
 		if (this._resumeAfterMidRunCompaction) {
 			this._resumeAfterMidRunCompaction = false;
 			return true;
+		}
+
+		if (this._autoCompactionCancelled) {
+			this._autoCompactionCancelled = false;
+			return false;
 		}
 
 		// The agent loop drains both queues before emitting agent_end. Any messages
@@ -2384,6 +2391,7 @@ export class AgentSession {
 		this._claimCompactionLock();
 		const controller = new AbortController();
 		this._autoCompactionAbortController = controller;
+		this._autoCompactionCancelled = false;
 		let started = false;
 
 		try {
@@ -2479,6 +2487,7 @@ export class AgentSession {
 			}
 
 			if (controller.signal.aborted) {
+				this._autoCompactionCancelled = true;
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -2527,7 +2536,10 @@ export class AgentSession {
 				willRetry: willRetry && !abortedAfterSave,
 			});
 			// A saved checkpoint remains valid, but cancellation during post-save hooks/events must not restart the run.
-			if (controller.signal.aborted) return false;
+			if (controller.signal.aborted) {
+				this._autoCompactionCancelled = true;
+				return false;
+			}
 
 			if (willRetry) {
 				const messages = this.agent.state.messages;
@@ -2550,6 +2562,7 @@ export class AgentSession {
 			// The lock owner can abort this compaction to preempt it (compact() takes
 			// over); report that as a cancellation, not a failure.
 			const aborted = (error instanceof Error && error.name === "AbortError") || controller.signal.aborted;
+			if (aborted) this._autoCompactionCancelled = true;
 			if (started) {
 				this._emit({
 					type: "compaction_end",

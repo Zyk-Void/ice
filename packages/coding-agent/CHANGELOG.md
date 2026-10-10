@@ -271,6 +271,7 @@
 
 ### Fixed
 
+- - Fixed cancelling an automatic compaction still running prompts queued during it; they now stay queued, as after a cancelled manual compaction.
 - - Fixed `observability.sqlite` storing each tool's arguments and output several times: the start event no longer keeps a raw copy of its arguments, and a finished tool's raw payload keeps only what its text result does not (details such as an edit diff, and non-text blocks).
 - - Fixed extension commands such as `/agents` showing a "Preparing · Sending prompt" timer that kept counting while their panel was open; only input that becomes a prompt shows it.
 - - Fixed plan mode restarting a run the user interrupted: pressing Escape left an assistant message without tool calls, so the plan decision reminder started a new turn after every abort (up to three times).

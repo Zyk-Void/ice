@@ -121,6 +121,46 @@ describe("agent session compaction lock", () => {
 		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
 	});
 
+	it.each([false, true])(
+		"runs a prompt queued during auto compaction unless the compaction is cancelled (cancel: %s)",
+		async (cancel) => {
+			const gate = createGateExtension();
+			const harness = await createHarness({
+				models: [{ id: "faux-1", contextWindow: 3000, maxTokens: 100 }],
+				settings: {
+					compaction: {
+						enabled: true,
+						thresholdPercent: 1,
+						midRunCompaction: "off",
+						reserveTokens: 0,
+						keepRecentTokens: 10,
+					},
+				},
+				tools: [bulkTool()],
+				extensionFactories: [gate.factory],
+			});
+			harnesses.push(harness);
+			harness.setResponses([
+				fauxAssistantMessage(fauxToolCall("bulk", {}), { stopReason: "toolUse" }),
+				fauxAssistantMessage("final"),
+				fauxAssistantMessage("queued answer"),
+			]);
+			const promptPromise = harness.session.prompt("start");
+			await vi.waitFor(() => expect(gate.calls()).toBe(1), { timeout: 1000, interval: 10 });
+
+			await harness.session.prompt("queued", { source: "rpc" });
+			expect(harness.session.getFollowUpMessages()).toEqual(["queued"]);
+			if (cancel) harness.session.abortCompaction();
+			else gate.release();
+			await promptPromise;
+			await harness.session.waitForIdle();
+
+			// Like a cancelled manual compaction, a cancelled auto compaction keeps the input queued.
+			expect(harness.session.getFollowUpMessages()).toEqual(cancel ? ["queued"] : []);
+			expect(harness.getPendingResponseCount()).toBe(cancel ? 1 : 0);
+		},
+	);
+
 	it("preempts an in-flight auto compaction when compact() is called", async () => {
 		const gate = createGateExtension();
 		const harness = await createHarness({
