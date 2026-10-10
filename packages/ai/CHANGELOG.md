@@ -86,6 +86,10 @@
 
 ### Fixed
 
+- Bounded assistant retry backoff with a 60-second default and optional `RetryPolicy.maxDelayMs`, and removed settled retry sleep abort listeners.
+- Fixed invalid, negative, and non-finite provider retry headers bypassing exponential backoff.
+- Fixed Codex SSE dropping terminal frames at EOF and ignoring CRLF frame boundaries, including boundaries split across chunks.
+- Corrected Kimi K3's generator fallback and Kimi Coding API-equivalent estimate to use the official default 5-minute cache-write rate of $3 per million tokens.
 - Fixed GitHub Copilot Grok 4.5 requests to use the supported Responses API ([#7560](https://github.com/earendil-works/pi/issues/7560)).
 - Bounded OAuth token refreshes so stalled requests release the credential-store lock ([#7508](https://github.com/earendil-works/pi/issues/7508)).
 - Fixed tool argument validation to preserve values that already match an `anyOf`/`oneOf` union arm before attempting coercion, avoiding nullable unions converting `null` to another primitive value ([#7328](https://github.com/earendil-works/pi/issues/7328)).

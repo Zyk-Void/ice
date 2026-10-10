@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { fauxAssistantMessage } from "../src/providers/faux.ts";
-import { isRetryableAssistantError, type RetryPolicy, retryAssistantCall } from "../src/utils/retry.ts";
+import {
+	getRetryDelayMs,
+	isRetryableAssistantError,
+	type RetryPolicy,
+	retryAssistantCall,
+} from "../src/utils/retry.ts";
 
 const openAIExplicitRetryMessage =
 	"An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID req_******** in your message.";
@@ -75,6 +80,18 @@ describe("provider retry classification", () => {
 			),
 		).toBe(true);
 		expect(isRetryableAssistantError(fauxAssistantMessage("not an error"))).toBe(false);
+	});
+});
+
+describe("bounded retry delay", () => {
+	it("caps exponential delays without overflowing timers", () => {
+		expect(getRetryDelayMs(2000, 1)).toBe(2000);
+		expect(getRetryDelayMs(2000, 7)).toBe(60_000);
+		expect(getRetryDelayMs(2000, 2048)).toBe(60_000);
+		expect(getRetryDelayMs(0, 2048)).toBe(0);
+		expect(getRetryDelayMs(Number.NaN, 1)).toBe(0);
+		expect(getRetryDelayMs(-1, 1)).toBe(0);
+		expect(getRetryDelayMs(2000, 7, 5000)).toBe(5000);
 	});
 });
 
