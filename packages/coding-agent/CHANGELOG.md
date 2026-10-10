@@ -266,6 +266,7 @@
 
 ### Fixed
 
+- Fixed `find` patterns starting with `./` (for example `./src/**/*.ts`) matching nothing; the leading `./` now refers to the search directory.
 - Fixed Cognee leaving `.tmp` files behind when a pending-remember, config, session-map, or checkpoint-recall write failed; all private atomic writes now share one helper that removes the temporary file.
 - Fixed clicking the fullscreen "Jump to bottom" pill doing nothing; it now scrolls to the end like the End key.
 - Fixed terminals underlining clickable tool rows and the "Jump to bottom" pill on hover in fullscreen mode; they now highlight in reverse video and are no longer sent to the terminal as hyperlinks.
