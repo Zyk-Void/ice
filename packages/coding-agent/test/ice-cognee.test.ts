@@ -14,6 +14,7 @@ import {
 	enqueuePendingRemember,
 	extractMessageText,
 	loadIceCogneeConfig,
+	MAX_TRACES_PER_TURN,
 	noteCircuitFailure,
 	PROJECT_DATASET_SENTINEL,
 	readPendingRemember,
@@ -30,7 +31,11 @@ import {
 } from "../src/ice-cognee.ts";
 import { type CogneeClientConfig, CogneeError, createCogneeClient } from "../src/ice-cognee-client.ts";
 import { parseEnvFile } from "../src/ice-cognee-env.ts";
-import { readCogneeObservations } from "../src/ice-cognee-observer.ts";
+import {
+	appendCogneeObservation,
+	MAX_OBSERVATION_FILE_BYTES,
+	readCogneeObservations,
+} from "../src/ice-cognee-observer.ts";
 
 function config(overrides: Partial<CogneeClientConfig> = {}): CogneeClientConfig {
 	return {
@@ -892,6 +897,70 @@ describe("ice-cognee extension hooks", () => {
 			expect(cogneeSessionId("session-1")).toBe("ice_session-1");
 			expect(extractMessageText({ role: "assistant", content: [{ type: "text", text: "hi" }] })).toBe("hi");
 			expect(truncateForCapture("x".repeat(20), 10)).toContain("…[truncated]");
+		} finally {
+			rmSync(storageDir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("ice-cognee capture bounds", () => {
+	it("caps tool traces per prompt and resets the cap on the next prompt", async () => {
+		const storageDir = mkdtempSync(join(tmpdir(), "ice-cognee-trace-cap-"));
+		try {
+			const runtime = extensionHookFixture(storageDir);
+			await runtime.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, runtime.ctx);
+			const traces = () =>
+				runtime.requestBodies.filter(
+					(request) => request.url.includes("/remember/entry") && request.body?.includes('"trace"'),
+				).length;
+			const runTurn = async (prompt: string, tools: number) => {
+				await runtime.handlers.get("before_agent_start")?.({ type: "before_agent_start", prompt }, runtime.ctx);
+				for (let i = 0; i < tools; i++) {
+					await runtime.handlers.get("tool_result")?.(
+						{
+							type: "tool_result",
+							toolCallId: `${prompt}-${i}`,
+							toolName: "read",
+							input: { path: `f${i}` },
+							content: [{ type: "text", text: "x" }],
+							isError: false,
+						},
+						runtime.ctx,
+					);
+				}
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			};
+			await runTurn("first", MAX_TRACES_PER_TURN + 5);
+			expect(traces()).toBe(MAX_TRACES_PER_TURN);
+			await runTurn("second", 2);
+			expect(traces()).toBe(MAX_TRACES_PER_TURN + 2);
+		} finally {
+			rmSync(storageDir, { recursive: true, force: true });
+		}
+	});
+
+	it("rotates the observation log and still shows recent events after rotation", async () => {
+		const storageDir = mkdtempSync(join(tmpdir(), "ice-cognee-observe-rotate-"));
+		try {
+			const event = (id: string) => ({
+				id,
+				at: "2026-10-10T00:00:00.000Z",
+				operation: "recall" as const,
+				phase: "started" as const,
+			});
+			const filler = `${JSON.stringify(event("old"))}\n`;
+			writeFileSync(
+				join(storageDir, "observations.jsonl"),
+				filler.repeat(Math.ceil(MAX_OBSERVATION_FILE_BYTES / filler.length)),
+			);
+			await appendCogneeObservation(storageDir, event("trigger"));
+			expect(existsSync(join(storageDir, "observations.jsonl.1"))).toBe(true);
+			expect(existsSync(join(storageDir, "observations.jsonl"))).toBe(false);
+			await appendCogneeObservation(storageDir, event("fresh"));
+			const events = await readCogneeObservations(storageDir);
+			expect(events.length).toBe(500);
+			expect(events.at(-1)?.id).toBe("fresh");
+			expect(events.at(-2)?.id).toBe("trigger");
 		} finally {
 			rmSync(storageDir, { recursive: true, force: true });
 		}

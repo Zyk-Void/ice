@@ -20,6 +20,11 @@ import {
 } from "./ice-cognee-observer.ts";
 import { redactCredentialText } from "./utils/redact.ts";
 
+/** Failed session-cache writes kept for a later drain while Cognee is unreachable. */
+const MAX_WARMUP_ENTRIES = 256;
+/** Tool traces captured per agent turn; long exploratory turns otherwise flood the session cache. */
+export const MAX_TRACES_PER_TURN = 24;
+
 /** Claude PostToolUse matcher analog: primary coding tools only. */
 export const CAPTURE_TOOL_ALLOWLIST = new Set([
 	"bash",
@@ -616,6 +621,8 @@ interface CogneeRuntime {
 	lastImproveAt: number;
 	keySource: DoctorReport["apiKeySource"];
 	shuttingDown: boolean;
+	/** Tool traces captured since the current prompt started. */
+	turnTraces: number;
 	/** In-flight capture/improve promises drained on shutdown. */
 	background: Set<Promise<void>>;
 	activity: string | undefined;
@@ -770,6 +777,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 		lastImproveAt: 0,
 		keySource: "none",
 		shuttingDown: false,
+		turnTraces: 0,
 		background: new Set(),
 		activity: undefined,
 		activityTimer: undefined,
@@ -875,6 +883,9 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 		if (!runtime.sessionId) return;
 		try {
 			await mkdir(warmupDir, { recursive: true, mode: 0o700 });
+			// Bounded like the pending queue: while Cognee stays down, newer entries are dropped.
+			const buffered = (await readdir(warmupDir)).filter((name) => name.endsWith(".json")).length;
+			if (buffered >= MAX_WARMUP_ENTRIES) return;
 			const name = `${Date.now()}-${randomUUID().slice(0, 8)}.json`;
 			const path = join(warmupDir, name);
 			await writeFile(
@@ -1643,6 +1654,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 
 		// ── Claude UserPromptSubmit: recall + pending prompt capture ───
 		ice.on("before_agent_start", async (event, ctx) => {
+			runtime.turnTraces = 0;
 			const requestId = randomUUID();
 			const startedAt = Date.now();
 			startActivity(ctx, "recall");
@@ -1731,6 +1743,8 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			) {
 				return;
 			}
+			if (runtime.turnTraces >= MAX_TRACES_PER_TURN) return;
+			runtime.turnTraces += 1;
 
 			const input = event.input ?? {};
 			const max = runtime.config.captureMaxChars;
