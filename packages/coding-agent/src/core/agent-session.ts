@@ -110,6 +110,12 @@ import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { BashBackgroundRegistry } from "./tools/bash-background.ts";
+import {
+	BASH_SHELL_TOOL_NAMES,
+	createBashKillToolDefinition,
+	createBashOutputToolDefinition,
+	formatShellRuntime,
+} from "./tools/bash-shells.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals, subagentUsageFromEntry } from "./usage-totals.ts";
@@ -357,6 +363,8 @@ export class AgentSession {
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
 	private _branchSummarySettled: Promise<void> = Promise.resolve();
+	/** Running background shells the model was last reminded of, so unchanged sets are not repeated. */
+	private _remindedShells = "";
 	/** Set when the user cancels an automatic compaction; queued input then waits, as after a manual cancel. */
 	private _autoCompactionCancelled = false;
 
@@ -423,14 +431,23 @@ export class AgentSession {
 				completion.text.length > limit
 					? `[earlier output omitted]\n${completion.text.slice(-limit)}`
 					: completion.text;
+			// A user stop is deliberate: record it for the next turn instead of waking the model to react.
+			const stopped = completion.stoppedByUser === true;
 			void this.sendCustomMessage(
 				{
 					customType: "bash_background_completed",
-					content: `Background command ${completion.taskId} finished${completion.isError ? " with an error" : ""}: ${completion.command}\n\n${text}`,
+					content: stopped
+						? `The user stopped background shell ${completion.taskId}: ${completion.command}\nDo not restart it unless they ask.`
+						: `Background command ${completion.taskId} finished${completion.isError ? " with an error" : ""}: ${completion.command}\n\n${text}`,
 					display: true,
-					details: { taskId: completion.taskId, isError: completion.isError, durationMs: completion.durationMs },
+					details: {
+						taskId: completion.taskId,
+						isError: completion.isError,
+						durationMs: completion.durationMs,
+						...(stopped ? { stoppedByUser: true } : {}),
+					},
 				},
-				{ triggerTurn: true, deliverAs: "followUp" },
+				stopped ? { deliverAs: "nextTurn" } : { triggerTurn: true, deliverAs: "followUp" },
 			).catch(() => {});
 		});
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
@@ -1033,7 +1050,11 @@ export class AgentSession {
 	setActiveToolsByName(toolNames: string[]): void {
 		const tools: AgentTool[] = [];
 		const validToolNames: string[] = [];
-		for (const name of toolNames) {
+		// The background shell tools follow bash: only bash starts the shells they manage.
+		const shellToolNames: readonly string[] = BASH_SHELL_TOOL_NAMES;
+		const withoutShellTools = toolNames.filter((name) => !shellToolNames.includes(name));
+		const names = withoutShellTools.includes("bash") ? [...withoutShellTools, ...shellToolNames] : withoutShellTools;
+		for (const name of names) {
 			const tool = this._toolRegistry.get(name);
 			if (tool) {
 				tools.push(tool);
@@ -1055,6 +1076,30 @@ export class AgentSession {
 			this._compactionAbortController !== undefined ||
 			this._branchSummaryAbortController !== undefined
 		);
+	}
+
+	/**
+	 * Hidden context naming the background shells still running when the user prompts, so the model
+	 * knows they exist and how to check them. Sent only when the set of running shells changed.
+	 */
+	private _backgroundShellReminder(): CustomMessage | undefined {
+		const running = this.bashBackground.list();
+		const key = running.map((shell) => shell.taskId).join(",");
+		if (key === this._remindedShells) return undefined;
+		this._remindedShells = key;
+		if (running.length === 0) return undefined;
+		const now = Date.now();
+		const lines = running.map(
+			(shell) =>
+				`- ${shell.taskId} (running ${formatShellRuntime(now - shell.startedAt)}): ${shell.command.split("\n", 1)[0]}`,
+		);
+		return {
+			role: "custom",
+			customType: "bash_background_running",
+			content: `Background shells still running:\n${lines.join("\n")}\nCheck them with bash_output and stop them with bash_kill; each one's final output arrives as a message when it exits.`,
+			display: false,
+			timestamp: now,
+		};
 	}
 
 	/** All messages including custom types like BashExecutionMessage */
@@ -1361,6 +1406,8 @@ export class AgentSession {
 				messages.push(msg);
 			}
 			this._pendingNextTurnMessages = [];
+			const shellReminder = this._backgroundShellReminder();
+			if (shellReminder) messages.push(shellReminder);
 
 			// Emit before_agent_start extension event
 			const result = await this._extensionRunner.emitBeforeAgentStart(
@@ -2838,8 +2885,12 @@ export class AgentSession {
 		const previousActiveToolNames = this.getActiveToolNames();
 		const allowedToolNames = this._allowedToolNames;
 		const excludedToolNames = this._excludedToolNames;
-		const isAllowedTool = (name: string): boolean =>
-			(!allowedToolNames || allowedToolNames.has(name)) && !excludedToolNames?.has(name);
+		const shellToolNames: readonly string[] = BASH_SHELL_TOOL_NAMES;
+		const isAllowedTool = (name: string): boolean => {
+			// Allowing bash allows the tools that manage the shells it starts.
+			const governing = shellToolNames.includes(name) ? "bash" : name;
+			return (!allowedToolNames || allowedToolNames.has(governing)) && !excludedToolNames?.has(name);
+		};
 
 		const registeredTools = this._extensionRunner.getAllRegisteredTools();
 		const allCustomTools = [
@@ -2949,6 +3000,16 @@ export class AgentSession {
 		this._baseToolDefinitions = new Map(
 			Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool as ToolDefinition]),
 		);
+		if (!this._baseToolsOverride) {
+			this._baseToolDefinitions.set(
+				"bash_output",
+				createBashOutputToolDefinition(this.bashBackground) as ToolDefinition,
+			);
+			this._baseToolDefinitions.set(
+				"bash_kill",
+				createBashKillToolDefinition(this.bashBackground) as ToolDefinition,
+			);
+		}
 
 		const extensionsResult = this._resourceLoader.getExtensions();
 		if (options.flagValues) {

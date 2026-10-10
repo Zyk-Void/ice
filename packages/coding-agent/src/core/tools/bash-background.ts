@@ -1,9 +1,12 @@
 /**
- * Moves running bash tool calls to the background on user request (ctrl+b).
+ * Background shells: bash commands that keep running after their tool call returned.
  *
- * A released call returns its output so far to the model immediately; the
- * process keeps running under the same timeout, and one completion event is
- * emitted when it exits. Background processes are killed on dispose.
+ * A command becomes a background shell when the model starts it with `run_in_background`
+ * or when the user moves a running call to the background (ctrl+b). Each shell keeps a
+ * capped tail of its output, its status and timing, and a read cursor so the model's
+ * `bash_output` calls return only new output. One completion event is emitted when a
+ * shell exits on its own; finished shells stay listed for a while so their final output
+ * can still be read. Every process is killed on dispose.
  */
 
 export interface BashBackgroundCompletion {
@@ -13,23 +16,61 @@ export interface BashBackgroundCompletion {
 	text: string;
 	isError: boolean;
 	durationMs: number;
+	/** The user stopped it from the Shells panel; it did not exit on its own. */
+	stoppedByUser?: boolean;
 }
+
+export type BackgroundShellStatus = "running" | "completed" | "failed" | "killed";
+
+export interface BackgroundShellSnapshot {
+	taskId: string;
+	command: string;
+	/** Who sent it to the background: the model (`run_in_background`) or the user (ctrl+b). */
+	origin: "model" | "user";
+	status: BackgroundShellStatus;
+	startedAt: number;
+	endedAt?: number;
+	/** Retained output tail (the newest {@link MAX_OUTPUT_CHARS} characters). */
+	output: string;
+	/** Characters written over the shell's lifetime, including any no longer retained. */
+	totalChars: number;
+	/** Final tool text once the shell has exited on its own. */
+	finalText?: string;
+}
+
+/** Output kept per shell; older output is dropped (the bash tool still spills full output to a file). */
+export const MAX_OUTPUT_CHARS = 256 * 1024;
+/** Finished shells kept for inspection after they exit. */
+export const MAX_FINISHED_SHELLS = 20;
 
 interface ForegroundCall {
 	command: string;
 	release: () => void;
 }
 
-interface BackgroundTask {
-	command: string;
-	startedAt: number;
+interface BackgroundShell extends Omit<BackgroundShellSnapshot, "output"> {
+	chunks: string[];
+	retainedChars: number;
+	/** `totalChars` at the model's last `bash_output` read. */
+	readCursor: number;
 	abort: () => void;
+	exited: Promise<void>;
+	markExited: () => void;
+}
+
+export interface BackgroundShellRead {
+	shell: BackgroundShellSnapshot;
+	/** Output written since the previous read (only the retained part). */
+	newOutput: string;
+	/** Characters of new output that were already dropped from the retained tail. */
+	omittedChars: number;
 }
 
 export class BashBackgroundRegistry {
 	private readonly foreground = new Map<string, ForegroundCall>();
-	private readonly background = new Map<string, BackgroundTask>();
+	private readonly shells = new Map<string, BackgroundShell>();
 	private readonly listeners = new Set<(completion: BashBackgroundCompletion) => void>();
+	private readonly changeListeners = new Set<() => void>();
 	private nextTaskNumber = 1;
 	private disposed = false;
 
@@ -53,35 +94,134 @@ export class BashBackgroundRegistry {
 		return calls.length;
 	}
 
-	/** Track a released call until it settles; returns its task id. */
+	/**
+	 * Track a command that now runs in the background until it settles; returns its task id.
+	 * `initialOutput` is what the command printed before it was backgrounded; later output
+	 * arrives through {@link appendOutput}.
+	 */
 	adopt(
 		command: string,
 		startedAt: number,
 		abort: () => void,
 		settled: Promise<{ text: string; isError: boolean }>,
+		options: { origin?: "model" | "user"; initialOutput?: string } = {},
 	): string {
 		const taskId = `bash-${this.nextTaskNumber++}`;
-		this.background.set(taskId, { command, startedAt, abort });
+		let markExited!: () => void;
+		const exited = new Promise<void>((resolve) => {
+			markExited = resolve;
+		});
+		const shell: BackgroundShell = {
+			taskId,
+			command,
+			origin: options.origin ?? "user",
+			status: "running",
+			startedAt,
+			totalChars: 0,
+			chunks: [],
+			retainedChars: 0,
+			readCursor: 0,
+			abort,
+			exited,
+			markExited,
+		};
+		this.shells.set(taskId, shell);
+		if (options.initialOutput) this.append(shell, options.initialOutput);
+		// Output printed before a user backgrounded the call was already returned to the model.
+		shell.readCursor = shell.totalChars;
 		if (this.disposed) abort();
 		void settled.then(({ text, isError }) => {
-			if (!this.background.delete(taskId) || this.disposed) return;
-			const completion = { taskId, command, text, isError, durationMs: Date.now() - startedAt };
+			if (this.disposed || shell.status !== "running") return;
+			shell.status = isError ? "failed" : "completed";
+			shell.endedAt = Date.now();
+			shell.finalText = text;
+			shell.markExited();
+			this.pruneFinished();
+			this.notifyChange();
+			const completion = { taskId, command, text, isError, durationMs: shell.endedAt - startedAt };
 			for (const listener of this.listeners) listener(completion);
 		});
+		this.notifyChange();
 		return taskId;
 	}
 
+	/** Record output a background shell printed. */
+	appendOutput(taskId: string, text: string): void {
+		const shell = this.shells.get(taskId);
+		if (!shell || shell.status !== "running" || !text) return;
+		this.append(shell, text);
+		this.notifyChange();
+	}
+
 	runningCount(): number {
-		return this.background.size;
+		let count = 0;
+		for (const shell of this.shells.values()) if (shell.status === "running") count++;
+		return count;
 	}
 
 	/** Running background commands, oldest first. */
 	list(): Array<{ taskId: string; command: string; startedAt: number }> {
-		return [...this.background.entries()].map(([taskId, task]) => ({
-			taskId,
-			command: task.command,
-			startedAt: task.startedAt,
-		}));
+		return this.snapshots()
+			.filter((shell) => shell.status === "running")
+			.map(({ taskId, command, startedAt }) => ({ taskId, command, startedAt }));
+	}
+
+	/** Every tracked shell (running and recently finished), oldest first. */
+	snapshots(): BackgroundShellSnapshot[] {
+		return [...this.shells.values()].map((shell) => this.snapshot(shell));
+	}
+
+	get(taskId: string): BackgroundShellSnapshot | undefined {
+		const shell = this.shells.get(taskId);
+		return shell ? this.snapshot(shell) : undefined;
+	}
+
+	/**
+	 * The model's view of a shell: status plus output written since its previous read.
+	 * With `waitMs`, waits up to that long for the shell to exit first (`signal` ends the wait early).
+	 */
+	async read(
+		taskId: string,
+		options: { waitMs?: number; signal?: AbortSignal } = {},
+	): Promise<BackgroundShellRead | undefined> {
+		const shell = this.shells.get(taskId);
+		if (!shell) return undefined;
+		if (shell.status === "running" && options.waitMs && options.waitMs > 0) {
+			await waitFor(shell.exited, options.waitMs, options.signal);
+		}
+		const unread = shell.totalChars - shell.readCursor;
+		const output = shell.chunks.join("");
+		const newOutput = output.slice(Math.max(0, output.length - unread));
+		shell.readCursor = shell.totalChars;
+		return { shell: this.snapshot(shell), newOutput, omittedChars: Math.max(0, unread - newOutput.length) };
+	}
+
+	/**
+	 * Stop a running shell. Returns false when it is unknown or no longer running. With `notify`
+	 * (a user stop), completion listeners hear about it so the model does not keep waiting for it.
+	 */
+	kill(taskId: string, options: { notify?: boolean } = {}): boolean {
+		const shell = this.shells.get(taskId);
+		if (!shell || shell.status !== "running") return false;
+		shell.status = "killed";
+		shell.endedAt = Date.now();
+		shell.finalText = options.notify ? "Stopped by the user." : "Stopped with bash_kill.";
+		shell.abort();
+		shell.markExited();
+		this.pruneFinished();
+		this.notifyChange();
+		if (options.notify) {
+			const completion = {
+				taskId,
+				command: shell.command,
+				text: shell.finalText,
+				isError: true,
+				durationMs: shell.endedAt - shell.startedAt,
+				stoppedByUser: true,
+			};
+			for (const listener of this.listeners) listener(completion);
+		}
+		return true;
 	}
 
 	onComplete(listener: (completion: BashBackgroundCompletion) => void): () => void {
@@ -89,12 +229,82 @@ export class BashBackgroundRegistry {
 		return () => this.listeners.delete(listener);
 	}
 
+	/** Called whenever a shell starts, prints output, or finishes. */
+	onChange(listener: () => void): () => void {
+		this.changeListeners.add(listener);
+		return () => this.changeListeners.delete(listener);
+	}
+
 	/** Kill every background process; no completion events are emitted afterwards. */
 	dispose(): void {
 		this.disposed = true;
-		for (const task of this.background.values()) task.abort();
-		this.background.clear();
+		for (const shell of this.shells.values()) {
+			if (shell.status === "running") shell.abort();
+			shell.markExited();
+		}
+		this.shells.clear();
 		this.foreground.clear();
 		this.listeners.clear();
+		this.changeListeners.clear();
 	}
+
+	private append(shell: BackgroundShell, text: string): void {
+		shell.chunks.push(text);
+		shell.totalChars += text.length;
+		shell.retainedChars += text.length;
+		// Drop exactly the excess from the oldest chunks, cutting the last one partway if needed.
+		while (shell.retainedChars > MAX_OUTPUT_CHARS) {
+			const excess = shell.retainedChars - MAX_OUTPUT_CHARS;
+			const oldest = shell.chunks[0]!;
+			if (oldest.length <= excess) {
+				shell.chunks.shift();
+				shell.retainedChars -= oldest.length;
+			} else {
+				shell.chunks[0] = oldest.slice(excess);
+				shell.retainedChars -= excess;
+			}
+		}
+	}
+
+	private snapshot(shell: BackgroundShell): BackgroundShellSnapshot {
+		return {
+			taskId: shell.taskId,
+			command: shell.command,
+			origin: shell.origin,
+			status: shell.status,
+			startedAt: shell.startedAt,
+			...(shell.endedAt !== undefined ? { endedAt: shell.endedAt } : {}),
+			output: shell.chunks.join(""),
+			totalChars: shell.totalChars,
+			...(shell.finalText !== undefined ? { finalText: shell.finalText } : {}),
+		};
+	}
+
+	private pruneFinished(): void {
+		const finished = [...this.shells.values()].filter((shell) => shell.status !== "running");
+		for (const shell of finished.slice(0, Math.max(0, finished.length - MAX_FINISHED_SHELLS))) {
+			this.shells.delete(shell.taskId);
+		}
+	}
+
+	private notifyChange(): void {
+		for (const listener of this.changeListeners) listener();
+	}
+}
+
+function waitFor(promise: Promise<void>, ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve) => {
+		if (signal?.aborted) {
+			resolve();
+			return;
+		}
+		const done = () => {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", done);
+			resolve();
+		};
+		const timer = setTimeout(done, ms);
+		signal?.addEventListener("abort", done, { once: true });
+		void promise.then(done);
+	});
 }

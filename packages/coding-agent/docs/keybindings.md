@@ -153,6 +153,9 @@ This routing remains configurable through the ordinary action bindings. For exam
 | `app.shortcuts.show` | `?` | Show the keyboard shortcut overview; only when the editor is empty, otherwise `?` is typed |
 | `app.tasks.background` | `ctrl+b` | Move a running bash command or subagent wait to the background; falls through to the editor (cursor left) when nothing can be backgrounded |
 | `app.subagents.open` | `ctrl+shift+a` | Open the Agent Hub (same as `/agents`) |
+| `app.shells.open` | `down` | Open the Shells panel when the editor is empty and background shells are running. Otherwise moves the cursor |
+| `app.shells.stop` | `x` | Shells panel: stop the selected background shell |
+| `app.shells.follow` | `f` | Shells panel: follow the selected shell's live output |
 | `app.agents.hub` | `left` | Open the Agent Hub when the editor is empty and subagents exist; closes the Hub from inside it. Otherwise moves the cursor |
 | `app.subagents.previous` | `alt+left` | Show the previous agent view (main agent and live subagents) when the editor is empty and subagents are live; otherwise moves the cursor a word left |
 | `app.subagents.next` | `alt+right` | Show the next agent view under the same conditions; otherwise moves the cursor a word right |

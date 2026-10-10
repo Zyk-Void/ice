@@ -34,7 +34,11 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 		name: "notices",
 		description: "Open the notices panel; /notices <prompt> sends the prompt with the current notices attached",
 	},
-	{ name: "tasks", description: "Show background commands, or open the subagent chooser" },
+	{
+		name: "tasks",
+		description: "Open the Shells panel for background commands, or the Agent Hub when there are none",
+	},
+	{ name: "shells", description: "Open the Shells panel: background commands, their output, stop and follow" },
 	{ name: "resources", description: "Show loaded context files, skills, prompts, and extensions" },
 	{ name: "fork", description: "Create a new fork from a previous user message" },
 	{ name: "clone", description: "Duplicate the current session at the current position" },

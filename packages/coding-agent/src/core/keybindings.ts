@@ -28,6 +28,9 @@ export interface AppKeybindings {
 	"app.notices.clear": true;
 	"app.notices.copy": true;
 	"app.tasks.background": true;
+	"app.shells.open": true;
+	"app.shells.stop": true;
+	"app.shells.follow": true;
 	"app.shortcuts.show": true;
 	"app.subagents.attach": true;
 	"app.subagents.open": true;
@@ -123,6 +126,16 @@ export const KEYBINDINGS = {
 	"app.tasks.background": {
 		defaultKeys: "ctrl+b",
 		description: "Move a running subagent wait to the background (falls through when nothing can be backgrounded)",
+	},
+	"app.shells.open": {
+		defaultKeys: "down",
+		description:
+			"Open the Shells panel from an empty editor while background shells run (otherwise moves the cursor)",
+	},
+	"app.shells.stop": { defaultKeys: "x", description: "Shells panel: stop the selected background shell" },
+	"app.shells.follow": {
+		defaultKeys: "f",
+		description: "Shells panel: follow the selected shell's live output in the foreground",
 	},
 	"app.subagents.attach": { defaultKeys: "right", description: "Attach to live subagent" },
 	"app.subagents.open": { defaultKeys: "ctrl+shift+a", description: "Open the Agent Hub" },

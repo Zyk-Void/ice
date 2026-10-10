@@ -851,7 +851,7 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 						...BUILD_TOOLS,
 						...declaredTools("read"),
 						...(state?.mode === "build" && ctx.isProjectTrusted() ? declaredTools("write") : []),
-						...(bashEffective(ctx) ? ["bash"] : []),
+						...(bashEffective(ctx) ? ["bash", "bash_output", "bash_kill"] : []),
 						...(allowExternalEffective(ctx)
 							? ice
 									.getAllTools()

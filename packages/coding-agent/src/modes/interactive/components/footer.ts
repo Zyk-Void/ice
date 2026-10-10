@@ -11,6 +11,7 @@ import { applyTextPresentation } from "../appearance/text-presentation.ts";
 import type { NoticeCounts } from "../notice-center.ts";
 import { sym } from "../theme/symbols.ts";
 import { theme } from "../theme/theme.ts";
+import { keyText } from "./keybinding-hints.ts";
 import { middleTruncate } from "./session-header.ts";
 import { layoutStatusLine, REQUIRED_PRIORITY, type StatusSegment } from "./status-line.ts";
 
@@ -236,7 +237,14 @@ export class FooterComponent implements Component {
 
 		const backgroundTasks = this.getBackgroundTaskCount();
 		if (backgroundTasks > 0) {
-			right.push({ text: primary(`${backgroundTasks} in background`), priority: 95 });
+			// Down on an empty editor opens the Shells panel for these.
+			const openKey = keyText("app.shells.open");
+			right.push({
+				text:
+					primary(`${backgroundTasks} shell${backgroundTasks === 1 ? "" : "s"}`) +
+					(openKey ? dim(` (${openKey})`) : ""),
+				priority: 95,
+			});
 		}
 		const subagents = this.renderSubagentSegment(appearance);
 		if (subagents) right.push(subagents);

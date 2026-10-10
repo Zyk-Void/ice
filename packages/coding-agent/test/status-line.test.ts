@@ -107,11 +107,12 @@ describe("compact footer", () => {
 		expect(line.endsWith("12%/200k  ⚠ 3 ↑ f2")).toBe(true);
 	});
 
-	it("shows running background tasks next to the notices badge", () => {
+	it("shows running background shells next to the notices badge", () => {
 		const footer = createFooter();
 		footer.setBackgroundTaskSource(() => 2);
-		const [line] = footer.render(140).map((rendered) => stripAnsi(rendered));
-		expect(line).toContain("2 in background  ⚠ 1 f2");
+		expect(stripAnsi(footer.render(140)[0]!)).toContain("2 shells  ⚠ 1 f2");
+		footer.setBackgroundTaskSource(() => 1);
+		expect(stripAnsi(footer.render(140)[0]!)).toContain("1 shell  ⚠ 1 f2");
 	});
 
 	it("keeps mode and notices visible on narrow terminals", () => {

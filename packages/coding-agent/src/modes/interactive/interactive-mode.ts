@@ -158,12 +158,12 @@ import { ScopedModelsSelectorComponent } from "./components/scoped-models-select
 import { SessionHeaderComponent, type SessionHeaderData } from "./components/session-header.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
 import { SettingsSelectorComponent } from "./components/settings-selector.ts";
+import { ShellsPanelComponent } from "./components/shells-panel.ts";
 import { type ShortcutSection, ShortcutsViewComponent } from "./components/shortcuts-view.ts";
 import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.ts";
 import {
 	BranchSummaryStatusIndicator,
 	CompactionStatusIndicator,
-	formatElapsed,
 	IdleStatus,
 	RetryStatusIndicator,
 	type StatusIndicator,
@@ -3626,6 +3626,15 @@ export class InteractiveMode {
 			},
 		);
 		this.defaultEditor.onAction("app.subagents.open", () => this.openAgentHub());
+		// Down only opens the Shells panel from an empty editor while shells run; otherwise it moves the cursor.
+		this.defaultEditor.onConditionalAction(
+			"app.shells.open",
+			() =>
+				this.defaultEditor.getText().length === 0 &&
+				!this.defaultEditor.isShowingAutocomplete() &&
+				this.session.bashBackground.runningCount() > 0,
+			() => this.showShellsView(),
+		);
 		// Navigation keys share defaults with editor cursor movement, so they only act while
 		// subagents exist and the editor holds no draft; otherwise the editor handles them.
 		const editorIdle = () => this.defaultEditor.getText().length === 0 && !this.defaultEditor.isShowingAutocomplete();
@@ -3760,28 +3769,13 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
-			if (text === "/tasks") {
+			if (text === "/tasks" || text === "/shells") {
 				this.editor.setText("");
-				const bashTasks = this.session.bashBackground.list();
-				if (bashTasks.length === 0) {
+				if (text === "/tasks" && this.session.bashBackground.snapshots().length === 0) {
 					this.openAgentHub();
 					return;
 				}
-				const lines = bashTasks.map(
-					(task) =>
-						`  ${theme.fg("accent", task.taskId)}  ${theme.fg("dim", formatElapsed(Date.now() - task.startedAt))}  ${task.command.split("\n", 1)[0]}`,
-				);
-				const subagents = this.agentViewBridge?.backgroundSubagentCount() ?? 0;
-				if (subagents > 0)
-					lines.push(
-						theme.fg(
-							"dim",
-							`  ${subagents} subagent${subagents === 1 ? "" : "s"} in background ${sym("separator")} /agents to inspect`,
-						),
-					);
-				this.chatContainer.addChild(new Spacer(1));
-				this.chatContainer.addChild(new Text(`${theme.bold("Background tasks")}\n${lines.join("\n")}`, 1, 0));
-				this.ui.requestRender();
+				this.showShellsView();
 				return;
 			}
 			if (text === "/notices") {
@@ -7762,6 +7756,16 @@ export class InteractiveMode {
 		this.showSelector((done) => {
 			const view = new ShortcutsViewComponent(sections, "/hotkeys lists every shortcut · any key closes", done);
 			return { component: view, focus: view };
+		});
+	}
+
+	/** The Shells panel takes the editor's place, so the transcript above stays in view. */
+	private showShellsView(): void {
+		this.showSelector((done) => {
+			const view = new ShellsPanelComponent(this.session.bashBackground, this.keybindings, done, {
+				requestRender: () => this.ui.requestRender(),
+			});
+			return { component: view, focus: view, dispose: () => view.dispose() };
 		});
 	}
 

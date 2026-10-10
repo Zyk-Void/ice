@@ -50,7 +50,15 @@ describe("regression #5109: exclude tools", () => {
 			expect(allToolNames).not.toContain("ask_question");
 			expect(allToolNames).toContain("bash");
 			expect(allToolNames).toContain("dynamic_tool");
-			expect(harness.session.getActiveToolNames().sort()).toEqual(["bash", "dynamic_tool", "edit", "write"]);
+			// The background shell tools follow bash.
+			expect(harness.session.getActiveToolNames().sort()).toEqual([
+				"bash",
+				"bash_kill",
+				"bash_output",
+				"dynamic_tool",
+				"edit",
+				"write",
+			]);
 			expect(harness.session.systemPrompt).not.toContain("- read:");
 			expect(harness.session.systemPrompt).not.toContain("ask_question");
 			expect(harness.session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
@@ -69,8 +77,9 @@ describe("regression #5109: exclude tools", () => {
 		try {
 			await harness.session.bindExtensions({});
 
-			expect(toolNames(harness.session.getAllTools())).toEqual(["bash"]);
-			expect(harness.session.getActiveToolNames()).toEqual(["bash"]);
+			// Allowing bash allows the tools that manage its background shells.
+			expect(toolNames(harness.session.getAllTools())).toEqual(["bash", "bash_kill", "bash_output"]);
+			expect(harness.session.getActiveToolNames()).toEqual(["bash", "bash_output", "bash_kill"]);
 			expect(harness.session.systemPrompt).toContain("- bash:");
 			expect(harness.session.systemPrompt).not.toContain("- read:");
 			expect(harness.session.systemPrompt).not.toContain("ask_question");

@@ -132,7 +132,8 @@ export function summarizeToolResult(name: string, result: ToolResultLike): strin
 		"backgroundTaskId" in details &&
 		typeof details.backgroundTaskId === "string"
 	) {
-		return `moved to background as ${details.backgroundTaskId}`;
+		const started = "backgroundOrigin" in details && details.backgroundOrigin === "model";
+		return `${started ? "started in background" : "moved to background"} as ${details.backgroundTaskId}`;
 	}
 	if (name === "edit") {
 		const stats = diffStats(result.details);

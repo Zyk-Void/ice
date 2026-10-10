@@ -6,6 +6,7 @@
 
 ### Added
 
+- - Added background shells the model can manage: `bash` takes `run_in_background`, and while `bash` is active the model also gets `bash_output` (status plus output since its last check, optionally waiting up to 300 s for the shell to finish) and `bash_kill`. Shells moved to the background with ctrl+b are managed the same way, and prompts sent while shells run tell the model which are still running. The footer shows `N shell(s)`; `down` in an empty editor (or `/shells`) opens a Shells panel in place of the editor that lists shells and shows each one's status, runtime, command, and live output, with `f` to follow output, `x` to stop a shell, and `left` to go back. A shell the user stops is recorded for the model's next turn instead of waking it, and `bash` treats `timeout: 0` as no timeout and rejects invalid timeouts before a shell starts.
 - Added `app.tools.expandLast` (Shift+Alt+O by default) to expand or collapse only the newest tool call without changing the batch expansion of earlier calls.
 - Added git ahead, behind, and changed-path counts after the branch in the compact footer (`↑2 ↓1 ±5`; ASCII `+2 -1 ~5`), refreshed by a throttled background `git status` at most every 2 seconds; counts stay with the branch while its label shortens on narrow terminals.
 - Added `app.tools.collapse` (Alt+O by default) to collapse all expanded tool output at once; Ctrl+O still expands the newest batch of collapsed tool calls per press.

@@ -645,10 +645,17 @@ describe("ICE guarded extension", () => {
 			"edit",
 			"write",
 			"bash",
+			"bash_output",
+			"bash_kill",
 		]);
 		expect(
 			await build.emit("tool_call", { toolCallId: "3", toolName: "bash", input: { command: "true" } }),
 		).toBeUndefined();
+		// The background shell tools come and go with bash.
+		expect(await build.emit("tool_call", { toolCallId: "3b", toolName: "bash_output", input: {} })).toBeUndefined();
+		expect(await plan.emit("tool_call", { toolCallId: "3c", toolName: "bash_output", input: {} })).toMatchObject({
+			block: true,
+		});
 		expect(
 			await build.emit("tool_call", {
 				toolCallId: "4",

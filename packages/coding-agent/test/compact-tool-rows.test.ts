@@ -94,6 +94,12 @@ describe("tool summaries", () => {
 		expect(summarizeToolResult("bash", { ...result("partial"), details: { backgroundTaskId: "bash-2" } })).toBe(
 			"moved to background as bash-2",
 		);
+		expect(
+			summarizeToolResult("bash", {
+				...result("Started background shell bash-3."),
+				details: { backgroundTaskId: "bash-3", backgroundOrigin: "model" },
+			}),
+		).toBe("started in background as bash-3");
 		expect(summarizeToolResult("edit", { ...result("ok"), details: { diff: " 1 a\n-2 b\n+2 c\n+3 d" } })).toBe(
 			"+2 -1",
 		);
