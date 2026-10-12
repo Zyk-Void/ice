@@ -4,10 +4,16 @@
  * Plain node:http + Server-Sent Events, no dependencies. Binds to loopback only and
  * exposes three read-only endpoints: the dashboard HTML, a JSON state snapshot, and a
  * live SSE event stream. It never accepts commands from the browser.
+ *
+ * Loopback does not separate OS accounts, so every route also requires the per-user
+ * access token: from the `token` query parameter (which sets an HttpOnly cookie for the
+ * dashboard's own requests), the cookie, or an `Authorization: Bearer` header.
  */
 
-import { readFileSync } from "node:fs";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { dirname } from "node:path";
 import {
 	type ObserveHeader,
 	type ObserveRecorder,
@@ -41,10 +47,14 @@ export interface ObserveServerOptions {
 	recorder?: ObserveRecorder;
 	/** Store used by the read-only historical replay endpoints. */
 	replayStore?: ObserveRunStore;
+	/** Access token every request must present. Defaults to a random per-process token. */
+	token?: string;
 }
 
 export interface ObserveServer {
 	url: string;
+	/** Dashboard URL carrying the access token; open this in the browser. */
+	dashboardUrl: string;
 	port: number;
 	/** True when another ICE process already owns the shared port. */
 	shared?: boolean;
@@ -66,6 +76,46 @@ function isLoopbackHost(host: string | undefined): boolean {
 	return host !== undefined && /^(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(host);
 }
 
+const TOKEN_COOKIE = "ice_observe_token";
+
+/**
+ * Read the per-user dashboard token, creating it (mode 0600) on first use. Every ICE
+ * process of the same OS user shares it, so a dashboard on a shared port stays reachable.
+ */
+export function loadObserveToken(path: string): string {
+	try {
+		const existing = readFileSync(path, "utf-8").trim();
+		if (existing) return existing;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	const token = randomBytes(32).toString("hex");
+	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+	try {
+		writeFileSync(path, `${token}\n`, { mode: 0o600, flag: "wx" });
+		return token;
+	} catch (error) {
+		// Another process created it first; use theirs.
+		if ((error as NodeJS.ErrnoException).code === "EEXIST") return readFileSync(path, "utf-8").trim();
+		throw error;
+	}
+}
+
+function tokensMatch(presented: string | undefined, expected: string): boolean {
+	if (!presented) return false;
+	const a = Buffer.from(presented);
+	const b = Buffer.from(expected);
+	return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function cookieToken(header: string | undefined): string | undefined {
+	for (const part of header?.split(";") ?? []) {
+		const [name, ...value] = part.trim().split("=");
+		if (name === TOKEN_COOKIE) return value.join("=");
+	}
+	return undefined;
+}
+
 function writeJson(response: ServerResponse, value: unknown, status = 200): void {
 	response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
 	response.end(JSON.stringify(value));
@@ -82,6 +132,7 @@ export function startObserveServer(
 	options?: ObserveServerOptions,
 ): Promise<ObserveServer> {
 	const port = options?.port ?? OBSERVE_DEFAULT_PORT;
+	const token = options?.token ?? randomBytes(32).toString("hex");
 	const recorder = options?.recorder ?? startObserveRecorder(session);
 	const replayStore = options?.replayStore;
 	const clients = new Set<ServerResponse>();
@@ -238,8 +289,19 @@ export function startObserveServer(
 		}
 		const parsedUrl = new URL(request.url ?? "/", "http://127.0.0.1");
 		const pathname = parsedUrl.pathname;
+		const queryToken = parsedUrl.searchParams.get("token") ?? undefined;
+		const bearer = request.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
+		const viaQuery = tokensMatch(queryToken, token);
+		if (!viaQuery && !tokensMatch(bearer, token) && !tokensMatch(cookieToken(request.headers.cookie), token)) {
+			response.writeHead(401, { "content-type": "text/plain" });
+			response.end("unauthorized: open the dashboard URL printed by ICE");
+			return;
+		}
 		if (pathname === "/" || pathname.startsWith("/index")) {
-			response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+			response.writeHead(200, {
+				"content-type": "text/html; charset=utf-8",
+				...(viaQuery ? { "set-cookie": `${TOKEN_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/` } : {}),
+			});
 			response.end(getDashboardHtml());
 			return;
 		}
@@ -266,10 +328,15 @@ export function startObserveServer(
 			return;
 		}
 		if (replayStore && (pathname === "/replay" || pathname === "/replay/events" || pathname.startsWith("/replay/"))) {
-			const pathRunId =
-				pathname.startsWith("/replay/") && pathname !== "/replay/events"
-					? decodeURIComponent(pathname.slice("/replay/".length))
-					: undefined;
+			let pathRunId: string | undefined;
+			if (pathname.startsWith("/replay/") && pathname !== "/replay/events") {
+				try {
+					pathRunId = decodeURIComponent(pathname.slice("/replay/".length));
+				} catch {
+					writeJson(response, { error: "malformed run id" }, 400);
+					return;
+				}
+			}
 			const requestedRunId = pathRunId || parsedUrl.searchParams.get("runId") || undefined;
 			const requestedSessionId = parsedUrl.searchParams.get("sessionId") || undefined;
 			const run = requestedRunId
@@ -335,6 +402,7 @@ export function startObserveServer(
 			unsubscribeRecorder();
 			resolve({
 				url: `http://127.0.0.1:${port}`,
+				dashboardUrl: `http://127.0.0.1:${port}/?token=${token}`,
 				port,
 				shared: true,
 				close: async () => {
@@ -350,6 +418,7 @@ export function startObserveServer(
 			const boundPort = typeof address === "object" && address !== null ? address.port : port;
 			resolve({
 				url: `http://127.0.0.1:${boundPort}`,
+				dashboardUrl: `http://127.0.0.1:${boundPort}/?token=${token}`,
 				port: boundPort,
 				close: () =>
 					new Promise<void>((resolveClose) => {

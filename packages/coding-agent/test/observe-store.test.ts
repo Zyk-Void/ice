@@ -61,6 +61,28 @@ describe("observe run store", () => {
 		reopened.close();
 	});
 
+	it("redacts credentials from persisted history but keeps the live view intact", async () => {
+		const store = await openObserveRunStore(":memory:");
+		const session = createFakeSession();
+		const recorder = startObserveRecorder(session, { pollMs: 0, persistence: store });
+		const prompt = 'curl -H "Authorization: Bearer sk-live-123" --data api_key=abc123 https://example.test';
+		session.emit({ type: "message_start", message: { role: "user", content: prompt, timestamp: Date.now() } });
+		session.emit({
+			type: "tool_execution_start",
+			toolCallId: "t1",
+			toolName: "bash",
+			args: { command: "deploy", token: "plain-secret-value" },
+		});
+		const runId = recorder.getHeader().runId;
+		const persisted = JSON.stringify(store.getEvents(runId));
+		expect(persisted).not.toContain("sk-live-123");
+		expect(persisted).not.toContain("abc123");
+		expect(persisted).not.toContain("plain-secret-value");
+		expect(persisted).toContain("[REDACTED]");
+		expect(JSON.stringify(recorder.getState())).toContain("sk-live-123");
+		recorder.stop();
+	});
+
 	it("prunes runs older than the retention window when opened", async () => {
 		const directory = mkdtempSync(join("/tmp", "ice-observe-store-"));
 		tempDirs.push(directory);

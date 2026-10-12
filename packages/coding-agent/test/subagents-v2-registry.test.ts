@@ -6,6 +6,7 @@ import type { SessionEntry } from "../src/core/session-manager.ts";
 import { buildChildRuntimeContract } from "../src/subagents/contract/serialize.ts";
 import {
 	buildRecoveryNotice,
+	childSessionDirectory,
 	createChildSession,
 	findInterruptedToolCalls,
 	openChildSession,
@@ -291,6 +292,15 @@ describe("subagent V2 child session files", () => {
 		expect(reopened.contract).toEqual(contract);
 		expect(reopened.sessionManager.getSessionId()).toBe(ID);
 		expect(() => openChildSession(created.transcriptPath, "0".repeat(64))).toThrow(/does not match the registry/);
+	});
+
+	it("refuses a path-shaped parent session id from an imported session", () => {
+		const dir = mkdtempSync(join(tmpdir(), "ice-v2-child-"));
+		temps.push(dir);
+		expect(childSessionDirectory(dir, "parent-1")).toBe(join(dir, "subagents", "parent-1"));
+		for (const id of ["../../../../tmp/owned", "..", "a/b", ""]) {
+			expect(() => childSessionDirectory(dir, id), id).toThrow(/Session id must be/);
+		}
 	});
 
 	it("finds tool calls cut off by a crash and never suggests replaying them", () => {

@@ -25,7 +25,7 @@ const BUILTINS: ReadonlyArray<Omit<ResolvedAgentDefinition, "source" | "sourceHa
 			'Fast read-only codebase exploration: find files, search code, and explain how something works. Say "quick", "medium", or "very thorough" in the task.',
 		prompt: `You are a read-only exploration subagent. Search and read efficiently; match breadth to the requested thoroughness. Do not modify files. ${REPORT}`,
 		fields: {
-			tools: ["read", "grep", "find", "ls", "bash"],
+			tools: ["read", "grep", "find", "ls"],
 			permissionMode: "plan",
 			contextFiles: false,
 			spawns: [],
@@ -42,8 +42,8 @@ const BUILTINS: ReadonlyArray<Omit<ResolvedAgentDefinition, "source" | "sourceHa
 		name: "review",
 		description:
 			"Read-only code review for correctness, security, tests, or regression risk; returns structured findings.",
-		prompt: `You are a read-only review subagent. Examine the requested change or area for defects. For each finding give severity, location, the concrete failure scenario, and a fix. Run verification commands only when they cannot modify the workspace. ${REPORT}`,
-		fields: { tools: ["read", "grep", "find", "ls", "bash"], permissionMode: "review", spawns: [] },
+		prompt: `You are a read-only review subagent. Examine the requested change or area for defects. For each finding give severity, location, the concrete failure scenario, and a fix. ${REPORT}`,
+		fields: { tools: ["read", "grep", "find", "ls"], permissionMode: "review", spawns: [] },
 	},
 	{
 		name: "worker",

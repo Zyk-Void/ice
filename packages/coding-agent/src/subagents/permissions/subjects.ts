@@ -17,7 +17,7 @@ export interface PermissionSubject {
 	/** Path-style glob semantics for file subjects. */
 	pathMode: boolean;
 	subjectClass: ChildSubjectClass;
-	/** Bash subject contains command substitution; it can never be auto-allowed. */
+	/** Bash subject contains command substitution or a file redirection; it can never be auto-allowed. */
 	opaque?: boolean;
 }
 
@@ -40,6 +40,14 @@ export function splitShellCommand(command: string): string[] {
 
 function hasCommandSubstitution(command: string): boolean {
 	return command.includes("$(") || command.includes("`") || /<\(|>\(/.test(command);
+}
+
+/**
+ * Output redirection to a file adds a write that a `bash(git status*)`-style grant never
+ * approved. Descriptor duplication (`2>&1`, `>&2`, `2>&-`) and `/dev/null` are harmless.
+ */
+function hasFileRedirection(command: string): boolean {
+	return />/.test(command.replace(/\d*>&(?:\d+|-)|&?\d*>>?\s*\/dev\/null(?![\w/.-])/g, ""));
 }
 
 /** Path relative to cwd with `/` separators, or the absolute path when outside cwd. */
@@ -76,15 +84,12 @@ export function extractPermissionSubjects(input: {
 	}
 	if (tool === "bash") {
 		const command = typeof args.command === "string" ? args.command : "";
-		const opaque = hasCommandSubstitution(command);
+		const substituted = hasCommandSubstitution(command);
 		const parts = splitShellCommand(command);
-		return (parts.length > 0 ? parts : [command]).map((value) => ({
-			tool,
-			value,
-			pathMode: false,
-			subjectClass: "bash",
-			...(opaque ? { opaque } : {}),
-		}));
+		return (parts.length > 0 ? parts : [command]).map((value): PermissionSubject => {
+			const opaque = substituted || hasFileRedirection(value);
+			return { tool, value, pathMode: false, subjectClass: "bash", ...(opaque ? { opaque } : {}) };
+		});
 	}
 	if (tool === "agent") {
 		const tasks = Array.isArray(args.tasks) ? args.tasks : [];

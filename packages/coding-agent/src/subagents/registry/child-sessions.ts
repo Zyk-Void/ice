@@ -7,13 +7,15 @@
  * start. Reopening verifies that hash, so revival never re-resolves authority.
  */
 import { join } from "node:path";
-import { type SessionEntry, SessionManager } from "../../core/session-manager.ts";
+import { assertValidSessionId, type SessionEntry, SessionManager } from "../../core/session-manager.ts";
 import type { ChildRuntimeContract } from "../contract/child-runtime-contract.ts";
 import { hashChildRuntimeContract, parseChildRuntimeContract } from "../contract/serialize.ts";
 
 export const CHILD_INIT_ENTRY_TYPE = "ice-subagent-v2-init";
 
 export function childSessionDirectory(parentSessionDir: string, parentSessionId: string): string {
+	// Imported session headers are untrusted; a path-shaped id must not escape the session directory.
+	assertValidSessionId(parentSessionId);
 	return join(parentSessionDir, "subagents", parentSessionId);
 }
 

@@ -59,7 +59,7 @@ import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { type ObserveRecorder, startObserveRecorder } from "./observe/observe-recorder.ts";
-import { type ObserveServer, startObserveServer } from "./observe/observe-server.ts";
+import { loadObserveToken, type ObserveServer, startObserveServer } from "./observe/observe-server.ts";
 import { type ObserveRunStore, openObserveRunStore } from "./observe/observe-store.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
@@ -915,10 +915,11 @@ export async function main(args: string[], options?: MainOptions) {
 				port: parsed.observe === true ? undefined : parsed.observe,
 				recorder: observeRecorder,
 				replayStore: observeStore,
+				token: loadObserveToken(join(agentDir, "observe.token")),
 			});
 			console.error(
 				chalk.dim(
-					`Observability dashboard${observeServer.shared ? " (shared existing port)" : ""}: ${observeServer.url}`,
+					`Observability dashboard${observeServer.shared ? " (shared existing port)" : ""}: ${observeServer.dashboardUrl}`,
 				),
 			);
 		} catch (error) {

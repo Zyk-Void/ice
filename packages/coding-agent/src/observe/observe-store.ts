@@ -5,6 +5,7 @@ import {
 	type SqliteDatabase,
 	type SqliteDatabaseFactory,
 } from "@zykairotis/ice-storage-sqlite-node";
+import { redactCredentialText } from "../utils/redact.ts";
 import type {
 	ObserveHeader,
 	ObserveItem,
@@ -16,6 +17,17 @@ import type {
 } from "./observe-recorder.ts";
 
 const MAX_REPLAY_EVENTS = 10_000;
+const SECRET_KEY = /^(?:api[_-]?key|(?:access[_-]?|refresh[_-]?)?token|secret|password|authorization)$/i;
+
+/**
+ * History is retained for weeks, so prompts, commands, tool results, and diffs are
+ * redacted string by string before they reach disk (redacting the serialized JSON
+ * could corrupt it).
+ */
+function redactPersistedValue(key: string, value: unknown): unknown {
+	if (typeof value !== "string") return value;
+	return SECRET_KEY.test(key) ? "[REDACTED]" : redactCredentialText(value);
+}
 /** Runs older than this are pruned when a store opens, so the shared database cannot grow without bound. */
 export const OBSERVE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -162,7 +174,7 @@ class SqliteObserveRunStore implements ObserveRunStore {
 				`INSERT INTO observe_events (run_id, sequence, ts_ms, event_type, payload_json)
 				 VALUES (?, ?, ?, ?, ?)`,
 			)
-			.run(header.runId, sequence, timestamp, event.type, JSON.stringify(payload));
+			.run(header.runId, sequence, timestamp, event.type, JSON.stringify(payload, redactPersistedValue));
 		this.nextSequences.set(header.runId, sequence + 1);
 	}
 

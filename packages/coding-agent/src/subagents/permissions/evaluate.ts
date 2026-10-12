@@ -65,10 +65,11 @@ export function modeLimit(
 	switch (subjectClass) {
 		case "read":
 			return "allow";
-		case "bash":
 		case "external-directory":
 		case "delegation":
 			return "ask";
+		// Nothing enforces a read-only shell after approval, so plan/review deny Bash like edits.
+		case "bash":
 		case "edit-write":
 		case "mutation-adapter":
 			return "deny";
@@ -91,7 +92,7 @@ export function evaluatePermission(input: {
 }): PermissionEvaluation {
 	const matches = matchPermissionRules(input.subject, input.ruleSets);
 	let decision = matches[0]?.decision ?? input.fallback;
-	// A command substitution hides what actually runs; it never auto-allows.
+	// A command substitution or file redirection hides what the command does; it never auto-allows.
 	if (input.subject.opaque) decision = mostRestrictiveDecision(decision, "ask");
 	const limit = modeLimit(input.mode, input.subject.subjectClass);
 	const limited = mostRestrictiveDecision(decision, limit);

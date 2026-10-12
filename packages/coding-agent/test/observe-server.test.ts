@@ -1,11 +1,12 @@
+import { statSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
-import { get } from "node:http";
+import { get, type IncomingMessage, type OutgoingHttpHeaders } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ContextUsage } from "../src/core/extensions/types.ts";
 import { type ObserveSessionLike, startObserveRecorder } from "../src/observe/observe-recorder.ts";
-import { type ObserveServer, startObserveServer } from "../src/observe/observe-server.ts";
+import { loadObserveToken, type ObserveServer, startObserveServer } from "../src/observe/observe-server.ts";
 import { type ObserveRunStore, openObserveRunStore } from "../src/observe/observe-store.ts";
 
 function createFakeSession(sessionId = "srv-test-session", sessionName = "server test") {
@@ -32,21 +33,35 @@ function createFakeSession(sessionId = "srv-test-session", sessionName = "server
 	return session;
 }
 
-function fetchText(url: string): Promise<{ status: number; body: string; contentType: string }> {
+const TOKEN = "test-observe-token";
+
+function authGet(url: string, callback: (res: IncomingMessage) => void, headers: OutgoingHttpHeaders = {}) {
+	return get(url, { headers: { authorization: `Bearer ${TOKEN}`, ...headers } }, callback);
+}
+
+function fetchText(
+	url: string,
+	headers?: OutgoingHttpHeaders,
+): Promise<{ status: number; body: string; contentType: string; setCookie: string[] }> {
 	return new Promise((resolve, reject) => {
-		get(url, (res) => {
-			let body = "";
-			res.on("data", (chunk) => {
-				body += chunk;
-			});
-			res.on("end", () =>
-				resolve({
-					status: res.statusCode ?? 0,
-					body,
-					contentType: String(res.headers["content-type"] ?? ""),
-				}),
-			);
-		}).on("error", reject);
+		authGet(
+			url,
+			(res) => {
+				let body = "";
+				res.on("data", (chunk) => {
+					body += chunk;
+				});
+				res.on("end", () =>
+					resolve({
+						status: res.statusCode ?? 0,
+						body,
+						contentType: String(res.headers["content-type"] ?? ""),
+						setCookie: res.headers["set-cookie"] ?? [],
+					}),
+				);
+			},
+			headers,
+		).on("error", reject);
 	});
 }
 
@@ -64,7 +79,7 @@ describe("observe server", () => {
 	});
 
 	it("serves the dashboard and state snapshot", async () => {
-		const server = await startObserveServer(createFakeSession(), { port: 0 });
+		const server = await startObserveServer(createFakeSession(), { token: TOKEN, port: 0 });
 		servers.push(server);
 
 		expect(server.url.startsWith("http://127.0.0.1:")).toBe(true);
@@ -92,11 +107,61 @@ describe("observe server", () => {
 		expect(missing.status).toBe(404);
 	});
 
+	it("rejects every route without the access token", async () => {
+		const server = await startObserveServer(createFakeSession(), { token: TOKEN, port: 0 });
+		servers.push(server);
+
+		for (const path of ["/", "/state", "/runs", "/replay", "/events"]) {
+			const denied = await fetchText(`${server.url}${path}`, { authorization: "Bearer wrong" });
+			expect(denied.status, path).toBe(401);
+			expect(denied.body).not.toContain("srv-test-session");
+		}
+	});
+
+	it("accepts the dashboard URL token and sets a cookie for the page's own requests", async () => {
+		const server = await startObserveServer(createFakeSession(), { token: TOKEN, port: 0 });
+		servers.push(server);
+		expect(server.dashboardUrl).toBe(`${server.url}/?token=${TOKEN}`);
+
+		const page = await fetchText(server.dashboardUrl, { authorization: "" });
+		expect(page.status).toBe(200);
+		const cookie = page.setCookie.find((value) => value.startsWith("ice_observe_token="));
+		expect(cookie).toContain("HttpOnly");
+		expect(cookie).toContain("SameSite=Strict");
+
+		const state = await fetchText(`${server.url}/state`, { authorization: "", cookie: cookie!.split(";")[0] });
+		expect(state.status).toBe(200);
+	});
+
+	it("answers a malformed replay id with 400 instead of crashing", async () => {
+		const session = createFakeSession();
+		const store = await openObserveRunStore(":memory:");
+		stores.push(store);
+		const recorder = startObserveRecorder(session, { pollMs: 0, persistence: store });
+		const server = await startObserveServer(session, { token: TOKEN, port: 0, recorder, replayStore: store });
+		servers.push(server);
+
+		const malformed = await fetchText(`${server.url}/replay/%`);
+		expect(malformed.status).toBe(400);
+		const state = await fetchText(`${server.url}/state`);
+		expect(state.status).toBe(200);
+	});
+
+	it("creates one owner-only token file and reuses it", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "ice-observe-token-"));
+		tempDirs.push(directory);
+		const path = join(directory, "nested", "observe.token");
+		const token = loadObserveToken(path);
+		expect(token).toMatch(/^[0-9a-f]{64}$/);
+		expect(statSync(path).mode & 0o777).toBe(0o600);
+		expect(loadObserveToken(path)).toBe(token);
+	});
+
 	it("serves durable run listings and replay events", async () => {
 		const session = createFakeSession();
 		const store = await openObserveRunStore(":memory:");
 		const recorder = startObserveRecorder(session, { pollMs: 0, persistence: store });
-		const server = await startObserveServer(session, { port: 0, recorder, replayStore: store });
+		const server = await startObserveServer(session, { token: TOKEN, port: 0, recorder, replayStore: store });
 		servers.push(server);
 
 		session.emit({ type: "compaction_start", reason: "manual" });
@@ -119,12 +184,13 @@ describe("observe server", () => {
 	});
 
 	it("shares an occupied port instead of failing a second observer", async () => {
-		const first = await startObserveServer(createFakeSession(), { port: 0 });
+		const first = await startObserveServer(createFakeSession(), { token: TOKEN, port: 0 });
 		servers.push(first);
 		const secondSession = createFakeSession();
 		const secondStore = await openObserveRunStore(":memory:");
 		const secondRecorder = startObserveRecorder(secondSession, { pollMs: 0, persistence: secondStore });
 		const second = await startObserveServer(secondSession, {
+			token: TOKEN,
 			port: first.port,
 			recorder: secondRecorder,
 			replayStore: secondStore,
@@ -146,6 +212,7 @@ describe("observe server", () => {
 		const firstSession = createFakeSession("first-session", "first main");
 		const firstRecorder = startObserveRecorder(firstSession, { pollMs: 0, persistence: firstStore });
 		const first = await startObserveServer(firstSession, {
+			token: TOKEN,
 			port: 0,
 			recorder: firstRecorder,
 			replayStore: firstStore,
@@ -157,6 +224,7 @@ describe("observe server", () => {
 		const secondSession = createFakeSession("second-session", "second main");
 		const secondRecorder = startObserveRecorder(secondSession, { pollMs: 0, persistence: secondStore });
 		const second = await startObserveServer(secondSession, {
+			token: TOKEN,
 			port: first.port,
 			recorder: secondRecorder,
 			replayStore: secondStore,
@@ -170,7 +238,7 @@ describe("observe server", () => {
 		const firstFrame = new Promise<void>((resolve) => {
 			resolveFirst = resolve;
 		});
-		const request = get(`${first.url}/events`, (response) => {
+		const request = authGet(`${first.url}/events`, (response) => {
 			response.setEncoding("utf-8");
 			response.on("data", (chunk: string) => {
 				received.push(chunk);
@@ -195,7 +263,7 @@ describe("observe server", () => {
 
 	it("streams live events over SSE", async () => {
 		const session = createFakeSession();
-		const server = await startObserveServer(session, { port: 0 });
+		const server = await startObserveServer(session, { token: TOKEN, port: 0 });
 		servers.push(server);
 
 		const received: string[] = [];
@@ -204,7 +272,7 @@ describe("observe server", () => {
 			resolveFirst = resolve;
 		});
 
-		const req = get(`${server.url}/events`, (res) => {
+		const req = authGet(`${server.url}/events`, (res) => {
 			res.setEncoding("utf-8");
 			res.on("data", (chunk: string) => {
 				received.push(chunk);

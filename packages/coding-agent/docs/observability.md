@@ -1,9 +1,9 @@
 # Observability Dashboard
 
-Ice can serve a live, read-only dashboard of the running session. Start ice with `--observe` and open the printed URL (default `http://127.0.0.1:4649`) in a browser — ideally on a second screen while ice works in your terminal.
+Ice can serve a live, read-only dashboard of the running session. Start ice with `--observe` and open the printed URL (default `http://127.0.0.1:4649/?token=...`) in a browser — ideally on a second screen while ice works in your terminal.
 
 ```bash
-ice --observe            # dashboard on http://127.0.0.1:4649
+ice --observe            # dashboard on http://127.0.0.1:4649/?token=...
 ice --observe=8080       # custom port
 ice --observe -p "fix the tests"   # also works in print mode
 ```
@@ -27,7 +27,7 @@ Old V1 delegation results and durable-job detail views may expose bounded qualit
 
 ## Durable run history and replay
 
-Every normal agent run records projected observability events in `observability.sqlite` under ICE's agent directory (normally `~/.ice/agent/observability.sqlite`). The database is separate from the canonical session JSONL: it is a forensic projection and never replaces or mutates session history. Events are append-only, bounded to the same redacted payload ceiling as the live recorder, and include activity updates so a replay can show the evolution of a tool call rather than only its final state.
+Every normal agent run records projected observability events in `observability.sqlite` under ICE's agent directory (normally `~/.ice/agent/observability.sqlite`). The database is separate from the canonical session JSONL: it is a forensic projection and never replaces or mutates session history. Before an event is written, credential-shaped text (bearer tokens, `api_key=`/`token=`/`password=` assignments, and values under keys such as `token` or `authorization`) is replaced with `[REDACTED]`; the live dashboard view is not redacted. Events are append-only, bounded to the same payload ceiling as the live recorder, and include activity updates so a replay can show the evolution of a tool call rather than only its final state.
 
 When `--observe` is enabled, the loopback server also exposes:
 
@@ -42,6 +42,7 @@ Replay endpoints only read the database. They do not re-run prompts, tools, or s
 
 - **Read-only.** The dashboard never accepts commands from the browser; it cannot send prompts, abort runs, or change settings.
 - **Loopback only.** The server binds `127.0.0.1`; nothing is exposed to the network.
+- **Token required.** Loopback does not separate OS accounts, so every route requires the per-user token stored in `observe.token` (mode `0600`) under ICE's agent directory. Open the printed URL once; it sets an `HttpOnly` cookie for the page's own requests. Scripts can send `Authorization: Bearer <token>`. Requests without the token get `401`.
 - **Bounded.** Server-side caps keep payloads small: ~500 activity items and truncated text per row, so the browser never receives unbounded output.
 - **Durable projection.** Run history is written for every normal agent invocation, whether or not `--observe` is enabled. The dashboard reuses that recorder and can read historical runs through the replay endpoints.
 

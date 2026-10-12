@@ -103,6 +103,35 @@ describe("subagent V2 permission evaluator", () => {
 		).toBe("ask");
 	});
 
+	it("never lets a session grant cover a file redirection", () => {
+		const ruleSets = [set("session", { allow: ["bash(git status*)"] })];
+		const decide = (command: string) =>
+			evaluatePermissionSubjects(
+				bash(command),
+				(subject) => evaluatePermission({ subject, ruleSets, fallback: "ask", mode: "build" }).decision,
+			);
+		expect(decide("git status")).toBe("allow");
+		expect(decide("git status 2>&1")).toBe("allow");
+		expect(decide("git status 2>/dev/null")).toBe("allow");
+		expect(decide("git status > ~/.profile")).toBe("ask");
+		expect(decide("git status >> important-file")).toBe("ask");
+		expect(decide("git status &> out.log")).toBe("ask");
+		expect(decide("git status >/dev/nullx")).toBe("ask");
+	});
+
+	it("denies Bash in plan/review even after an allow rule", () => {
+		const subject = one(bash("git log"));
+		for (const mode of ["plan", "review"] as const) {
+			const result = evaluatePermission({
+				subject,
+				ruleSets: [set("user", { allow: ["bash"] })],
+				fallback: "allow",
+				mode,
+			});
+			expect(result).toMatchObject({ decision: "deny", limitedByMode: true });
+		}
+	});
+
 	it("holds plan/review limits regardless of allow rules", () => {
 		const edit = one(extractPermissionSubjects({ tool: "edit", args: { path: "a.ts" }, cwd: "/repo" }));
 		for (const mode of ["plan", "review"] as const) {
