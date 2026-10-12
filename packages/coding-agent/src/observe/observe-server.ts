@@ -300,6 +300,8 @@ export function startObserveServer(
 		if (pathname === "/" || pathname.startsWith("/index")) {
 			response.writeHead(200, {
 				"content-type": "text/html; charset=utf-8",
+				// The page URL may carry the access token; never leak it through a Referer header.
+				"referrer-policy": "no-referrer",
 				...(viaQuery ? { "set-cookie": `${TOKEN_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/` } : {}),
 			});
 			response.end(getDashboardHtml());

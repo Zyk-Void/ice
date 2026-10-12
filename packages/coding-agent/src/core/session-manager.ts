@@ -1821,8 +1821,8 @@ export async function deleteSessionFile(
 		return `trash: ${parts.join(" · ").slice(0, 200)}`;
 	};
 
-	// If trash reports success, or the file is gone afterwards, treat it as successful
-	if (trashResult.status === 0 || !existsSync(sessionPath)) {
+	// Trust the filesystem over the exit status: a `trash` that exits 0 but leaves the file falls back to unlink.
+	if (!existsSync(sessionPath)) {
 		return { ok: true, method: "trash" };
 	}
 

@@ -250,7 +250,22 @@ class SqliteObserveRunStore implements ObserveRunStore {
 		const items = new Map<number, ObserveItem>();
 		const lanes = new Map<string, ObserveLane>();
 		const threads = new Map<string, ObserveThread>();
-		for (const event of this.getEvents(runId, { limit: options?.limit ?? MAX_REPLAY_EVENTS })) {
+		// Without an explicit limit, page through the whole run: folding only the first page would
+		// return a stale state for long runs.
+		const events = function* (store: SqliteObserveRunStore): Generator<ObserveReplayEvent> {
+			if (options?.limit !== undefined) {
+				yield* store.getEvents(runId, { limit: options.limit });
+				return;
+			}
+			let after = 0;
+			for (;;) {
+				const page = store.getEvents(runId, { after, limit: MAX_REPLAY_EVENTS });
+				if (page.length === 0) return;
+				yield* page;
+				after = page[page.length - 1].sequence;
+			}
+		};
+		for (const event of events(this)) {
 			const payload = event.payload;
 			if (payload.type === "header" && "header" in payload) {
 				header = payload.header;

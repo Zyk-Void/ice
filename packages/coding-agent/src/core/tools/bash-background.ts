@@ -168,7 +168,12 @@ export class BashBackgroundRegistry {
 				...(exitCode !== undefined ? { exitCode } : {}),
 				...(shell.description ? { description: shell.description } : {}),
 			};
-			for (const listener of this.listeners) listener(completion);
+			// One failing consumer must not block delivery to the rest or reject this callback.
+			for (const listener of this.listeners) {
+				try {
+					listener(completion);
+				} catch {}
+			}
 		});
 		this.notifyChange();
 		return taskId;

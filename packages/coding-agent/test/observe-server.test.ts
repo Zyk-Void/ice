@@ -42,7 +42,7 @@ function authGet(url: string, callback: (res: IncomingMessage) => void, headers:
 function fetchText(
 	url: string,
 	headers?: OutgoingHttpHeaders,
-): Promise<{ status: number; body: string; contentType: string; setCookie: string[] }> {
+): Promise<{ status: number; body: string; contentType: string; setCookie: string[]; referrerPolicy: string }> {
 	return new Promise((resolve, reject) => {
 		authGet(
 			url,
@@ -57,6 +57,7 @@ function fetchText(
 						body,
 						contentType: String(res.headers["content-type"] ?? ""),
 						setCookie: res.headers["set-cookie"] ?? [],
+						referrerPolicy: String(res.headers["referrer-policy"] ?? ""),
 					}),
 				);
 			},
@@ -125,6 +126,7 @@ describe("observe server", () => {
 
 		const page = await fetchText(server.dashboardUrl, { authorization: "" });
 		expect(page.status).toBe(200);
+		expect(page.referrerPolicy).toBe("no-referrer");
 		const cookie = page.setCookie.find((value) => value.startsWith("ice_observe_token="));
 		expect(cookie).toContain("HttpOnly");
 		expect(cookie).toContain("SameSite=Strict");

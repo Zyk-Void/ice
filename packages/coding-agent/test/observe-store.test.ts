@@ -83,6 +83,24 @@ describe("observe run store", () => {
 		recorder.stop();
 	});
 
+	it("folds every event of a long run into its replay state", async () => {
+		const store = await openObserveRunStore(":memory:");
+		const header = (model: string) => ({
+			runId: "long",
+			sessionId: "s",
+			mainThreadId: "s",
+			mainThreadName: "main",
+			model,
+			thinkingLevel: null,
+			context: undefined,
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+			startedAt: Date.now(),
+		});
+		for (let index = 0; index <= 10_050; index++) store.recordEvent({ type: "header" }, header(`model-${index}`));
+		expect(store.getState("long")?.model).toBe("model-10050");
+		store.close();
+	});
+
 	it("prunes runs older than the retention window when opened", async () => {
 		const directory = mkdtempSync(join("/tmp", "ice-observe-store-"));
 		tempDirs.push(directory);
