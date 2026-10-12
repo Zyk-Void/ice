@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import type { MessageRenderer, MessageRenderOptions } from "../src/core/extensions/types.ts";
 import type { CustomMessage } from "../src/core/messages.ts";
 import { CustomMessageComponent } from "../src/modes/interactive/components/custom-message.ts";
+import { setSymbolPreset } from "../src/modes/interactive/theme/symbols.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
@@ -69,6 +70,7 @@ describe("CustomMessageComponent", () => {
 
 	test("renders a background shell completion as one plain line that expands to its output", () => {
 		initTheme("dark");
+		setSymbolPreset("unicode");
 		const message: CustomMessage = {
 			role: "custom",
 			customType: "bash_background_completed",

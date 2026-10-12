@@ -59,7 +59,7 @@ describe("subagent V2 patch inspection", () => {
 				{ action: "inspect", id: `ag_${"a".repeat(26)}` },
 				undefined,
 				undefined,
-				{} as ExtensionContext,
+				{ hasPendingMessages: () => false } as ExtensionContext,
 			);
 			expect(result.details).toEqual({
 				status: "applying",
@@ -97,7 +97,7 @@ describe("subagent V2 typed result API", () => {
 				},
 				undefined,
 				undefined,
-				{} as ExtensionContext,
+				{ hasPendingMessages: () => false } as ExtensionContext,
 			);
 			expect(JSON.stringify(result)).toContain("frozen outputSchema");
 			expect(launch).not.toHaveBeenCalled();
@@ -144,7 +144,7 @@ describe("subagent V2 typed result API", () => {
 				},
 				undefined,
 				undefined,
-				{} as ExtensionContext,
+				{ hasPendingMessages: () => false } as ExtensionContext,
 			);
 			expect(continuation).toHaveBeenCalledWith(
 				id,
@@ -188,7 +188,7 @@ describe("subagent V2 typed result API", () => {
 				{ action: "output", id, offset: 12, length: 4 },
 				undefined,
 				undefined,
-				{} as ExtensionContext,
+				{ hasPendingMessages: () => false } as ExtensionContext,
 			);
 			expect(read).toHaveBeenCalledWith(id, { offset: 12, length: 4 });
 			expect(JSON.stringify(result.content)).toContain("nextOffset=16");
@@ -233,7 +233,7 @@ describe("subagent V2 typed result API", () => {
 				{ action: "output", id: `ag_${"a".repeat(26)}` },
 				undefined,
 				undefined,
-				{} as ExtensionContext,
+				{ hasPendingMessages: () => false } as ExtensionContext,
 			);
 			expect(JSON.stringify(one)).toContain("evidence_checked");
 			const many = await tool.execute(
@@ -244,7 +244,7 @@ describe("subagent V2 typed result API", () => {
 				},
 				undefined,
 				undefined,
-				{} as ExtensionContext,
+				{ hasPendingMessages: () => false } as ExtensionContext,
 			);
 			const rendered = many.content
 				.filter((part) => part.type === "text")
@@ -353,7 +353,7 @@ describe("subagent V2 batch synthesis", () => {
 				},
 				undefined,
 				undefined,
-				{} as ExtensionContext,
+				{ hasPendingMessages: () => false } as ExtensionContext,
 			);
 			const rendered = result.content
 				.filter((part) => part.type === "text")
@@ -408,7 +408,7 @@ describe("subagent V2 batch synthesis", () => {
 				},
 				undefined,
 				undefined,
-				{} as ExtensionContext,
+				{ hasPendingMessages: () => false } as ExtensionContext,
 			);
 			expect(result.details).toMatchObject({ ids });
 			expect(JSON.stringify(result)).not.toContain("batchSynthesis");
@@ -440,7 +440,7 @@ describe("subagent V2 task budgets", () => {
 					},
 					undefined,
 					undefined,
-					{} as ExtensionContext,
+					{ hasPendingMessages: () => false } as ExtensionContext,
 				);
 				expect(JSON.stringify(result)).toContain("No subagents started.");
 				expect(JSON.stringify(result)).toContain(message);
@@ -470,7 +470,7 @@ describe("subagent V2 task budgets", () => {
 				{ background: true, tasks: [{ resume: id, description: "continue", prompt: "continue", maxTurns: 2 }] },
 				undefined,
 				undefined,
-				{} as ExtensionContext,
+				{ hasPendingMessages: () => false } as ExtensionContext,
 			);
 			expect(result.details).toMatchObject({ ids: [id], rejected: [] });
 			expect(JSON.stringify(result)).toContain("Started 1 subagent");
@@ -510,7 +510,7 @@ describe("subagent V2 task budgets", () => {
 				},
 				undefined,
 				undefined,
-				{} as ExtensionContext,
+				{ hasPendingMessages: () => false } as ExtensionContext,
 			);
 			expect(continuation).toHaveBeenCalledWith(id, "continue", {
 				foreground: true,

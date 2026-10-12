@@ -818,7 +818,7 @@ describe("subagent V2 runtime", () => {
 				{ tasks: [task("explore", "read")] },
 				controller.signal,
 				undefined,
-				{} as ExtensionContext,
+				{ hasPendingMessages: () => false } as ExtensionContext,
 			);
 			await vi.waitFor(() => expect(factory).toHaveBeenCalledOnce());
 			controller.abort();
