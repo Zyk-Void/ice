@@ -1,0 +1,4 @@
+[submodule "imported_extensions/pi-workgraph"]
+	path = imported_extensions/pi-workgraph
+	url = https://github.com/Zykairotis/ice-workgraph.git
+	branch = ice-workgraph/rebrand
