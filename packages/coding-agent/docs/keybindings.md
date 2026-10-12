@@ -168,6 +168,7 @@ This routing remains configurable through the ordinary action bindings. For exam
 | `app.agents.nextApproval` | `tab` | Agent Hub: select the next pending subagent request and the subagent that asked |
 | `app.message.copy` | `ctrl+x` | Copy the last assistant message, or the selected message in `/tree` |
 | `app.message.followUp` | `alt+enter` | Queue follow-up message |
+| `app.message.sendNow` | `ctrl+enter` | Send now: move running bash commands and subagent waits to the background, interrupt the current turn, and send the prompt (after any queued messages) at once. Needs a terminal that reports ctrl+enter (kitty keyboard protocol) |
 | `app.message.dequeue` | `alt+up` | Restore queued messages to editor |
 
 ### Tree Navigation

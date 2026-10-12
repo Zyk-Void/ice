@@ -80,7 +80,7 @@ describe("ShellsPanelComponent", () => {
 
 	test("stops the selected shell, telling the model, and follows a shell in the foreground", () => {
 		const now = Date.now();
-		const { registry, aborts, test: testId } = shellRegistry(now);
+		const { registry, aborts, dev, test: testId } = shellRegistry(now);
 		const completions: BashBackgroundCompletion[] = [];
 		registry.onComplete((completion) => completions.push(completion));
 		const panel = new ShellsPanelComponent(registry, new KeybindingsManager(), () => {}, {
@@ -101,13 +101,16 @@ describe("ShellsPanelComponent", () => {
 		// A stopped shell has no stop hint.
 		expect(stopped.at(-1)).not.toContain("x stop");
 
+		// The stopped shell stays in view until the user goes back to the list, which only shows running shells.
+		expect(stopped[1]).toContain(`Following ${testId}  killed`);
 		panel.handleInput(LEFT);
 		panel.handleInput(LEFT);
 		const list = strip(panel.render(100));
-		expect(list[1]).toBe("Shells  1 running · 1 finished");
+		expect(list[1]).toBe("Shells  1 running");
+		expect(list.join("\n")).not.toContain(testId);
 		panel.handleInput(DOWN);
 		panel.handleInput(RIGHT);
-		expect(strip(panel.render(100))[1]).toContain("Shell details");
+		expect(strip(panel.render(100))[1]).toBe(`Shell details  ${dev}`);
 		panel.dispose();
 		registry.dispose();
 	});
@@ -119,6 +122,18 @@ describe("ShellsPanelComponent", () => {
 		const lines = panel.render(40);
 		expect(strip(lines)[1]).toBe("Shell details  bash-1");
 		for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(40);
+		panel.dispose();
+		registry.dispose();
+	});
+
+	test("leaves finished shells out of the list", async () => {
+		const registry = new BashBackgroundRegistry();
+		const id = registry.adopt("true", Date.now(), () => {}, Promise.resolve({ text: "done", isError: false }));
+		await vi.waitFor(() => expect(registry.get(id)?.status).toBe("completed"));
+		const panel = new ShellsPanelComponent(registry, new KeybindingsManager(), () => {}, { tick: false });
+		const lines = strip(panel.render(100));
+		expect(lines[1]).toBe("Shells  no running shells");
+		expect(lines.join("\n")).not.toContain(id);
 		panel.dispose();
 		registry.dispose();
 	});

@@ -143,7 +143,13 @@ import { DynamicBorder } from "./components/dynamic-border.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
 import { ExtensionSelectorComponent } from "./components/extension-selector.ts";
-import { FooterComponent, formatCwdForFooter, formatTokens } from "./components/footer.ts";
+import {
+	FooterComponent,
+	formatCwdForFooter,
+	formatTokens,
+	OPEN_AGENTS_URL,
+	OPEN_SHELLS_URL,
+} from "./components/footer.ts";
 import { formatKeyText, keyDisplayText, keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.ts";
 import { LoginDialogComponent } from "./components/login-dialog.ts";
 import { ModelSelectorComponent } from "./components/model-selector.ts";
@@ -154,6 +160,7 @@ import {
 	formatAuthSelectorProviderType,
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
+import { createRunSummary } from "./components/run-summary.ts";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.ts";
 import { SessionHeaderComponent, type SessionHeaderData } from "./components/session-header.ts";
 import { SessionSelectorComponent } from "./components/session-selector.ts";
@@ -388,14 +395,22 @@ interface InteractiveTuiOptions {
 /** Tool cells the expand key opens per press, newest first. */
 const TOOL_EXPAND_BATCH = 3;
 
-/** A transcript cell whose output the expand key and clicks toggle: one tool call, or a group of them. */
-type ToolCell = ToolExecutionComponent | ToolGroupComponent;
+/**
+ * A transcript cell whose output the expand key and clicks toggle: one tool call, a group of them,
+ * or a one-line message such as a background shell completion.
+ */
+type ToolCell = ToolExecutionComponent | ToolGroupComponent | CustomMessageComponent;
 
 function isToolCell(component: Component): component is ToolCell {
-	return component instanceof ToolExecutionComponent || component instanceof ToolGroupComponent;
+	return (
+		component instanceof ToolExecutionComponent ||
+		component instanceof ToolGroupComponent ||
+		(component instanceof CustomMessageComponent && component.getToggleId() !== undefined)
+	);
 }
 
 function toolCellId(cell: ToolCell): string {
+	if (cell instanceof CustomMessageComponent) return cell.getToggleId()!;
 	return cell instanceof ToolGroupComponent ? cell.getToggleId() : cell.getToolCallId();
 }
 
@@ -1053,10 +1068,10 @@ export class InteractiveMode {
 			() => this.renderer.mode === "fullscreen",
 		);
 		const dock = new TuiLayouts.VStack([
-			{ component: newMessagesPill, shrink: 1, minSize: 0 },
 			{ component: this.pendingMessagesContainer, shrink: 1, minSize: 0 },
 			{ component: this.statusContainer, shrink: 1, minSize: 0 },
 			{ component: this.widgetContainerAbove, shrink: 1, minSize: 0 },
+			{ component: newMessagesPill, shrink: 1, minSize: 0 },
 			{ component: this.editorContainer, shrink: 1, minSize: 3 },
 			{ component: this.widgetContainerBelow, shrink: 1, minSize: 0 },
 			{ component: this.agentSwitcherContainer, shrink: 1, minSize: 0 },
@@ -1111,6 +1126,7 @@ export class InteractiveMode {
 				rawKeyHint("!", "to run bash"),
 				rawKeyHint("!!", "to run bash (no context)"),
 				hint("app.message.followUp", "to queue follow-up"),
+				hint("app.message.sendNow", "to send now (interrupts the current turn)"),
 				hint("app.message.dequeue", "to edit all queued messages"),
 				hint("app.clipboard.pasteImage", "to paste image (with text fallback)"),
 				rawKeyHint("drop files", "to attach"),
@@ -3656,6 +3672,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.editor.external", () => void this.handleOpenExternalEditor());
 		this.defaultEditor.onAction("app.message.copy", () => void this.handleCopyCommand({ flashConfirmation: true }));
 		this.defaultEditor.onAction("app.message.followUp", () => this.handleFollowUp());
+		this.defaultEditor.onAction("app.message.sendNow", () => void this.handleSendNow());
 		this.defaultEditor.onAction("app.message.dequeue", () => this.handleDequeue());
 		this.defaultEditor.onAction("app.session.new", () => this.handleClearCommand());
 		this.defaultEditor.onAction("app.session.tree", () => this.showTreeSelector());
@@ -4247,6 +4264,14 @@ export class InteractiveMode {
 					this.streamingMessage = undefined;
 				}
 				this.pendingTools.clear();
+				// A run that finished on its own ends with a dim "Worked for 3m 17s · done 12:53 AM" line.
+				if ((!sourceSession || sourceSession === this.runtimeSession) && !event.willRetry) {
+					const last = [...event.messages].reverse().find((message) => message.role === "assistant");
+					if (last?.role === "assistant" && last.stopReason !== "aborted" && last.stopReason !== "error") {
+						this.chatContainer.addChild(new Spacer(1));
+						this.chatContainer.addChild(createRunSummary(Date.now() - this.workingTurn.startedAt));
+					}
+				}
 
 				this.ui.requestRender();
 				break;
@@ -5070,6 +5095,30 @@ export class InteractiveMode {
 		}
 	}
 
+	/**
+	 * Ctrl+Enter: deliver the prompt now instead of after the current step. Running bash commands and
+	 * subagent waits move to the background first so the interrupt does not kill them; then the turn
+	 * is aborted and the prompt (after any messages already queued) starts a new one.
+	 */
+	private async handleSendNow(): Promise<void> {
+		const text = (this.editor.getExpandedText?.() ?? this.editor.getText()).trim();
+		if (!text) return;
+		if (!this.session.isStreaming || this.session.isCompacting || this.isExtensionCommand(text)) {
+			this.editor.setText("");
+			this.editor.onSubmit?.(text);
+			return;
+		}
+		this.session.bashBackground.releaseAll();
+		this.agentViewBridge?.releaseBlockingWaits();
+		// Let released tool calls detach from the turn's abort signal before the turn is aborted.
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		const { steering, followUp } = this.clearAllQueues();
+		this.editor.setText("");
+		this.updatePendingMessagesDisplay();
+		await this.session.abort();
+		this.editor.onSubmit?.([...steering, ...followUp, text].join("\n\n"));
+	}
+
 	private handleDequeue(): void {
 		const restored = this.restoreQueuedMessagesToEditor();
 		if (restored === 0) {
@@ -5515,6 +5564,14 @@ export class InteractiveMode {
 		if (url === JUMP_TO_BOTTOM_URL) {
 			this.transcriptScrollView?.scrollToEnd();
 			this.ui.requestRender();
+			return true;
+		}
+		if (url === OPEN_SHELLS_URL) {
+			this.showShellsView();
+			return true;
+		}
+		if (url === OPEN_AGENTS_URL) {
+			this.openAgentHub();
 			return true;
 		}
 		if (url === JUMP_TO_PROMPT_URL) {
@@ -7725,6 +7782,7 @@ export class InteractiveMode {
 					row(key("app.clipboard.pasteImage"), "Paste image"),
 					row(key("app.editor.external"), "External editor"),
 					row(key("app.message.followUp"), "Queue follow-up"),
+					row(key("app.message.sendNow"), "Send now"),
 					row(key("app.message.dequeue"), "Edit queued"),
 				],
 			},

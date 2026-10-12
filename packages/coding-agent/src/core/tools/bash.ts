@@ -17,7 +17,7 @@ import {
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import { clearSessionEnvironment } from "../legacy-compat/env.ts";
-import type { BashBackgroundRegistry } from "./bash-background.ts";
+import { type BashBackgroundRegistry, FOREGROUND_MESSAGE_GRACE_MS, USER_MESSAGE_POLL_MS } from "./bash-background.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { getTextOutput, invalidArgText, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -46,6 +46,12 @@ const bashSchema = Type.Object({
 		Type.Number({
 			description:
 				"Timeout in seconds; omit it (or pass 0) for no timeout. It also stops a background shell, so omit it for servers and watchers.",
+		}),
+	),
+	description: Type.Optional(
+		Type.String({
+			description:
+				'Short description of what the command does, in 5-10 words (for example "Run the coding-agent tests"). Shown to the user when a background shell finishes.',
 		}),
 	),
 	run_in_background: Type.Optional(
@@ -349,14 +355,14 @@ export function createBashToolDefinition(
 				: []),
 			...(background
 				? [
-						"Background shells (run_in_background, or moved there by the user) keep running between turns: check them with bash_output (optionally waiting for them to finish) instead of sleeping, and stop the ones you no longer need with bash_kill.",
+						"Background shells (run_in_background, or moved there by the user) keep running between turns and their final output arrives as a message when they exit: continue other work or end your turn instead of waiting or sleeping, check them with bash_output only when you need their output now, and stop the ones you no longer need with bash_kill.",
 					]
 				: []),
 		],
 		parameters: bashSchema,
 		async execute(
 			toolCallId,
-			{ command, timeout, run_in_background: runInBackground }: BashToolInput,
+			{ command, timeout, description, run_in_background: runInBackground }: BashToolInput,
 			signal?: AbortSignal,
 			onUpdate?,
 			ctx?,
@@ -374,6 +380,8 @@ export function createBashToolDefinition(
 			// A backgrounded call has already returned; later output goes to its background shell.
 			let detached = false;
 			let backgroundTaskId: string | undefined;
+			/** Exit code of a command that ran to its end; undefined when it was aborted, timed out, or killed. */
+			let finalExitCode: number | undefined;
 			const shellDecoder = new TextDecoder();
 			const emitOutputUpdate = () => {
 				if (!onUpdate || !updateDirty || detached) return;
@@ -474,6 +482,7 @@ export function createBashToolDefinition(
 							env: spawnContext.env,
 						});
 						exitCode = result.exitCode;
+						finalExitCode = exitCode ?? undefined;
 					} catch (err) {
 						const snapshot = await finishOutput();
 						const { text } = formatOutput(snapshot, "");
@@ -506,8 +515,12 @@ export function createBashToolDefinition(
 
 			const settledOutcome = (completion: Promise<{ content: Array<{ type: "text"; text: string }> }>) =>
 				completion.then(
-					(result) => ({ text: result.content[0]?.text ?? "", isError: false }),
-					(err: unknown) => ({ text: err instanceof Error ? err.message : String(err), isError: true }),
+					(result) => ({ text: result.content[0]?.text ?? "", isError: false, exitCode: finalExitCode }),
+					(err: unknown) => ({
+						text: err instanceof Error ? err.message : String(err),
+						isError: true,
+						exitCode: finalExitCode,
+					}),
 				);
 
 			if (runInBackground) {
@@ -520,15 +533,13 @@ export function createBashToolDefinition(
 					startedAt,
 					() => execAbort.abort(),
 					settledOutcome(completion),
-					{
-						origin: "model",
-					},
+					{ origin: "model", description },
 				);
 				return {
 					content: [
 						{
 							type: "text",
-							text: `Started background shell ${backgroundTaskId}. Check it with bash_output (id "${backgroundTaskId}", optionally wait_seconds to wait for it to finish); stop it with bash_kill. Its final output also arrives as a message when it exits.`,
+							text: `Started background shell ${backgroundTaskId}. Its final output arrives as a message when it exits: continue other work or end your turn rather than waiting. Check it with bash_output (id "${backgroundTaskId}") and stop it with bash_kill.`,
 						},
 					],
 					details: { backgroundTaskId, backgroundOrigin: "model" },
@@ -540,6 +551,14 @@ export function createBashToolDefinition(
 				releaseCall = () => resolve("released");
 			});
 			const unregister = background.registerForeground(toolCallId, command, releaseCall);
+			// The user can always talk to the agent: once a slow command has run a while, a queued
+			// message moves it to the background as ctrl+b would. Quick commands just finish.
+			let releasedByMessage = false;
+			const messagePoll = setInterval(() => {
+				if (Date.now() - startedAt < FOREGROUND_MESSAGE_GRACE_MS || !ctx?.hasPendingMessages()) return;
+				releasedByMessage = true;
+				releaseCall();
+			}, USER_MESSAGE_POLL_MS);
 			const completion = runToCompletion();
 			try {
 				const first = await Promise.race([completion.then(() => "settled" as const), released]);
@@ -547,6 +566,7 @@ export function createBashToolDefinition(
 			} catch {
 				return await completion;
 			} finally {
+				clearInterval(messagePoll);
 				unregister();
 			}
 
@@ -555,6 +575,7 @@ export function createBashToolDefinition(
 			const snapshot = output.snapshot({ persistIfTruncated: true });
 			const taskId = background.adopt(command, startedAt, () => execAbort.abort(), settledOutcome(completion), {
 				origin: "user",
+				description,
 				initialOutput: snapshot.content,
 			});
 			backgroundTaskId = taskId;
@@ -563,7 +584,7 @@ export function createBashToolDefinition(
 				content: [
 					{
 						type: "text",
-						text: `The user moved this command to the background as ${taskId}; it is still running. ${soFar}\n\nCheck it with bash_output (id "${taskId}") and stop it with bash_kill; its final output also arrives as a follow-up message when it exits. Do not report or assume its result before then: continue other work, or end your turn if nothing else is left.`,
+						text: `${releasedByMessage ? `The user sent a message while this command ran, so it moved to the background as ${taskId}; read the message now. It is still running.` : `The user moved this command to the background as ${taskId}; it is still running.`} ${soFar}\n\nCheck it with bash_output (id "${taskId}") and stop it with bash_kill; its final output also arrives as a follow-up message when it exits. Do not report or assume its result before then: continue other work, or end your turn if nothing else is left.`,
 					},
 				],
 				details: {

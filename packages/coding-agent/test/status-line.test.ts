@@ -2,8 +2,9 @@ import { visibleWidth } from "@zykairotis/ice-tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
-import { FooterComponent } from "../src/modes/interactive/components/footer.ts";
+import { FooterComponent, OPEN_AGENTS_URL, OPEN_SHELLS_URL } from "../src/modes/interactive/components/footer.ts";
 import { layoutStatusLine, REQUIRED_PRIORITY } from "../src/modes/interactive/components/status-line.ts";
+import { setToolToggleLinks } from "../src/modes/interactive/components/tool-toggle-link.ts";
 import { setSymbolPreset } from "../src/modes/interactive/theme/symbols.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -113,6 +114,30 @@ describe("compact footer", () => {
 		expect(stripAnsi(footer.render(140)[0]!)).toContain("2 shells  ⚠ 1 f2");
 		footer.setBackgroundTaskSource(() => 1);
 		expect(stripAnsi(footer.render(140)[0]!)).toContain("1 shell  ⚠ 1 f2");
+	});
+
+	it("links the shell count and subagent segment to their panels only when clicks are routed", () => {
+		const footer = createFooter();
+		footer.setBackgroundTaskSource(() => 2);
+		footer.setSubagentSource(() => ({
+			enabled: true,
+			capacity: { running: 1, queued: 0, max: 8 },
+			maxDepth: 0,
+			children: [],
+			approvals: [],
+			diagnostics: [],
+		}));
+		expect(footer.render(160)[0]).not.toContain(OPEN_SHELLS_URL);
+		expect(footer.render(160)[0]).not.toContain(OPEN_AGENTS_URL);
+		setToolToggleLinks(true);
+		try {
+			const line = footer.render(160)[0]!;
+			expect(line).toContain(`\x1b]8;;${OPEN_SHELLS_URL}\x1b\\`);
+			expect(line).toContain(`\x1b]8;;${OPEN_AGENTS_URL}\x1b\\`);
+			expect(stripAnsi(line)).toContain("2 shells  agents 1/8  ⚠ 1 f2");
+		} finally {
+			setToolToggleLinks(false);
+		}
 	});
 
 	it("keeps mode and notices visible on narrow terminals", () => {

@@ -73,7 +73,7 @@ async function runtimeHarness(extension: ExtensionFactory = () => {}, persistSes
 	});
 	const runtime = new AgentSessionRuntime(harness.session, services, factory);
 	await harness.session.bindExtensions({});
-	cleanups.push(() => runtime.session.dispose());
+	cleanups.push(() => runtime.dispose());
 	return { harness, runtime };
 }
 

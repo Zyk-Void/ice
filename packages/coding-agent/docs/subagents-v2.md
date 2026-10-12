@@ -69,7 +69,7 @@ Launch one to eight children in a single request, or continue a child by name or
 
 Every child has a name that is unique in its session and never reused, even after delete: the task's `name` (for example `auth-review`), or an automatic one from a pool of 100 (`atlas`, `mesa`, …; suffixed as `atlas-2` once the pool is used up). `resume`, `agent_control`, and `agent_patch` accept the name or the ID, and results and completion messages show both. Children cannot launch subagents of their own.
 
-By default, the parent waits for the work and receives bounded reports. While it waits, the tool row shows one live line per child (status mark, name, agent, state, tokens, current tool call). In the interactive TUI, `Ctrl+B` moves the wait to the background and the parent is free again. Set the top-level `background` to `true` to receive child names and IDs immediately.
+By default, the parent waits for the work and receives bounded reports. While it waits, the tool row shows one live line per child (status mark, name, agent, state, tokens, current tool call). In the interactive TUI, `Ctrl+B` or a prompt you send while it waits moves the children to the background and the parent is free again; their reports arrive as messages. Set the top-level `background` to `true` to receive child names and IDs immediately.
 
 A background result arrives as a `subagent_completed` message, delivered only when the parent is idle; results that finish together arrive as one message. A result counts as delivered only once the message is in the parent transcript, so an aborted or failed parent turn cannot lose it. Each message carries up to 16 KiB of the report and says how to read the rest with `agent_control action=output`.
 

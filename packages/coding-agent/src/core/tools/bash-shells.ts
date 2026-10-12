@@ -7,7 +7,7 @@ import { Text } from "@zykairotis/ice-tui";
 import { type Static, Type } from "typebox";
 import { theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
-import type { BackgroundShellSnapshot, BashBackgroundRegistry } from "./bash-background.ts";
+import { type BackgroundShellSnapshot, type BashBackgroundRegistry, USER_MESSAGE_POLL_MS } from "./bash-background.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateTail } from "./truncate.ts";
 
 export const BASH_SHELL_TOOL_NAMES = ["bash_output", "bash_kill"] as const;
@@ -21,7 +21,7 @@ const bashOutputSchema = Type.Object({
 	),
 	wait_seconds: Type.Optional(
 		Type.Number({
-			description: `Wait up to this many seconds (max ${MAX_WAIT_SECONDS}) for the shell to finish before reporting. Use it instead of sleep when you need the result.`,
+			description: `Wait up to this many seconds (max ${MAX_WAIT_SECONDS}) for the shell to finish before reporting. Only when you need the result now and have nothing else to do; a user message ends the wait early.`,
 		}),
 	),
 });
@@ -62,10 +62,10 @@ export function createBashOutputToolDefinition(
 		name: "bash_output",
 		label: "bash_output",
 		description:
-			"Check background shells started with bash run_in_background (or moved there by the user). With an id, returns the shell's status and the output written since your last check; wait_seconds waits for it to finish first. Without an id, lists every background shell.",
+			"Check background shells started with bash run_in_background (or moved there by the user). With an id, returns the shell's status and the output written since your last check; wait_seconds waits for it to finish first. Without an id, lists every background shell. A shell's final output arrives as a message when it exits, so do not poll or wait repeatedly.",
 		promptSnippet: "Check background shells: status and new output",
 		parameters: bashOutputSchema,
-		async execute(_toolCallId, { id, wait_seconds }: BashOutputInput, signal) {
+		async execute(_toolCallId, { id, wait_seconds }: BashOutputInput, signal, _onUpdate, ctx) {
 			if (!id) {
 				const shells = registry.snapshots();
 				const text =
@@ -78,13 +78,37 @@ export function createBashOutputToolDefinition(
 				throw new Error("wait_seconds must be a non-negative number");
 			}
 			const waitMs = Math.min(wait_seconds ?? 0, MAX_WAIT_SECONDS) * 1000;
-			const read = await registry.read(id, { waitMs, signal });
+			// The user can always talk to the agent: a queued message ends the wait early.
+			const interrupt = new AbortController();
+			let interruptedByMessage = false;
+			const stopForMessage = () => {
+				if (!ctx?.hasPendingMessages()) return;
+				interruptedByMessage = true;
+				interrupt.abort();
+			};
+			const onAbort = () => interrupt.abort();
+			signal?.addEventListener("abort", onAbort, { once: true });
+			if (signal?.aborted) interrupt.abort();
+			const poll = waitMs > 0 ? setInterval(stopForMessage, USER_MESSAGE_POLL_MS) : undefined;
+			if (waitMs > 0) stopForMessage();
+			let read: Awaited<ReturnType<BashBackgroundRegistry["read"]>>;
+			try {
+				read = await registry.read(id, { waitMs, signal: interrupt.signal });
+			} finally {
+				if (poll) clearInterval(poll);
+				signal?.removeEventListener("abort", onAbort);
+			}
 			if (!read) {
 				const known = registry.snapshots().map((shell) => shell.taskId);
 				throw new Error(`Unknown background shell "${id}".${known.length ? ` Known: ${known.join(", ")}.` : ""}`);
 			}
 			const { shell, newOutput, omittedChars } = read;
 			const parts = [statusLine(shell, now())];
+			if (interruptedByMessage && shell.status === "running") {
+				parts.push(
+					"Stopped waiting because the user sent a message; read it now. The shell keeps running and its final output arrives as a message when it exits.",
+				);
+			}
 			if (omittedChars > 0) parts.push(`[${omittedChars} characters of new output were dropped before this check]`);
 			parts.push(newOutput ? capOutput(newOutput) : "(no new output)");
 			if (shell.status !== "running" && shell.finalText) parts.push(`Final result:\n${capOutput(shell.finalText)}`);

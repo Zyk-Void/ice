@@ -1,9 +1,10 @@
 /**
  * Shells panel: one live view over the background shells (bash commands started with
  * `run_in_background` or moved there with ctrl+b). It replaces the editor while open, so the
- * transcript above stays visible. A list shows every shell; details show one shell's status,
+ * transcript above stays visible. A list shows the running shells; details show one shell's status,
  * runtime, command, and latest output; follow mode brings a shell's output to the foreground as a
- * taller, live tail. Shells can be stopped from any view.
+ * taller, live tail. Shells can be stopped from any view. A shell that exits while its details or
+ * follow view is open stays there until the user goes back to the list.
  */
 import { type Component, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@zykairotis/ice-tui";
 import type { KeybindingsManager } from "../../../core/keybindings.ts";
@@ -97,11 +98,10 @@ export class ShellsPanelComponent implements Component {
 		this.unsubscribe = registry.onChange(() => this.scheduleRender());
 		// Runtimes advance even when a shell prints nothing.
 		this.ticker = options.tick === false ? undefined : setInterval(() => this.requestRender(), 1000);
-		// One shell: open straight on its details. Several: start on the newest running one.
-		const shells = registry.snapshots();
-		const running = shells.filter((shell) => shell.status === "running");
-		this.selectedId = options.initialShellId ?? (running.at(-1) ?? shells.at(-1))?.taskId;
-		if (shells.length === 1) this.view = "details";
+		// One running shell: open straight on its details. Several: start on the newest one.
+		const running = registry.snapshots().filter((shell) => shell.status === "running");
+		this.selectedId = options.initialShellId ?? running.at(-1)?.taskId;
+		if (running.length === 1) this.view = "details";
 	}
 
 	dispose(): void {
@@ -120,12 +120,10 @@ export class ShellsPanelComponent implements Component {
 	}
 
 	private shells(): BackgroundShellSnapshot[] {
-		// Running shells first (oldest first), then finished ones, newest first.
-		const all = this.registry.snapshots();
-		return [
-			...all.filter((shell) => shell.status === "running"),
-			...all.filter((shell) => shell.status !== "running").reverse(),
-		];
+		// Running shells, oldest first; the shell open in details or follow stays after it exits.
+		return this.registry
+			.snapshots()
+			.filter((shell) => shell.status === "running" || (this.view !== "list" && shell.taskId === this.selectedId));
 	}
 
 	private selectedIndex(shells: readonly BackgroundShellSnapshot[]): number {
@@ -170,13 +168,7 @@ export class ShellsPanelComponent implements Component {
 	}
 
 	private header(shells: readonly BackgroundShellSnapshot[]): string {
-		const running = shells.filter((shell) => shell.status === "running").length;
-		const finished = shells.length - running;
-		const parts = [
-			running > 0 ? theme.fg("accent", `${running} running`) : "",
-			finished > 0 ? theme.fg("muted", `${finished} finished`) : "",
-		].filter(Boolean);
-		return `${theme.bold("Shells")}  ${parts.length > 0 ? parts.join(theme.fg("muted", " · ")) : theme.fg("muted", "no background shells")}`;
+		return `${theme.bold("Shells")}  ${shells.length > 0 ? theme.fg("accent", `${shells.length} running`) : theme.fg("muted", "no running shells")}`;
 	}
 
 	private listLines(shells: readonly BackgroundShellSnapshot[], width: number): string[] {
@@ -184,7 +176,7 @@ export class ShellsPanelComponent implements Component {
 			return [
 				theme.fg(
 					"muted",
-					"No background shells. Commands the agent starts with run_in_background, or that you move to the background, appear here.",
+					"No running background shells. Commands the agent starts with run_in_background, or that you move to the background, appear here while they run.",
 				),
 			];
 		}

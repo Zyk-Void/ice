@@ -1,11 +1,15 @@
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@zykairotis/ice-ai/compat";
 import { Container, ScrollView, setKeybindings, Text, TuiAltScreen, VStack, visibleWidth } from "@zykairotis/ice-tui";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { JUMP_TO_BOTTOM_URL, NewMessagesPill } from "../src/modes/interactive/components/new-messages-pill.ts";
+import { TranscriptDocument } from "../src/modes/interactive/components/sticky-prompt.ts";
+import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
+
+vi.mock("../src/utils/tools-manager.ts", () => ({ ensureTool: vi.fn().mockResolvedValue("/tmp/test-tool") }));
 
 describe("new messages pill", () => {
 	beforeEach(() => {
@@ -98,6 +102,87 @@ describe("new messages pill", () => {
 			await terminal.waitForRender();
 			expect(opened).toEqual([JUMP_TO_BOTTOM_URL]);
 			expect(scroll.isFollowingEnd).toBe(true);
+		} finally {
+			tui.stop();
+		}
+	});
+
+	it.each([
+		[80, 24],
+		[40, 12],
+	])("keeps the pill directly above the prompt below activity at %ix%i", async (columns, rows) => {
+		const terminal = new VirtualTerminal(columns, rows);
+		const tui = new TuiAltScreen(terminal);
+		const chat = new Container();
+		chat.addChild(new Text(Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n"), 0, 0));
+		const document = new TranscriptDocument(chat);
+		document.addChild(chat);
+		const pending = new Container();
+		pending.addChild(new Text("Queued prompt", 0, 0));
+		const status = new Container();
+		status.addChild(new Text("Thinking...\nRunning read", 0, 0));
+		const widgets = new Container();
+		widgets.addChild(new Text("Above-editor widget", 0, 0));
+		const editor = new Text("PROMPT TOP BORDER\n> prompt\nPROMPT BOTTOM BORDER", 0, 0);
+		const layoutReady = new Error("layout ready");
+		// Run the production composition path, stopping before unrelated startup handlers.
+		const mode = Object.create(InteractiveMode.prototype) as InteractiveMode;
+		Object.assign(mode, {
+			runtimeHost: {
+				session: {
+					scopedModels: [],
+					messages: [],
+					sessionId: "test-session",
+					settingsManager: { getQuietStartup: () => true, getFullscreenScrollbar: () => "hidden" },
+				},
+			},
+			renderer: tui,
+			ui: tui,
+			options: { uiMode: "fullscreen" },
+			displayedViewId: "parent",
+			documentContainer: document,
+			pendingMessagesContainer: pending,
+			statusContainer: status,
+			widgetContainerAbove: widgets,
+			widgetContainerBelow: new Container(),
+			editorContainer: new VStack([{ component: editor }]),
+			editor,
+			agentSwitcherContainer: new Container(),
+			footerContainer: new Text("Footer", 0, 0),
+			registerSignalHandlers: () => {},
+			getChangelogForDisplay: () => undefined,
+			renderWidgets: () => {},
+			setupKeyHandlers: () => {
+				throw layoutReady;
+			},
+		});
+		await expect(mode.init()).rejects.toBe(layoutReady);
+		tui.start();
+		try {
+			await terminal.waitForRender();
+			// Stay far enough from the end that removing activity rows cannot reach the bottom.
+			terminal.sendInput("\x1b[H");
+			await terminal.waitForRender();
+			const viewport = terminal.getViewport();
+			const pillRow = viewport.findIndex((line) => line.includes("Jump to bottom"));
+			expect(pillRow).toBeGreaterThan(0);
+			expect(viewport.slice(pillRow - 4, pillRow).map((line) => line.trim())).toEqual([
+				"Queued prompt",
+				"Thinking...",
+				"Running read",
+				"Above-editor widget",
+			]);
+			expect(viewport[pillRow + 1]?.trimEnd()).toBe("PROMPT TOP BORDER");
+
+			status.clear();
+			pending.clear();
+			widgets.clear();
+			tui.requestRender();
+			await terminal.waitForRender();
+			const idleViewport = terminal.getViewport();
+			const idlePillRow = idleViewport.findIndex((line) => line.includes("Jump to bottom"));
+			expect(idlePillRow).toBeGreaterThanOrEqual(0);
+			expect(idleViewport[idlePillRow + 1]?.trimEnd()).toBe("PROMPT TOP BORDER");
 		} finally {
 			tui.stop();
 		}

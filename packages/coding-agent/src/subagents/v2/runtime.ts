@@ -12,6 +12,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import type { Api, AssistantMessage, Model } from "@zykairotis/ice-ai/compat";
 import type { AgentSession } from "../../core/agent-session.ts";
 import type { IceSubagentOverview, IceSubagentOverviewChild } from "../../ice-agent-view-bridge.ts";
@@ -1936,6 +1937,19 @@ export class SubagentV2Runtime {
 		await Promise.allSettled(runs);
 		await owner.registry.disposeAll();
 		this.owner = undefined;
+	}
+
+	/** One owned child's messages: the resident session while in memory, else its durable transcript. */
+	messagesOf(id: string): { live: boolean; messages: readonly AgentMessage[] } {
+		const state = this.state();
+		const record = state.registry.get(state.sessionId, id);
+		const resident = state.registry.resident(state.sessionId, id);
+		if (resident) return { live: true, messages: resident.session.messages };
+		return {
+			live: false,
+			messages: openChildSession(record.transcriptPath, record.contractHash).sessionManager.buildSessionContext()
+				.messages,
+		};
 	}
 
 	outputOf(id: string): ChildTurnResult | undefined {

@@ -13,6 +13,7 @@ const rpcIo = vi.hoisted(() => ({
 vi.mock("../../../src/core/output-guard.js", () => ({
 	flushRawStdout: vi.fn(async () => {}),
 	takeOverStdout: vi.fn(),
+	configureRawStdoutLimit: vi.fn(),
 	waitForRawStdoutBackpressure: vi.fn(async () => {}),
 	writeRawStdout: (line: string) => {
 		rpcIo.outputLines.push(line);
@@ -103,6 +104,7 @@ describe("RPC unknown command responses (#5868)", () => {
 					command: "foobar",
 					success: false,
 					error: "Unknown command: foobar",
+					errorCode: "unknown_command",
 				});
 			});
 		} finally {

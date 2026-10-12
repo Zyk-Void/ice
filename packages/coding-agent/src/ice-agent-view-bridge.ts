@@ -559,12 +559,26 @@ export interface IceSubagentOverview {
 	readonly diagnostics: readonly string[];
 }
 
+/** Bounded, redacted transcript of one child owned by the current parent. */
+export interface IceSubagentTranscript {
+	/** True while the child session is resident and still updating. */
+	readonly live: boolean;
+	readonly messages: readonly AgentMessage[];
+}
+
+/** User lifecycle actions on one child; the same operations the Agent Hub offers. */
+export type IceSubagentControlAction = "stop" | "resume" | "delete" | "send";
+
 /** Read and answer subagent state; implemented by the subagent runtime. */
 export interface IceSubagentControlSource {
 	/** Undefined until a parent session is available. */
 	overview(): IceSubagentOverview | undefined;
 	/** Answer a pending approval; false when it is no longer pending. */
 	respondToApproval(approvalId: string, answer: IceSubagentApprovalAnswer): boolean;
+	/** Messages of a child of the current parent, including parked children read from their durable transcript. */
+	messages(id: string): { readonly live: boolean; readonly messages: readonly AgentMessage[] } | undefined;
+	/** Run a lifecycle action on a child of the current parent (ID or launch name); resolves to a summary. */
+	control(id: string, action: IceSubagentControlAction, message?: string): Promise<string>;
 }
 
 export class IceAgentViewBridge {
@@ -627,6 +641,24 @@ export class IceAgentViewBridge {
 
 	respondToSubagentApproval(approvalId: string, answer: IceSubagentApprovalAnswer): boolean {
 		return this.controlSource?.respondToApproval(approvalId, answer) ?? false;
+	}
+
+	/** Rejects without a subagent runtime, for unknown children, and when the runtime refuses the action. */
+	async controlSubagent(id: string, action: IceSubagentControlAction, message?: string): Promise<string> {
+		if (!this.controlSource) throw new Error("No subagent runtime in this session.");
+		return this.controlSource.control(id, action, message);
+	}
+
+	/** Undefined for the parent, unknown IDs, and children of another parent session. */
+	getSubagentTranscript(id: string): IceSubagentTranscript | undefined {
+		if (id === "parent") return undefined;
+		const view = this.getView(id);
+		if (view?.kind === "parent") return undefined;
+		if (view?.session) return { live: true, messages: cloneBoundedMessages(view.session.messages).messages };
+		// A parked child has left memory; its durable transcript is still the authoritative history.
+		const durable = this.controlSource?.messages(id);
+		if (durable) return { live: durable.live, messages: cloneBoundedMessages(durable.messages).messages };
+		return view ? { live: false, messages: view.messages ?? [] } : undefined;
 	}
 
 	connectLiveSessions(source: IceAgentViewLiveSessionSource): void {

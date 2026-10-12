@@ -32,17 +32,19 @@ describe("SessionHeaderComponent", () => {
 		setSymbolPreset("unicode");
 	});
 
-	test("renders a compact three-line banner beside the penguin", () => {
+	test("renders a compact three-line banner beside the mascot", () => {
 		const lines = strip(new SessionHeaderComponent(() => data()).render(120));
 		expect(lines).toEqual([
-			" ▄███▄   ICE v1.2.3",
-			"█▀█▀█▀█  gpt-test · high · build · bash · external",
-			" ▀▄▄▄▀   ~/work/project · 2 skills",
+			"█▄  ▄▄▄  ▄█",
+			"▀██▀███▀██▀  ICE v1.2.3",
+			" ██▄▀█▀▄██   gpt-test · high · build · bash · external",
+			"  ▀█████▀    ~/work/project · 2 skills",
+			"   █▄▀▄█",
 			"ctrl+o details",
 		]);
 	});
 
-	test("uses the ASCII penguin with the ascii symbol preset", () => {
+	test("uses the ASCII mascot with the ascii symbol preset", () => {
 		setSymbolPreset("ascii");
 		const lines = strip(new SessionHeaderComponent(() => data()).render(120));
 		setSymbolPreset("unicode");
@@ -55,14 +57,14 @@ describe("SessionHeaderComponent", () => {
 		for (const width of [30, 44, 60, 120]) {
 			const lines = new SessionHeaderComponent(() => data({ cwd: longCwd })).render(width);
 			for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
-			const location = strip(lines)[2];
+			const location = strip(lines).find((line) => line.includes("leaf")) ?? "";
 			expect(location).toContain("…");
 			expect(location).toContain("leaf");
 			expect(location).not.toContain("skills");
 		}
 	});
 
-	test("drops the penguin on narrow terminals and appends help when expanded", () => {
+	test("drops the mascot on narrow terminals and appends help when expanded", () => {
 		const header = new SessionHeaderComponent(() => data({ mode: undefined, capabilities: [], loaded: "" }), true);
 		const lines = strip(header.render(30));
 		expect(lines.slice(0, 3)).toEqual(["ICE v1.2.3", "gpt-test · high", "~/work/project"]);

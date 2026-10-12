@@ -183,6 +183,44 @@ describe("subagents V2 SDK wiring", () => {
 		expect((list.content[0] as { text: string }).text).toContain("(greeter)");
 	});
 
+	it("moves a foreground agent call to the background when the user queues a message", async () => {
+		const subagents = createIceSubagents({ agentDir: join("/nonexistent", "agent") });
+		const harness = await createHarness({ extensionFactories: [subagents.extension], persistSession: true });
+		harnesses.push(harness);
+		subagents.attach(harness.session);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const childResponse = vi.fn(async () => {
+			await gate;
+			return fauxAssistantMessage("late report");
+		});
+		harness.setResponses([childResponse]);
+		const agent = harness.session.getRegisteredTool("agent")!;
+		const running = agent.execute("launch", {
+			tasks: [{ agent: "explore", description: "Slow", prompt: "Take a while" }],
+		});
+		await vi.waitFor(() => expect(childResponse).toHaveBeenCalledOnce());
+		vi.spyOn(harness.session, "pendingMessageCount", "get").mockReturnValue(1);
+		const result = await running;
+		const reply = (result.content[0] as { text: string }).text;
+		expect(reply).toContain("the user sent a message");
+		expect(reply).toMatch(/Moved 1 running subagent to the background/);
+		expect(subagents.overview()?.children[0]).toMatchObject({ running: true });
+		release();
+		await vi.waitFor(() =>
+			expect(
+				harness.session.messages.some(
+					(message) =>
+						message.role === "custom" &&
+						message.customType === "subagent_completed" &&
+						JSON.stringify(message.content).includes("late report"),
+				),
+			).toBe(true),
+		);
+	});
+
 	it("ends agent_control wait when the user queues a message", async () => {
 		const subagents = createIceSubagents({ agentDir: join("/nonexistent", "agent") });
 		const harness = await createHarness({ extensionFactories: [subagents.extension], persistSession: true });

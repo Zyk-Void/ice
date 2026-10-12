@@ -62,6 +62,7 @@ export type {
 	ExtensionActions,
 	// API
 	ExtensionAPI,
+	ExtensionChromeOptions,
 	ExtensionCommandContext,
 	ExtensionCommandContextActions,
 	ExtensionContext,

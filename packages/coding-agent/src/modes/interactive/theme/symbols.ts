@@ -27,7 +27,8 @@ export type SymbolKey =
 	| "warning"
 	| "error"
 	| "update"
-	| "prompt";
+	| "prompt"
+	| "runDone";
 
 const UNICODE: Record<SymbolKey, string> = {
 	logo: "❄",
@@ -51,6 +52,7 @@ const UNICODE: Record<SymbolKey, string> = {
 	error: "✗",
 	update: "↑",
 	prompt: "❯",
+	runDone: "✻",
 };
 
 const SYMBOL_PRESETS: Record<SymbolPreset, Record<SymbolKey, string>> = {
@@ -79,6 +81,7 @@ const SYMBOL_PRESETS: Record<SymbolPreset, Record<SymbolKey, string>> = {
 		error: "x",
 		update: "^",
 		prompt: ">",
+		runDone: "*",
 	},
 };
 

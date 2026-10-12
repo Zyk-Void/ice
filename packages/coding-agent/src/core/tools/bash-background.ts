@@ -9,6 +9,20 @@
  * can still be read. Every process is killed on dispose.
  */
 
+/** How often a blocking bash wait checks for a user message that should end it. */
+export const USER_MESSAGE_POLL_MS = 250;
+/** A foreground command must run this long before a queued user message moves it to the background. */
+export const FOREGROUND_MESSAGE_GRACE_MS = 5000;
+
+/** Custom message type that reports a background shell's exit to the model. */
+export const BASH_BACKGROUND_COMPLETED_CUSTOM_TYPE = "bash_background_completed";
+
+/** A command's first line, with a count of the rest (a heredoc script can run to dozens of lines). */
+export function summarizeShellCommand(command: string): string {
+	const lines = command.trimEnd().split("\n");
+	return lines.length > 1 ? `${lines[0]} (+${lines.length - 1} more lines)` : lines[0]!;
+}
+
 export interface BashBackgroundCompletion {
 	taskId: string;
 	command: string;
@@ -18,6 +32,10 @@ export interface BashBackgroundCompletion {
 	durationMs: number;
 	/** The user stopped it from the Shells panel; it did not exit on its own. */
 	stoppedByUser?: boolean;
+	/** Exit code when the command ran to its end (not aborted, timed out, or killed). */
+	exitCode?: number;
+	/** The model's short description of the command, when it gave one. */
+	description?: string;
 }
 
 export type BackgroundShellStatus = "running" | "completed" | "failed" | "killed";
@@ -27,6 +45,8 @@ export interface BackgroundShellSnapshot {
 	command: string;
 	/** Who sent it to the background: the model (`run_in_background`) or the user (ctrl+b). */
 	origin: "model" | "user";
+	/** The model's short description of the command, when it gave one. */
+	description?: string;
 	status: BackgroundShellStatus;
 	startedAt: number;
 	endedAt?: number;
@@ -103,8 +123,8 @@ export class BashBackgroundRegistry {
 		command: string,
 		startedAt: number,
 		abort: () => void,
-		settled: Promise<{ text: string; isError: boolean }>,
-		options: { origin?: "model" | "user"; initialOutput?: string } = {},
+		settled: Promise<{ text: string; isError: boolean; exitCode?: number }>,
+		options: { origin?: "model" | "user"; description?: string; initialOutput?: string } = {},
 	): string {
 		const taskId = `bash-${this.nextTaskNumber++}`;
 		let markExited!: () => void;
@@ -115,6 +135,7 @@ export class BashBackgroundRegistry {
 			taskId,
 			command,
 			origin: options.origin ?? "user",
+			...(options.description ? { description: options.description } : {}),
 			status: "running",
 			startedAt,
 			totalChars: 0,
@@ -130,7 +151,7 @@ export class BashBackgroundRegistry {
 		// Output printed before a user backgrounded the call was already returned to the model.
 		shell.readCursor = shell.totalChars;
 		if (this.disposed) abort();
-		void settled.then(({ text, isError }) => {
+		void settled.then(({ text, isError, exitCode }) => {
 			if (this.disposed || shell.status !== "running") return;
 			shell.status = isError ? "failed" : "completed";
 			shell.endedAt = Date.now();
@@ -138,7 +159,15 @@ export class BashBackgroundRegistry {
 			shell.markExited();
 			this.pruneFinished();
 			this.notifyChange();
-			const completion = { taskId, command, text, isError, durationMs: shell.endedAt - startedAt };
+			const completion: BashBackgroundCompletion = {
+				taskId,
+				command,
+				text,
+				isError,
+				durationMs: shell.endedAt - startedAt,
+				...(exitCode !== undefined ? { exitCode } : {}),
+				...(shell.description ? { description: shell.description } : {}),
+			};
 			for (const listener of this.listeners) listener(completion);
 		});
 		this.notifyChange();
@@ -211,13 +240,14 @@ export class BashBackgroundRegistry {
 		this.pruneFinished();
 		this.notifyChange();
 		if (options.notify) {
-			const completion = {
+			const completion: BashBackgroundCompletion = {
 				taskId,
 				command: shell.command,
 				text: shell.finalText,
 				isError: true,
 				durationMs: shell.endedAt - shell.startedAt,
 				stoppedByUser: true,
+				...(shell.description ? { description: shell.description } : {}),
 			};
 			for (const listener of this.listeners) listener(completion);
 		}
@@ -271,6 +301,7 @@ export class BashBackgroundRegistry {
 			taskId: shell.taskId,
 			command: shell.command,
 			origin: shell.origin,
+			...(shell.description ? { description: shell.description } : {}),
 			status: shell.status,
 			startedAt: shell.startedAt,
 			...(shell.endedAt !== undefined ? { endedAt: shell.endedAt } : {}),

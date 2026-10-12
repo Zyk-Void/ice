@@ -122,6 +122,14 @@ export type WidgetPlacement = "aboveEditor" | "belowEditor";
 export interface ExtensionWidgetOptions {
 	/** Where the widget is rendered. Defaults to "aboveEditor". */
 	placement?: WidgetPlacement;
+	/** Explicit text projection for RPC when content is a TUI component factory. The factory is never executed by RPC. */
+	rpcText?: string[];
+}
+
+/** Options for a custom header or footer. */
+export interface ExtensionChromeOptions {
+	/** Explicit text projection for RPC. The factory is never executed by RPC. */
+	rpcText?: string[];
 }
 
 /** Raw terminal input listener for extensions. */
@@ -199,10 +207,14 @@ export interface ExtensionUIContext {
 		factory:
 			| ((tui: TUI, theme: Theme, footerData: ReadonlyFooterDataProvider) => Component & { dispose?(): void })
 			| undefined,
+		options?: ExtensionChromeOptions,
 	): void;
 
 	/** Set a custom header component (shown at startup, above chat), or undefined to restore the built-in header. */
-	setHeader(factory: ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined): void;
+	setHeader(
+		factory: ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined,
+		options?: ExtensionChromeOptions,
+	): void;
 
 	/** Set the terminal window/tab title. */
 	setTitle(title: string): void;

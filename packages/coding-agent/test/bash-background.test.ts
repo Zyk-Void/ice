@@ -1,23 +1,31 @@
 import { describe, expect, it, vi } from "vitest";
+import type { ExtensionContext } from "../src/core/extensions/types.ts";
 import { createBashToolDefinition } from "../src/core/tools/bash.ts";
 import {
 	type BashBackgroundCompletion,
 	BashBackgroundRegistry,
+	FOREGROUND_MESSAGE_GRACE_MS,
 	MAX_FINISHED_SHELLS,
 	MAX_OUTPUT_CHARS,
+	summarizeShellCommand,
 } from "../src/core/tools/bash-background.ts";
 import { createBashKillToolDefinition, createBashOutputToolDefinition } from "../src/core/tools/bash-shells.ts";
 
 type BashResult = { content: Array<{ type: string; text?: string }>; details?: { backgroundTaskId?: string } };
 
-function runBash(registry: BashBackgroundRegistry, command: string, onUpdate?: (text: string) => void) {
+function runBash(
+	registry: BashBackgroundRegistry,
+	command: string,
+	onUpdate?: (text: string) => void,
+	ctx?: ExtensionContext,
+) {
 	const tool = createBashToolDefinition(process.cwd(), { background: registry, exposeSessionEnvironment: false });
 	return tool.execute(
 		"call-1",
 		{ command },
 		undefined,
 		(update) => onUpdate?.(update.content.map((block) => ("text" in block ? block.text : "")).join("")),
-		undefined as never,
+		ctx ?? (undefined as never),
 	) as Promise<BashResult>;
 }
 
@@ -48,6 +56,23 @@ describe("bash background release", () => {
 		expect(completions[0]!.text).toContain("second");
 		expect(registry.runningCount()).toBe(0);
 	});
+
+	it("lets a quick command finish but moves a slow one to the background when the user queues a message", async () => {
+		const registry = new BashBackgroundRegistry();
+		const ctx = { hasPendingMessages: () => true } as ExtensionContext;
+		const quick = await runBash(registry, "echo done", undefined, ctx);
+		expect(quick.details?.backgroundTaskId).toBeUndefined();
+		expect(text(quick)).toContain("done");
+
+		const startedAt = Date.now();
+		const slow = await runBash(registry, "echo started; sleep 30", undefined, ctx);
+		expect(Date.now() - startedAt).toBeGreaterThanOrEqual(FOREGROUND_MESSAGE_GRACE_MS);
+		expect(slow.details?.backgroundTaskId).toBe("bash-1");
+		expect(text(slow)).toContain("The user sent a message while this command ran");
+		expect(text(slow)).toContain("started");
+		expect(registry.get("bash-1")).toMatchObject({ status: "running", origin: "user" });
+		registry.dispose();
+	}, 15_000);
 
 	it("leaves unreleased calls in the foreground and reports failures normally", async () => {
 		const registry = new BashBackgroundRegistry();
@@ -89,6 +114,13 @@ function text(result: { content: Array<{ type: string; text?: string }> }): stri
 	return result.content.map((block) => block.text ?? "").join("");
 }
 
+describe("summarizeShellCommand", () => {
+	it("keeps a one-line command and shortens a script to its first line", () => {
+		expect(summarizeShellCommand("npm test")).toBe("npm test");
+		expect(summarizeShellCommand("python3 - <<'PY'\nprint(1)\nPY\n")).toBe("python3 - <<'PY' (+2 more lines)");
+	});
+});
+
 describe("background shells started by the model", () => {
 	it("returns at once and lets bash_output read new output, then wait for the exit", async () => {
 		const registry = new BashBackgroundRegistry();
@@ -113,6 +145,23 @@ describe("background shells started by the model", () => {
 		expect(newOutput).toContain("two");
 		expect(last).toContain("three");
 		expect(registry.runningCount()).toBe(0);
+		registry.dispose();
+	});
+
+	it("ends a bash_output wait early when the user queues a message", async () => {
+		const registry = new BashBackgroundRegistry();
+		const output = createBashOutputToolDefinition(registry);
+		await runBackground(registry, "sleep 30");
+		let pending = false;
+		const ctx = { hasPendingMessages: () => pending } as ExtensionContext;
+		setTimeout(() => {
+			pending = true;
+		}, 100);
+		const startedAt = Date.now();
+		const result = text(await output.execute("o", { id: "bash-1", wait_seconds: 60 }, undefined, undefined, ctx));
+		expect(Date.now() - startedAt).toBeLessThan(5000);
+		expect(result).toContain("bash-1: running");
+		expect(result).toContain("the user sent a message");
 		registry.dispose();
 	});
 

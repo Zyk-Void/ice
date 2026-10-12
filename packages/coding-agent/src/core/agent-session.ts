@@ -48,6 +48,7 @@ import {
 	streamSimple,
 } from "@zykairotis/ice-ai/compat";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
+import { linkAbortSignal } from "../utils/abort.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
@@ -102,14 +103,18 @@ import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
-import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
+import type { BranchSummaryEntry, CompactionEntry, SessionManager, SessionManagerEvent } from "./session-manager.ts";
 import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
-import { BashBackgroundRegistry } from "./tools/bash-background.ts";
+import {
+	BASH_BACKGROUND_COMPLETED_CUSTOM_TYPE,
+	BashBackgroundRegistry,
+	summarizeShellCommand,
+} from "./tools/bash-background.ts";
 import {
 	BASH_SHELL_TOOL_NAMES,
 	createBashKillToolDefinition,
@@ -147,6 +152,17 @@ export function parseSkillBlock(text: string): ParsedSkillBlock | null {
 	};
 }
 
+/** Effective session controls, without credentials or executable settings. */
+export interface SessionConfiguration {
+	fastMode: boolean;
+	steeringMode: "all" | "one-at-a-time";
+	followUpMode: "all" | "one-at-a-time";
+	autoCompactionEnabled: boolean;
+	autoRetryEnabled: boolean;
+	activeTools: string[];
+	scopedModels: Array<{ provider: string; modelId: string; thinkingLevel?: ThinkingLevel }>;
+}
+
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
 	| Exclude<AgentEvent, { type: "agent_end" }>
@@ -164,9 +180,18 @@ export type AgentSessionEvent =
 			followUpEntries: readonly QueuedMessageEntry[];
 	  }
 	| { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" }
-	| { type: "entry_appended"; entry: SessionEntry }
+	| SessionManagerEvent
 	| { type: "session_info_changed"; name: string | undefined }
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
+	| {
+			type: "model_changed";
+			model: Model<string>;
+			previousModel?: Model<string>;
+			source: "set" | "cycle" | "restore" | "refresh";
+	  }
+	| { type: "configuration_changed"; configuration: SessionConfiguration }
+	| { type: "settings_applied" }
+	| { type: "resources_changed"; reason: "reload" | "skills" }
 	| {
 			type: "compaction_end";
 			reason: "manual" | "threshold" | "overflow";
@@ -329,9 +354,11 @@ export class AgentSession {
 	readonly settingsManager: SettingsManager;
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	private _lastConfiguration = "";
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
+	private _unsubscribeSessionManager?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _isAgentRunActive = false;
 	private _idleWaitPromise: Promise<void> | undefined;
@@ -433,17 +460,22 @@ export class AgentSession {
 					: completion.text;
 			// A user stop is deliberate: record it for the next turn instead of waking the model to react.
 			const stopped = completion.stoppedByUser === true;
+			// The model already has the full command in its own tool call; repeating a long script buries the output.
+			const command = summarizeShellCommand(completion.command);
 			void this.sendCustomMessage(
 				{
-					customType: "bash_background_completed",
+					customType: BASH_BACKGROUND_COMPLETED_CUSTOM_TYPE,
 					content: stopped
-						? `The user stopped background shell ${completion.taskId}: ${completion.command}\nDo not restart it unless they ask.`
-						: `Background command ${completion.taskId} finished${completion.isError ? " with an error" : ""}: ${completion.command}\n\n${text}`,
+						? `The user stopped background shell ${completion.taskId}: ${command}\nDo not restart it unless they ask.`
+						: `Background command ${completion.taskId} finished${completion.isError ? " with an error" : ""}: ${command}\n\n${text}`,
 					display: true,
 					details: {
 						taskId: completion.taskId,
+						command,
 						isError: completion.isError,
 						durationMs: completion.durationMs,
+						...(completion.exitCode !== undefined ? { exitCode: completion.exitCode } : {}),
+						...(completion.description ? { description: completion.description } : {}),
 						...(stopped ? { stoppedByUser: true } : {}),
 					},
 				},
@@ -457,6 +489,7 @@ export class AgentSession {
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
+		this._unsubscribeSessionManager = this.sessionManager.subscribe((event) => this._emit(event));
 		this._installAgentToolHooks();
 		this._installAgentNextTurnRefresh();
 
@@ -654,6 +687,26 @@ export class AgentSession {
 		for (const l of this._eventListeners) {
 			l(event);
 		}
+	}
+
+	private _emitConfigurationChange(): void {
+		const configuration: SessionConfiguration = {
+			fastMode: this.getFastMode(),
+			steeringMode: this.steeringMode,
+			followUpMode: this.followUpMode,
+			autoCompactionEnabled: this.autoCompactionEnabled,
+			autoRetryEnabled: this.autoRetryEnabled,
+			activeTools: this.getActiveToolNames(),
+			scopedModels: this._scopedModels.map(({ model, thinkingLevel }) => ({
+				provider: model.provider,
+				modelId: model.id,
+				thinkingLevel,
+			})),
+		};
+		const serialized = JSON.stringify(configuration);
+		if (serialized === this._lastConfiguration) return;
+		this._lastConfiguration = serialized;
+		this._emit({ type: "configuration_changed", configuration });
 	}
 
 	private _emitQueueUpdate(): void {
@@ -967,6 +1020,8 @@ export class AgentSession {
 			"This extension ctx is stale after session replacement or reload. Do not use a captured ice or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 		);
 		this._disconnectFromAgent();
+		this._unsubscribeSessionManager?.();
+		this._unsubscribeSessionManager = undefined;
 		this._eventListeners = [];
 		cleanupSessionResources(this.sessionId);
 	}
@@ -1066,6 +1121,7 @@ export class AgentSession {
 		// Rebuild base system prompt with new tool set
 		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
 		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
+		this._emitConfigurationChange();
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -1140,6 +1196,7 @@ export class AgentSession {
 	/** Update scoped models for cycling */
 	setScopedModels(scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>): void {
 		this._scopedModels = scopedModels;
+		this._emitConfigurationChange();
 	}
 
 	/** File-based prompt templates */
@@ -1785,12 +1842,28 @@ export class AgentSession {
 	// Model Management
 	// =========================================================================
 
+	private _emitModelChanged(
+		model: Model<string>,
+		previousModel: Model<string> | undefined,
+		source: Extract<AgentSessionEvent, { type: "model_changed" }>["source"],
+	): void {
+		// Notifications are capability metadata, not private request-auth configuration.
+		const { headers: _headers, ...publicModel } = model;
+		this._emit({
+			type: "model_changed",
+			model: publicModel,
+			previousModel: previousModel ? { ...previousModel, headers: undefined } : undefined,
+			source,
+		});
+	}
+
 	private async _emitModelSelect(
 		nextModel: Model<any>,
 		previousModel: Model<any> | undefined,
 		source: "set" | "cycle" | "restore",
 	): Promise<void> {
 		if (modelsAreEqual(previousModel, nextModel)) return;
+		this._emitModelChanged(nextModel, previousModel, source);
 		await this._extensionRunner.emit({
 			type: "model_select",
 			model: nextModel,
@@ -1965,6 +2038,7 @@ export class AgentSession {
 
 	setFastMode(enabled: boolean): void {
 		this.settingsManager.setFastMode(enabled);
+		this._emitConfigurationChange();
 	}
 
 	/**
@@ -2014,6 +2088,8 @@ export class AgentSession {
 				previousLevel,
 			});
 		}
+		this._emitConfigurationChange();
+		this._emit({ type: "settings_applied" });
 	}
 
 	/**
@@ -2023,6 +2099,7 @@ export class AgentSession {
 	setSteeringMode(mode: "all" | "one-at-a-time"): void {
 		this.agent.steeringMode = mode;
 		this.settingsManager.setSteeringMode(mode);
+		this._emitConfigurationChange();
 	}
 
 	/**
@@ -2032,6 +2109,7 @@ export class AgentSession {
 	setFollowUpMode(mode: "all" | "one-at-a-time"): void {
 		this.agent.followUpMode = mode;
 		this.settingsManager.setFollowUpMode(mode);
+		this._emitConfigurationChange();
 	}
 
 	// =========================================================================
@@ -2065,8 +2143,10 @@ export class AgentSession {
 	 * Manually compact the session context.
 	 * Aborts current agent operation first.
 	 * @param customInstructions Optional instructions for the compaction summary
+	 * @param options.signal Caller cancellation, linked to this call's owned controller
 	 */
-	async compact(customInstructions?: string): Promise<CompactionResult> {
+	async compact(customInstructions?: string, options?: { signal?: AbortSignal }): Promise<CompactionResult> {
+		options?.signal?.throwIfAborted();
 		while (this._compactionInFlight) {
 			// Preempt an in-flight compaction so a manual or extension compaction -
 			// possibly with custom instructions - takes over. Re-check after waiting:
@@ -2074,6 +2154,7 @@ export class AgentSession {
 			// may claim the lock before the others wait on the new promise.
 			this.abortCompaction();
 			await this._compactionSettled;
+			options?.signal?.throwIfAborted();
 		}
 		if (this._branchSummaryAbortController) {
 			throw new Error("Wait for branch summarization to finish before compacting.");
@@ -2081,6 +2162,7 @@ export class AgentSession {
 		this._claimCompactionLock();
 		const controller = new AbortController();
 		this._compactionAbortController = controller;
+		const unlinkSignal = linkAbortSignal(controller, options?.signal);
 		let completed = false;
 
 		try {
@@ -2233,6 +2315,7 @@ export class AgentSession {
 			if (aborted) throw new DOMException("Compaction cancelled", "AbortError");
 			throw error;
 		} finally {
+			unlinkSignal();
 			if (this._compactionAbortController === controller) this._compactionAbortController = undefined;
 			this._releaseCompactionLock();
 			if (completed && !controller.signal.aborted) this._startQueuedInputRun();
@@ -2636,6 +2719,7 @@ export class AgentSession {
 	 */
 	setAutoCompactionEnabled(enabled: boolean): void {
 		this.settingsManager.setCompactionEnabled(enabled);
+		this._emitConfigurationChange();
 	}
 
 	/** Request a normal agent-loop stop after the current tool turn completes. */
@@ -2736,6 +2820,11 @@ export class AgentSession {
 			: undefined;
 	}
 
+	/** Reconcile the selected model with the runtime's cached metadata, without selecting a fallback. */
+	refreshModelMetadata(): void {
+		this._refreshCurrentModelFromRegistry();
+	}
+
 	private _refreshCurrentModelFromRegistry(): void {
 		const currentModel = this.model;
 		if (!currentModel) {
@@ -2748,6 +2837,8 @@ export class AgentSession {
 		}
 
 		this.agent.state.model = refreshedModel;
+		this.setThinkingLevel(this.thinkingLevel);
+		this._emitModelChanged(refreshedModel, currentModel, "refresh");
 	}
 
 	private _bindExtensionCore(runner: ExtensionRunner): void {
@@ -2798,12 +2889,8 @@ export class AgentSession {
 				},
 				appendEntry: (customType, data, options) => {
 					if (options?.durable) this.sessionManager.flushDurably();
-					const entryId = this.sessionManager.appendCustomEntry(customType, data);
+					this.sessionManager.appendCustomEntry(customType, data);
 					if (options?.durable) this.sessionManager.flushDurably();
-					const entry = this.sessionManager.getEntry(entryId);
-					if (entry) {
-						this._emit({ type: "entry_appended", entry });
-					}
 				},
 				setSessionName: (name) => {
 					this.setSessionName(name);
@@ -3050,6 +3137,7 @@ export class AgentSession {
 		if (!this._resourceLoader.refreshSkillsIfChanged()) return false;
 		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
 		this.agent.state.systemPrompt = this._systemPromptOverride ?? this._baseSystemPrompt;
+		this._emit({ type: "resources_changed", reason: "skills" });
 		return true;
 	}
 
@@ -3077,6 +3165,7 @@ export class AgentSession {
 			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
 			await this.extendResourcesFromExtensions("reload");
 		}
+		this._emit({ type: "resources_changed", reason: "reload" });
 	}
 
 	// =========================================================================
@@ -3206,6 +3295,7 @@ export class AgentSession {
 	 */
 	setAutoRetryEnabled(enabled: boolean): void {
 		this.settingsManager.setRetryEnabled(enabled);
+		this._emitConfigurationChange();
 	}
 
 	// =========================================================================
@@ -3220,21 +3310,23 @@ export class AgentSession {
 	 * @param options.excludeFromContext If true, command output won't be sent to LLM (!! prefix)
 	 * @param options.id Optional identifier included in bash execution update events
 	 * @param options.operations Custom BashOperations for remote execution
+	 * @param options.signal Cancels only this operation; committed partial output remains in history
 	 */
 	async executeBash(
 		command: string,
 		onChunk?: (chunk: string) => void,
-		options?: { excludeFromContext?: boolean; id?: string; operations?: BashOperations },
+		options?: { excludeFromContext?: boolean; id?: string; operations?: BashOperations; signal?: AbortSignal },
 	): Promise<BashResult> {
+		options?.signal?.throwIfAborted();
 		const abortController = new AbortController();
 		this._bashAbortControllers.add(abortController);
-
-		// Apply command prefix if configured (e.g., "shopt -s expand_aliases" for alias support)
-		const prefix = this.settingsManager.getShellCommandPrefix();
-		const shellPath = this.settingsManager.getShellPath();
-		const resolvedCommand = prefix ? `${prefix}\n${command}` : command;
+		const unlinkSignal = linkAbortSignal(abortController, options?.signal);
 
 		try {
+			// Keep setup inside cleanup ownership even when a settings accessor fails.
+			const prefix = this.settingsManager.getShellCommandPrefix();
+			const shellPath = this.settingsManager.getShellPath();
+			const resolvedCommand = prefix ? `${prefix}\n${command}` : command;
 			const result = await executeBashWithOperations(
 				resolvedCommand,
 				this.sessionManager.getCwd(),
@@ -3251,6 +3343,7 @@ export class AgentSession {
 			this.recordBashResult(command, result, options);
 			return result;
 		} finally {
+			unlinkSignal();
 			this._bashAbortControllers.delete(abortController);
 		}
 	}
@@ -3349,12 +3442,20 @@ export class AgentSession {
 	 * @param options.customInstructions Custom instructions for summarizer
 	 * @param options.replaceInstructions If true, customInstructions replaces the default prompt
 	 * @param options.label Label to attach to the branch summary entry
+	 * @param options.signal Caller cancellation; already committed navigation is not rolled back
 	 * @returns Result with editorText (if user message) and cancelled status
 	 */
 	async navigateTree(
 		targetId: string,
-		options: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string } = {},
+		options: {
+			summarize?: boolean;
+			customInstructions?: string;
+			replaceInstructions?: boolean;
+			label?: string;
+			signal?: AbortSignal;
+		} = {},
 	): Promise<{ editorText?: string; cancelled: boolean; aborted?: boolean; summaryEntry?: BranchSummaryEntry }> {
+		if (options.signal?.aborted) return { cancelled: true, aborted: true };
 		if (this.isStreaming) {
 			throw new Error("Wait for the current response to finish before navigating the session tree.");
 		}
@@ -3406,6 +3507,7 @@ export class AgentSession {
 		// This navigation owns its controller across extension/auth/provider awaits.
 		const controller = new AbortController();
 		this._branchSummaryAbortController = controller;
+		const unlinkSignal = linkAbortSignal(controller, options.signal);
 		let settle!: () => void;
 		this._branchSummarySettled = new Promise<void>((resolve) => {
 			settle = resolve;
@@ -3562,6 +3664,7 @@ export class AgentSession {
 			}
 			throw error;
 		} finally {
+			unlinkSignal();
 			if (this._branchSummaryAbortController === controller) this._branchSummaryAbortController = undefined;
 			settle();
 		}

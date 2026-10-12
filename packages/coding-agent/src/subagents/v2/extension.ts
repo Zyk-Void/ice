@@ -402,6 +402,30 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			}
 		},
 		respondToApproval: (approvalId, answer) => runtime.respondToApproval(approvalId, answer),
+		messages: (ref) => {
+			try {
+				return runtime.messagesOf(runtime.resolveChildRef(ref));
+			} catch {
+				return undefined; // Unknown child, another parent's child, or no parent session yet.
+			}
+		},
+		control: async (ref, action, message) => {
+			const id = runtime.resolveChildRef(ref);
+			switch (action) {
+				case "stop":
+					await runtime.stop(id);
+					return `Stopped the current turn of ${id}; the child session is kept.`;
+				case "resume":
+					await runtime.revive(id);
+					return `Resumed ${id}.`;
+				case "delete":
+					await runtime.delete(id);
+					return `Deleted ${id}.`;
+				case "send":
+					if (!message?.trim()) throw new Error("send needs a message.");
+					return runtime.send(id, message, "followup");
+			}
+		},
 	});
 	// Ctrl+B: foreground agent waits the user may move to the background.
 	const blockingWaits = new Set<{ ownerSessionId: string; release: () => void }>();
@@ -633,10 +657,18 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			};
 			signal?.addEventListener("abort", abort, { once: true });
 			if (signal?.aborted) abort();
+			// The user can always talk to the parent: a queued message or Ctrl+B moves the children to the background.
 			let release!: () => void;
+			let releasedByMessage = false;
 			const released = new Promise<"released">((resolve) => {
 				release = () => resolve("released");
 			});
+			const releaseForMessage = () => {
+				if (!ctx.hasPendingMessages()) return;
+				releasedByMessage = true;
+				release();
+			};
+			const messagePoll = setInterval(releaseForMessage, WAIT_MESSAGE_POLL_MS);
 			// Keyed like count()/release(): the bridge's current parent session.
 			const wait = { ownerSessionId: options.agentViewBridge?.getParentSession()?.sessionId ?? "", release };
 			blockingWaits.add(wait);
@@ -649,13 +681,14 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 			};
 			publishProgress();
 			const progressTimer = onUpdate ? setInterval(publishProgress, PROGRESS_INTERVAL_MS) : undefined;
+			releaseForMessage();
 			try {
 				const settled = await Promise.race([Promise.all(runs), released]);
 				if (settled === "released") {
 					const moved = runtime.detachToBackground(order);
 					backgroundIds.push(...order);
 					return text(
-						`Moved ${moved} running subagent${moved === 1 ? "" : "s"} to the background (${order.map((id) => (nameOf(id) ? `${nameOf(id)} (${id})` : id)).join(", ")}). Each completion arrives as a follow-up message; children that already finished can be read with agent_control action=output.`,
+						`${releasedByMessage ? "Stopped waiting because the user sent a message; read it now. " : ""}Moved ${moved} running subagent${moved === 1 ? "" : "s"} to the background (${order.map((id) => (nameOf(id) ? `${nameOf(id)} (${id})` : id)).join(", ")}). Each completion arrives as a follow-up message; children that already finished can be read with agent_control action=output.`,
 						{ ids: order, detached: true },
 					);
 				}
@@ -678,6 +711,7 @@ export default function iceSubagentsV2(ice: ExtensionAPI, options: IceSubagentsO
 				);
 			} finally {
 				if (progressTimer) clearInterval(progressTimer);
+				clearInterval(messagePoll);
 				blockingWaits.delete(wait);
 				signal?.removeEventListener("abort", abort);
 			}

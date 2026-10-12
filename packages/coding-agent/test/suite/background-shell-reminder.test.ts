@@ -1,6 +1,6 @@
 import type { Context } from "@zykairotis/ice-ai";
 import { fauxAssistantMessage } from "@zykairotis/ice-ai/compat";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, type Harness } from "./harness.ts";
 
 const harnesses: Harness[] = [];
@@ -60,5 +60,29 @@ describe("background shell stopped by the user", () => {
 		await harness.session.prompt("continue");
 		expect(seen[0]).toContain(`The user stopped background shell ${id}`);
 		expect(seen[0]).toContain("Do not restart it unless they ask.");
+	});
+});
+
+describe("background shell completion message", () => {
+	it("names a multi-line command by its first line so the output stays in view", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("noted")]);
+		const script = "python3 - <<'PY'\nprint('a')\nprint('b')\nPY";
+		harness.session.bashBackground.adopt(
+			script,
+			Date.now(),
+			() => {},
+			Promise.resolve({ text: "a\nb", isError: false }),
+			{ origin: "model" },
+		);
+		await vi.waitFor(() => expect(harness.eventsOfType("agent_end")).toHaveLength(1));
+		const message = harness.session.messages.find(
+			(entry) => entry.role === "custom" && entry.customType === "bash_background_completed",
+		);
+		const content = JSON.stringify(message?.role === "custom" ? message.content : undefined);
+		expect(content).toContain("finished: python3 - <<'PY' (+3 more lines)");
+		expect(content).not.toContain("print('a')");
+		expect(content).toContain("a\\nb");
 	});
 });

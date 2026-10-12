@@ -177,7 +177,7 @@ export interface Settings {
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
 	uiMode?: UiMode; // default: "regular"
-	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular UI mode
+	fullscreenScrollbar?: ScrollViewScrollbar; // default: "hidden"; no effect in regular UI mode
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -337,6 +337,29 @@ export class SettingsManager {
 	private projectSettingsLoadError: Error | null = null; // Track if project settings file had parse errors
 	private writeQueue: Promise<void> = Promise.resolve();
 	private errors: SettingsError[];
+	private readonly changeListeners = new Set<() => void>();
+	private changePending = false;
+
+	/** In-memory preference invalidation; not a file watcher or durability acknowledgement. */
+	subscribeChanges(listener: () => void): () => void {
+		this.changeListeners.add(listener);
+		return () => this.changeListeners.delete(listener);
+	}
+
+	private notifyChange(): void {
+		if (this.changePending) return;
+		this.changePending = true;
+		queueMicrotask(() => {
+			this.changePending = false;
+			for (const listener of [...this.changeListeners]) {
+				try {
+					listener();
+				} catch {
+					/* Observers cannot veto preference updates. */
+				}
+			}
+		});
+	}
 
 	private constructor(
 		storage: SettingsStorage,
@@ -616,6 +639,7 @@ export class SettingsManager {
 			this.projectSettings = {};
 			this.projectSettingsLoadError = null;
 			this.settings = this.mergeScopedSettings();
+			this.notifyChange();
 			return;
 		}
 
@@ -626,6 +650,7 @@ export class SettingsManager {
 			this.recordError("project", projectLoad.error);
 		}
 		this.settings = this.mergeScopedSettings();
+		this.notifyChange();
 	}
 
 	async reload(): Promise<void> {
@@ -654,11 +679,13 @@ export class SettingsManager {
 		}
 
 		this.settings = this.mergeScopedSettings();
+		this.notifyChange();
 	}
 
 	/** Apply additional overrides on top of current settings */
 	applyOverrides(overrides: Partial<Settings>): void {
 		this.settings = deepMergeSettings(this.settings, normalizeLegacySettings(overrides) as Settings);
+		this.notifyChange();
 	}
 
 	/** Mark a global field as modified during this session */
@@ -760,6 +787,7 @@ export class SettingsManager {
 
 	private save(): void {
 		this.settings = this.mergeScopedSettings();
+		this.notifyChange();
 
 		if (this.globalSettingsLoadError) {
 			return;
@@ -778,6 +806,7 @@ export class SettingsManager {
 		this.assertProjectTrustedForWrite();
 		this.projectSettings = structuredClone(settings);
 		this.settings = this.mergeScopedSettings();
+		this.notifyChange();
 
 		if (this.projectSettingsLoadError) {
 			return;
@@ -1402,7 +1431,7 @@ export class SettingsManager {
 
 	getFullscreenScrollbar(): ScrollViewScrollbar {
 		const mode = this.settings.fullscreenScrollbar;
-		return mode === "always" || mode === "hidden" ? mode : "auto";
+		return mode === "always" || mode === "auto" ? mode : "hidden";
 	}
 
 	setFullscreenScrollbar(mode: ScrollViewScrollbar): void {

@@ -53,7 +53,12 @@ describe("ICE agent view bridge", () => {
 		const respond = vi.fn(() => true);
 		const listener = vi.fn();
 		bridge.subscribe(listener);
-		bridge.setSubagentControlSource({ overview: () => overview, respondToApproval: respond });
+		bridge.setSubagentControlSource({
+			overview: () => overview,
+			respondToApproval: respond,
+			messages: () => undefined,
+			control: async () => "",
+		});
 		expect(listener).toHaveBeenCalledOnce();
 		expect(bridge.getSubagentOverview()).toBe(overview);
 		expect(bridge.respondToSubagentApproval("r1", "allow-session")).toBe(true);
@@ -63,6 +68,8 @@ describe("ICE agent view bridge", () => {
 				throw new Error("no parent session");
 			},
 			respondToApproval: respond,
+			messages: () => undefined,
+			control: async () => "",
 		});
 		expect(bridge.getSubagentOverview()).toBeUndefined();
 	});

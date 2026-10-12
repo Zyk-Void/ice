@@ -22,13 +22,13 @@ export interface SessionHeaderData {
 	expandedHelp: string;
 }
 
-/** Three-row pixel penguin mascot, rendered in the accent color. */
-const BLOCK_ART = [" ▄███▄ ", "█▀█▀█▀█", " ▀▄▄▄▀ "];
+/** Pixel mascot, rendered in the accent color. */
+const BLOCK_ART = ["█▄  ▄▄▄  ▄█", "▀██▀███▀██▀", " ██▄▀█▀▄██", "  ▀█████▀", "   █▄▀▄█"];
 
 const ASCII_ART = [" (o>", "//\\\\", "V_/_"];
 
 const ART_GAP = 2;
-/** Below this many columns for the text, the penguin is dropped. */
+/** Below this many columns for the text, the mascot is dropped. */
 const MIN_TEXT_WIDTH = 24;
 
 /** Truncate a path in the middle so both the root and the leaf stay visible. */
@@ -43,9 +43,9 @@ export function middleTruncate(text: string, maxWidth: number): string {
 }
 
 /**
- * Compact startup banner: a small penguin beside three lines (name and
+ * Compact startup banner: a pixel mascot beside three lines (name and
  * version; model, mode, and elevated capabilities; directory and loaded
- * resources). The penguin drops on narrow terminals.
+ * resources). The mascot drops on narrow terminals.
  */
 export class SessionHeaderComponent implements Component {
 	private readonly getData: () => SessionHeaderData;
@@ -71,9 +71,18 @@ export class SessionHeaderComponent implements Component {
 		const text = this.buildText(data, textWidth);
 
 		const lines: string[] = [];
-		for (let row = 0; row < Math.max(text.length, showArt ? art.length : 0); row++) {
-			const left = showArt ? theme.fg("accent", (art[row] ?? "").padEnd(artWidth)) + " ".repeat(ART_GAP) : "";
-			lines.push(`${left}${text[row] ?? ""}`.trimEnd());
+		// Text block is vertically centered against the mascot.
+		const height = Math.max(text.length, showArt ? art.length : 0);
+		const textTop = Math.floor((height - text.length) / 2);
+		for (let row = 0; row < height; row++) {
+			const artLine = showArt ? (art[row] ?? "") : "";
+			const textLine = text[row - textTop];
+			if (textLine === undefined) {
+				lines.push(theme.fg("accent", artLine));
+				continue;
+			}
+			const left = showArt ? theme.fg("accent", artLine.padEnd(artWidth)) + " ".repeat(ART_GAP) : "";
+			lines.push(`${left}${textLine}`);
 		}
 
 		lines.push(truncateToWidth(theme.fg("dim", data.hint), width, sym("ellipsis")));

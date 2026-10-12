@@ -9,6 +9,33 @@ let stdoutTakeoverState: StdoutTakeoverState | undefined;
 const RAW_STDOUT_RETRY_DELAY_MS = 10;
 
 let rawStdoutWriteTail: Promise<void> = Promise.resolve();
+let rawStdoutLimit: number | undefined;
+let rawStdoutQueuedBytes = 0;
+
+export class RawStdoutLimitError extends Error {
+	readonly code: "output_too_large" | "output_overflow";
+
+	constructor(code: "output_too_large" | "output_overflow") {
+		super(
+			code === "output_too_large"
+				? "Raw stdout write exceeds the byte limit"
+				: "Raw stdout queue exceeds the byte limit",
+		);
+		this.name = "RawStdoutLimitError";
+		this.code = code;
+	}
+}
+
+/** Opt-in UTF-8 byte ceiling for queued and in-flight writes; other modes stay unlimited. */
+export function configureRawStdoutLimit(maxBytes?: number): void {
+	if (maxBytes !== undefined && (!Number.isSafeInteger(maxBytes) || maxBytes < 0))
+		throw new RangeError("Raw stdout limit must be a non-negative safe integer");
+	rawStdoutLimit = maxBytes;
+}
+
+export function getRawStdoutQueuedBytes(): number {
+	return rawStdoutQueuedBytes;
+}
 
 function getRawStdoutWrite(): StdoutTakeoverState["rawStdoutWrite"] {
 	if (stdoutTakeoverState) {
@@ -70,6 +97,8 @@ export function takeOverStdout(): void {
 }
 
 export function restoreStdout(): void {
+	// Pending tails still own their reservations; never reset their counter.
+	configureRawStdoutLimit();
 	if (!stdoutTakeoverState) {
 		return;
 	}
@@ -86,7 +115,17 @@ export function writeRawStdout(text: string): void {
 	if (text.length === 0) {
 		return;
 	}
-	rawStdoutWriteTail = rawStdoutWriteTail.then(() => writeRawStdoutChunk(text));
+	const bytes = Buffer.byteLength(text, "utf8");
+	if (rawStdoutLimit !== undefined) {
+		if (bytes > rawStdoutLimit) throw new RawStdoutLimitError("output_too_large");
+		if (bytes > rawStdoutLimit - rawStdoutQueuedBytes) throw new RawStdoutLimitError("output_overflow");
+	}
+	rawStdoutQueuedBytes += bytes;
+	rawStdoutWriteTail = rawStdoutWriteTail
+		.then(() => writeRawStdoutChunk(text))
+		.finally(() => {
+			rawStdoutQueuedBytes -= bytes;
+		});
 	void rawStdoutWriteTail.catch(() => {
 		process.exit(1);
 	});

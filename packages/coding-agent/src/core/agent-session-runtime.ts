@@ -54,6 +54,15 @@ export class SessionImportFileNotFoundError extends Error {
 	}
 }
 
+export class SessionRuntimeUnavailableError extends Error {
+	readonly errorCode = "runtime_unavailable";
+
+	constructor() {
+		super("Session runtime is unavailable; explicitly create, switch, or import a session to recover.");
+		this.name = "SessionRuntimeUnavailableError";
+	}
+}
+
 function extractUserMessageText(content: string | Array<{ type: string; text?: string }>): string {
 	if (typeof content === "string") {
 		return content;
@@ -80,6 +89,8 @@ export class AgentSessionRuntime {
 	private readonly createRuntime: CreateAgentSessionRuntimeFactory;
 	private _diagnostics: AgentSessionRuntimeDiagnostic[];
 	private _modelFallbackMessage?: string;
+	private _available = true;
+	private invalidated = false;
 
 	constructor(
 		_session: AgentSession,
@@ -100,7 +111,12 @@ export class AgentSessionRuntime {
 	}
 
 	get session(): AgentSession {
+		if (!this._available) throw new SessionRuntimeUnavailableError();
 		return this._session;
+	}
+
+	get isAvailable(): boolean {
+		return this._available;
 	}
 
 	get cwd(): string {
@@ -135,6 +151,7 @@ export class AgentSessionRuntime {
 		reason: "new" | "resume",
 		targetSessionFile?: string,
 	): Promise<{ cancelled: boolean }> {
+		if (!this._available) return { cancelled: false };
 		const runner = this.session.extensionRunner;
 		if (!runner.hasHandlers("session_before_switch")) {
 			return { cancelled: false };
@@ -166,16 +183,19 @@ export class AgentSessionRuntime {
 	}
 
 	private async teardownCurrent(reason: SessionShutdownEvent["reason"], targetSessionFile?: string): Promise<void> {
+		if (this.invalidated) return;
 		// Settle any active response first so the aborted turn (including tool
 		// results) is persisted to the outgoing session before it is replaced.
-		await this.session.abortAndWaitForSettlement();
-		await emitSessionShutdownEvent(this.session.extensionRunner, {
+		await this._session.abortAndWaitForSettlement();
+		await emitSessionShutdownEvent(this._session.extensionRunner, {
 			type: "session_shutdown",
 			reason,
 			targetSessionFile,
 		});
 		this.beforeSessionInvalidate?.();
-		this.session.dispose();
+		this._available = false;
+		this.invalidated = true;
+		this._session.dispose();
 	}
 
 	private apply(result: CreateAgentSessionRuntimeResult): void {
@@ -183,14 +203,21 @@ export class AgentSessionRuntime {
 		this._services = result.services;
 		this._diagnostics = result.diagnostics;
 		this._modelFallbackMessage = result.modelFallbackMessage;
+		this.invalidated = false;
+		// Rebind callbacks may inspect the newly installed session. Unlike the outgoing
+		// disposed instance, it is live; a failed rebind closes public access below.
+		this._available = true;
 	}
 
 	private async finishSessionReplacement(withSession?: (ctx: ReplacedSessionContext) => Promise<void>): Promise<void> {
-		if (this.rebindSession) {
-			await this.rebindSession(this.session);
+		try {
+			if (this.rebindSession) await this.rebindSession(this._session);
+		} catch (error) {
+			this._available = false;
+			throw error;
 		}
 		if (withSession) {
-			await withSession(this.session.createReplacedSessionContext());
+			await withSession(this._session.createReplacedSessionContext());
 		}
 	}
 
@@ -207,7 +234,7 @@ export class AgentSessionRuntime {
 			return beforeResult;
 		}
 
-		const previousSessionFile = this.session.sessionFile;
+		const previousSessionFile = this._session.sessionFile;
 		const sessionManager = SessionManager.open(sessionPath, undefined, options?.cwdOverride);
 		assertSessionCwdExists(sessionManager, this.cwd);
 		await this.teardownCurrent("resume", sessionManager.getSessionFile());
@@ -234,9 +261,9 @@ export class AgentSessionRuntime {
 			return beforeResult;
 		}
 
-		const previousSessionFile = this.session.sessionFile;
-		const sessionDir = this.session.sessionManager.getSessionDir();
-		const sessionManager = this.session.sessionManager.isPersisted()
+		const previousSessionFile = this._session.sessionFile;
+		const sessionDir = this._session.sessionManager.getSessionDir();
+		const sessionManager = this._session.sessionManager.isPersisted()
 			? SessionManager.create(this.cwd, sessionDir)
 			: SessionManager.inMemory(this.cwd);
 		if (options?.parentSession) {
@@ -253,8 +280,13 @@ export class AgentSessionRuntime {
 			}),
 		);
 		if (options?.setup) {
-			await options.setup(this.session.sessionManager);
-			this.session.agent.state.messages = this.session.sessionManager.buildSessionContext().messages;
+			try {
+				await options.setup(this._session.sessionManager);
+				this._session.agent.state.messages = this._session.sessionManager.buildSessionContext().messages;
+			} catch (error) {
+				this._available = false;
+				throw error;
+			}
 		}
 		await this.finishSessionReplacement(options?.withSession);
 		return { cancelled: false };
@@ -367,7 +399,7 @@ export class AgentSessionRuntime {
 			throw new SessionImportFileNotFoundError(resolvedPath);
 		}
 
-		const sessionDir = this.session.sessionManager.getSessionDir();
+		const sessionDir = this._session.sessionManager.getSessionDir();
 		if (!existsSync(sessionDir)) {
 			mkdirSync(sessionDir, { recursive: true });
 		}
@@ -381,7 +413,7 @@ export class AgentSessionRuntime {
 			return beforeResult;
 		}
 
-		const previousSessionFile = this.session.sessionFile;
+		const previousSessionFile = this._session.sessionFile;
 		if (resolve(destinationPath) !== resolvedPath) {
 			// Exclusivity also protects against a writer winning the race after the existence check.
 			copyFileSync(resolvedPath, destinationPath, constants.COPYFILE_EXCL);

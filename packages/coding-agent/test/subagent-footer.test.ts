@@ -262,6 +262,8 @@ describe("subagent footer observability", () => {
 				diagnostics: [],
 			}),
 			respondToApproval: () => false,
+			messages: () => undefined,
+			control: async () => "",
 		});
 		const switcher = new SubagentFooterSwitcher({ requestRender: vi.fn() } as never, fakeTheme() as never, bridge);
 		try {

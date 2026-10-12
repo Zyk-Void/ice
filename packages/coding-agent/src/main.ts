@@ -19,7 +19,7 @@ import {
 	resolveCredentialForPrint,
 	validateCredentialPrintArgs,
 } from "./cli/credential-print.ts";
-import { processFileArguments } from "./cli/file-processor.ts";
+import { FileArgumentError, processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { readPipedStdin } from "./cli/piped-stdin.ts";
@@ -169,7 +169,15 @@ async function prepareInitialMessage(
 		return buildInitialMessage({ parsed, stdinContent });
 	}
 
-	const { text, images } = await processFileArguments(parsed.fileArgs, { autoResizeImages });
+	let processed: Awaited<ReturnType<typeof processFileArguments>>;
+	try {
+		processed = await processFileArguments(parsed.fileArgs, { autoResizeImages });
+	} catch (error) {
+		if (!(error instanceof FileArgumentError)) throw error;
+		console.error(chalk.red(`Error: ${error.message}`));
+		process.exit(1);
+	}
+	const { text, images } = processed;
 	return buildInitialMessage({
 		parsed,
 		fileText: text,

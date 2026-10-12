@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import { type ImageContent, type Message, type TextContent, type Usage, uuidv7 } from "@zykairotis/ice-ai";
+import { spawnSync } from "child_process";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -15,7 +16,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { readdir, stat } from "fs/promises";
+import { readdir, stat, unlink } from "fs/promises";
 import { join, resolve } from "path";
 import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
@@ -153,6 +154,11 @@ export type SessionEntry =
 	| CustomMessageEntry
 	| LabelEntry
 	| SessionInfoEntry;
+
+/** Local tree mutations; loading/replacing a session is a separate host lifecycle operation. */
+export type SessionManagerEvent =
+	| { type: "entry_appended"; entry: SessionEntry }
+	| { type: "leaf_changed"; leafId: string | null };
 
 /** Raw file entry (includes header) */
 export type FileEntry = SessionHeader | SessionEntry;
@@ -867,6 +873,7 @@ export class SessionManager {
 	private labelsById: Map<string, string> = new Map();
 	private labelTimestampsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
+	private readonly changeListeners = new Set<(event: SessionManagerEvent) => void>();
 
 	private constructor(
 		cwd: string,
@@ -1050,11 +1057,24 @@ export class SessionManager {
 		}
 	}
 
-	private _appendEntry(entry: SessionEntry): void {
+	/** Observe future local appends/leaf moves; existing entries are not replayed. */
+	subscribe(listener: (event: SessionManagerEvent) => void): () => void {
+		this.changeListeners.add(listener);
+		return () => {
+			this.changeListeners.delete(listener);
+		};
+	}
+
+	private _emitChange(event: SessionManagerEvent): void {
+		for (const listener of [...this.changeListeners]) listener(event);
+	}
+
+	private _appendEntry(entry: SessionEntry, notify = true): void {
 		this.fileEntries.push(entry);
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
 		this._persist(entry);
+		if (notify) this._emitChange({ type: "entry_appended", entry });
 	}
 
 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
@@ -1267,7 +1287,8 @@ export class SessionManager {
 			targetId,
 			label,
 		};
-		this._appendEntry(entry);
+		// Publish only after label indexes agree with the appended entry.
+		this._appendEntry(entry, false);
 		if (label) {
 			this.labelsById.set(targetId, label);
 			this.labelTimestampsById.set(targetId, entry.timestamp);
@@ -1275,6 +1296,7 @@ export class SessionManager {
 			this.labelsById.delete(targetId);
 			this.labelTimestampsById.delete(targetId);
 		}
+		this._emitChange({ type: "entry_appended", entry });
 		return entry.id;
 	}
 
@@ -1387,7 +1409,9 @@ export class SessionManager {
 		if (!this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
+		if (this.leafId === branchFromId) return;
 		this.leafId = branchFromId;
+		this._emitChange({ type: "leaf_changed", leafId: this.leafId });
 	}
 
 	/**
@@ -1396,7 +1420,9 @@ export class SessionManager {
 	 * Use this when navigating to re-edit the first user message.
 	 */
 	resetLeaf(): void {
+		if (this.leafId === null) return;
 		this.leafId = null;
+		this._emitChange({ type: "leaf_changed", leafId: null });
 	}
 
 	/**
@@ -1754,5 +1780,45 @@ export class SessionManager {
 		} catch {
 			return [];
 		}
+	}
+}
+
+/**
+ * Delete a session file, trying the `trash` CLI first, then falling back to unlink
+ */
+export async function deleteSessionFile(
+	sessionPath: string,
+): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string }> {
+	// Try `trash` first (if installed)
+	const trashArgs = sessionPath.startsWith("-") ? ["--", sessionPath] : [sessionPath];
+	const trashResult = spawnSync("trash", trashArgs, { encoding: "utf-8" });
+
+	const getTrashErrorHint = (): string | null => {
+		const parts: string[] = [];
+		if (trashResult.error) {
+			parts.push(trashResult.error.message);
+		}
+		const stderr = trashResult.stderr?.trim();
+		if (stderr) {
+			parts.push(stderr.split("\n")[0] ?? stderr);
+		}
+		if (parts.length === 0) return null;
+		return `trash: ${parts.join(" · ").slice(0, 200)}`;
+	};
+
+	// If trash reports success, or the file is gone afterwards, treat it as successful
+	if (trashResult.status === 0 || !existsSync(sessionPath)) {
+		return { ok: true, method: "trash" };
+	}
+
+	// Fallback to permanent deletion
+	try {
+		await unlink(sessionPath);
+		return { ok: true, method: "unlink" };
+	} catch (err) {
+		const unlinkError = err instanceof Error ? err.message : String(err);
+		const trashErrorHint = getTrashErrorHint();
+		const error = trashErrorHint ? `${unlinkError} (${trashErrorHint})` : unlinkError;
+		return { ok: false, method: "unlink", error };
 	}
 }

@@ -382,4 +382,37 @@ describe("RPC settings bridge", () => {
 			applyRpcSetting(context, { key: "ice.subagents.concurrency.max", scope: "global", value: 4 }),
 		).rejects.toMatchObject({ code: "unknown_key" });
 	});
+
+	it("reads and writes compaction budgets, branch summary, and global-only preferences", async () => {
+		const manager = SettingsManager.inMemory();
+		const context = createContext(manager);
+		const defaults = createRpcSettingsSnapshot(context);
+		expect(field(defaults, "compaction.reserveTokens").effectiveValue).toBe(16384);
+		expect(field(defaults, "compaction.keepRecentTokens").effectiveValue).toBe(20000);
+		expect(field(defaults, "branchSummary.skipPrompt").effectiveValue).toBe(false);
+		expect(field(defaults, "httpIdleTimeoutMs").effectiveValue).toBe(300000);
+		expect(field(defaults, "toolStyle").hostOnly).toBe(true);
+
+		const updated = await applyRpcSetting(context, { key: "compaction.reserveTokens", scope: "global", value: 8000 });
+		expect(field(updated, "compaction.reserveTokens").effectiveValue).toBe(8000);
+		expect(manager.getCompactionReserveTokens()).toBe(8000);
+		await applyRpcSetting(context, { key: "branchSummary.skipPrompt", scope: "project", value: true });
+		expect(manager.getBranchSummarySkipPrompt()).toBe(true);
+		await applyRpcSetting(context, { key: "favoriteModels", scope: "global", value: ["local/a", "local/b"] });
+		expect(manager.getFavoriteModels()).toEqual(["local/a", "local/b"]);
+		await applyRpcSetting(context, { key: "toolStyle", scope: "global", value: "boxed" });
+		expect(manager.getToolStyle()).toBe("boxed");
+
+		await expect(
+			applyRpcSetting(context, { key: "compaction.keepRecentTokens", scope: "global", value: 0 }),
+		).rejects.toMatchObject({ code: "out_of_range" });
+		await expect(
+			applyRpcSetting(context, { key: "toolStyle", scope: "project", value: "boxed" }),
+		).rejects.toMatchObject({ code: "scope_not_supported" });
+		await expect(
+			applyRpcSetting(context, { key: "toolStyle", scope: "global", value: "fancy" }),
+		).rejects.toMatchObject({
+			code: "invalid_option",
+		});
+	});
 });

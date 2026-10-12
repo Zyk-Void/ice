@@ -14,6 +14,12 @@ import { theme } from "../theme/theme.ts";
 import { keyText } from "./keybinding-hints.ts";
 import { middleTruncate } from "./session-header.ts";
 import { layoutStatusLine, REQUIRED_PRIORITY, type StatusSegment } from "./status-line.ts";
+import { clickOrKeyHint, ICE_ACTION_URL_PREFIX, linkIceAction } from "./tool-toggle-link.ts";
+
+/** Internal link on the footer's shell count; InteractiveMode routes a click on it to the Shells panel. */
+export const OPEN_SHELLS_URL = `${ICE_ACTION_URL_PREFIX}open-shells`;
+/** Internal link on the footer's subagent segment; InteractiveMode routes a click on it to the Agent Hub. */
+export const OPEN_AGENTS_URL = `${ICE_ACTION_URL_PREFIX}open-agents`;
 
 const DEFAULT_FOOTER_APPEARANCE = createDefaultAppearance().footer;
 
@@ -237,12 +243,14 @@ export class FooterComponent implements Component {
 
 		const backgroundTasks = this.getBackgroundTaskCount();
 		if (backgroundTasks > 0) {
-			// Down on an empty editor opens the Shells panel for these.
+			// Down on an empty editor, or a click in fullscreen, opens the Shells panel for these.
 			const openKey = keyText("app.shells.open");
 			right.push({
-				text:
+				text: linkIceAction(
 					primary(`${backgroundTasks} shell${backgroundTasks === 1 ? "" : "s"}`) +
-					(openKey ? dim(` (${openKey})`) : ""),
+						(openKey ? dim(` (${clickOrKeyHint(openKey)})`) : ""),
+					OPEN_SHELLS_URL,
+				),
 				priority: 95,
 			});
 		}
@@ -274,7 +282,10 @@ export class FooterComponent implements Component {
 		const approvalLabel =
 			approvals > 0 ? theme.fg("warning", `${approvals} approval${approvals === 1 ? "" : "s"}`) : "";
 		return {
-			text: approvalLabel ? `${label}${dim(` ${sym("separator")} `)}${approvalLabel}` : label,
+			text: linkIceAction(
+				approvalLabel ? `${label}${dim(` ${sym("separator")} `)}${approvalLabel}` : label,
+				OPEN_AGENTS_URL,
+			),
 			// Capacity outranks the working directory; activity and approvals outrank the model.
 			priority: approvals > 0 ? REQUIRED_PRIORITY : running > 0 || queued > 0 ? 96 : 65,
 		};

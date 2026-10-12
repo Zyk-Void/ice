@@ -64,6 +64,29 @@ describe("RPC JSONL framing", () => {
 		expect(lines).toEqual(['{"a":1}']);
 	});
 
+	test("rejects oversized records once and recovers at the next LF", async () => {
+		const lines: string[] = [];
+		let overflows = 0;
+		const stream = Readable.from(["123", "456", "789\nok\n", "123456"]);
+		const done = new Promise<void>((resolve) => stream.on("end", resolve));
+		attachJsonlLineReader(stream, (line) => lines.push(line), { maxLineBytes: 5, onOverflow: () => overflows++ });
+		await done;
+		expect(lines).toEqual(["ok"]);
+		expect(overflows).toBe(2);
+	});
+
+	test("counts UTF-8 bytes across split multibyte chunks and accepts the exact limit", async () => {
+		const lines: string[] = [];
+		let overflows = 0;
+		const encoded = Buffer.from("éé\nééé\nx\n");
+		const stream = Readable.from([...encoded].map((byte) => Buffer.from([byte])));
+		const done = new Promise<void>((resolve) => stream.on("end", resolve));
+		attachJsonlLineReader(stream, (line) => lines.push(line), { maxLineBytes: 4, onOverflow: () => overflows++ });
+		await done;
+		expect(lines).toEqual(["éé", "x"]);
+		expect(overflows).toBe(1);
+	});
+
 	test("preserves typed subagent_checkin details through the RPC JSON event path", () => {
 		const notice = {
 			schemaVersion: 1,

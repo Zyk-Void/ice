@@ -22,16 +22,25 @@ export function setToolToggleLinks(enabled: boolean): void {
 	toggleLinksEnabled = enabled;
 }
 
+/** How to trigger an action bound to `key`, mentioning clicks when links are on. */
+export function clickOrKeyHint(key: string): string {
+	return toggleLinksEnabled ? `click or ${key}` : key;
+}
+
 /** How to expand a collapsed cell: the expand key, plus clicking when links are on. */
 export function expandHint(): string {
-	const key = keyText("app.tools.expand");
-	return toggleLinksEnabled ? `click or ${key}` : key;
+	return clickOrKeyHint(keyText("app.tools.expand"));
+}
+
+/** `text` as a clickable internal link to `url` (unchanged when links are off). */
+export function linkIceAction(text: string, url: string): string {
+	if (!toggleLinksEnabled) return text;
+	return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
 }
 
 /** One line as a toggle link for the cell `id` (unchanged when links are off). */
 export function linkToolToggleLine(line: string, id: string): string {
-	if (!toggleLinksEnabled) return line;
-	return `\x1b]8;;${TOGGLE_URL_PREFIX}${encodeURIComponent(id)}\x1b\\${line}\x1b]8;;\x1b\\`;
+	return linkIceAction(line, `${TOGGLE_URL_PREFIX}${encodeURIComponent(id)}`);
 }
 
 /** Wrap the first non-blank line (the cell's title row) in a toggle link for the cell `id`. */
