@@ -5,6 +5,7 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let resolvedBranch = "main";
+let statusResult: { error: Error | null; stdout: string } = { error: new Error("unsupported"), stdout: "" };
 
 vi.mock("child_process", () => ({
 	execFile: vi.fn(
@@ -24,6 +25,10 @@ vi.mock("child_process", () => ({
 						),
 					0,
 				);
+				return;
+			}
+			if (args.includes("status")) {
+				setTimeout(() => callback(statusResult.error, statusResult.stdout, ""), 0);
 				return;
 			}
 			setTimeout(() => callback(new Error("unsupported"), "", ""), 0);
@@ -260,6 +265,35 @@ describe("FooterDataProvider reftable branch detection", () => {
 		} finally {
 			provider.dispose();
 			vi.useRealTimers();
+		}
+	});
+});
+
+describe("FooterDataProvider git status", () => {
+	it("keeps the last known counts when a later git status run fails", async () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "footer-data-provider-"));
+		const now = vi.spyOn(Date, "now");
+		let clock = 1_000_000;
+		now.mockImplementation(() => clock);
+		const provider = new FooterDataProvider(createPlainRepo(tempDir));
+		try {
+			statusResult = { error: null, stdout: "# branch.head main\n# branch.ab +2 -0\n? a.ts\n" };
+			provider.getGitStatus();
+			await waitFor(() => provider.getGitStatus() !== undefined);
+			expect(provider.getGitStatus()).toEqual({ ahead: 2, behind: 0, dirty: 1 });
+
+			statusResult = { error: new Error("timed out"), stdout: "" };
+			const calls = vi.mocked(execFile).mock.calls.length;
+			clock += 5_000;
+			provider.getGitStatus();
+			await waitFor(() => vi.mocked(execFile).mock.calls.length > calls);
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(provider.getGitStatus()).toEqual({ ahead: 2, behind: 0, dirty: 1 });
+		} finally {
+			provider.dispose();
+			now.mockRestore();
+			statusResult = { error: new Error("unsupported"), stdout: "" };
+			rmSync(tempDir, { recursive: true, force: true });
 		}
 	});
 });

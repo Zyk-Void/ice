@@ -1,6 +1,6 @@
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import { type ImageContent, type Message, type TextContent, type Usage, uuidv7 } from "@zykairotis/ice-ai";
-import { spawnSync } from "child_process";
+import { execFile } from "child_process";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -1783,6 +1783,8 @@ export class SessionManager {
 	}
 }
 
+const TRASH_TIMEOUT_MS = 10_000;
+
 /**
  * Delete a session file, trying the `trash` CLI first, then falling back to unlink
  */
@@ -1791,7 +1793,20 @@ export async function deleteSessionFile(
 ): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string }> {
 	// Try `trash` first (if installed)
 	const trashArgs = sessionPath.startsWith("-") ? ["--", sessionPath] : [sessionPath];
-	const trashResult = spawnSync("trash", trashArgs, { encoding: "utf-8" });
+	// Async with a timeout and output cap: a hung or chatty `trash` must not freeze the event loop.
+	const trashResult = await new Promise<{ status: number | null; error?: Error; stderr: string }>((resolve) => {
+		execFile(
+			"trash",
+			trashArgs,
+			{ encoding: "utf-8", timeout: TRASH_TIMEOUT_MS, maxBuffer: 64 * 1024 },
+			(error, _stdout, stderr) => {
+				if (!error) return resolve({ status: 0, stderr });
+				// A numeric code is the exit status; anything else (ENOENT, timeout kill) is a launch failure.
+				if (typeof error.code === "number" && !error.killed) return resolve({ status: error.code, stderr });
+				resolve({ status: null, error, stderr });
+			},
+		);
+	});
 
 	const getTrashErrorHint = (): string | null => {
 		const parts: string[] = [];

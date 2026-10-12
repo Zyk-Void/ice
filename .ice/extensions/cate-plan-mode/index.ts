@@ -103,6 +103,7 @@ const BLOCKED_TOOL_NAMES = new Set([
   "str_replace_based_edit_tool",
   "delegate_write",
   "integrate_writer_patch",
+  "agent_patch",
 ])
 
 // Bash deny-list. Kept conservative; the system prompt already steers the
@@ -123,9 +124,6 @@ const BASH_DENY: { pattern: RegExp; label: string }[] = [
   { pattern: /\bpnpm\s+(add|install)/, label: "pnpm write" },
   { pattern: /\bbrew\s+install\b/, label: "brew install" },
   { pattern: /\b(apt|apt-get)\s+install\b/, label: "apt install" },
-  // Redirects anywhere in the command. Single `>` would catch `2>&1` too, so
-  // we require a space or end-of-line on the right side.
-  { pattern: /(^|[^&|2])>>?(\s|$)/, label: "redirect (>, >>)" },
   // Backticks and $(...) subshells — too risky to evaluate.
   { pattern: /`/, label: "backtick subshell" },
   { pattern: /\$\(/, label: "$(...) subshell" },
@@ -134,6 +132,11 @@ const BASH_DENY: { pattern: RegExp; label: string }[] = [
 ]
 
 function bashDenyReason(command: string): string | null {
+  // Any output redirection except descriptor duplication (`2>&1`) and /dev/null,
+  // regardless of spacing or descriptor number (`x>file`, `2>file`, `&>file`).
+  if (/>/.test(command.replace(/\d*>&(?:\d+|-)|&?\d*>>?\s*\/dev\/null(?![\w/.-])/g, ""))) {
+    return "redirect (>, >>)"
+  }
   for (const { pattern, label } of BASH_DENY) {
     if (pattern.test(command)) return label
   }

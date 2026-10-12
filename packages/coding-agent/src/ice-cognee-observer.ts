@@ -66,7 +66,21 @@ function observationPath(storageDir: string): string {
 	return join(storageDir, COGNEE_OBSERVATION_FILE);
 }
 
-export async function appendCogneeObservation(storageDir: string, observation: CogneeObservation): Promise<void> {
+/** Appends per storage directory run one at a time, so two writers never race the size-check rename. */
+const appendQueues = new Map<string, Promise<void>>();
+
+export function appendCogneeObservation(storageDir: string, observation: CogneeObservation): Promise<void> {
+	const next = (appendQueues.get(storageDir) ?? Promise.resolve()).then(() =>
+		writeCogneeObservation(storageDir, observation),
+	);
+	appendQueues.set(storageDir, next);
+	void next.then(() => {
+		if (appendQueues.get(storageDir) === next) appendQueues.delete(storageDir);
+	});
+	return next;
+}
+
+async function writeCogneeObservation(storageDir: string, observation: CogneeObservation): Promise<void> {
 	const safe = {
 		...observation,
 		preview: observation.preview === undefined ? undefined : redactMemoryText(observation.preview, MAX_PREVIEW_CHARS),

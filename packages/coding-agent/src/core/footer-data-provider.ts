@@ -183,8 +183,9 @@ export class FooterDataProvider {
 			{ cwd: repoDir, encoding: "utf8", timeout: FooterDataProvider.STATUS_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
 			(error: ExecFileException | null, stdout: string) => {
 				this.statusInFlight = false;
-				if (this.disposed || this.gitPaths?.repoDir !== repoDir) return;
-				const next = error ? undefined : parseGitStatusPorcelainV2(stdout);
+				// A failed run (timeout, lock contention) keeps the last known counts instead of blanking them.
+				if (error || this.disposed || this.gitPaths?.repoDir !== repoDir) return;
+				const next = parseGitStatusPorcelainV2(stdout);
 				const previous = this.cachedStatus;
 				this.cachedStatus = next;
 				if (JSON.stringify(previous) !== JSON.stringify(next)) this.notifyBranchChange();

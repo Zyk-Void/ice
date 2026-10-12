@@ -28,10 +28,12 @@ vi.mock("child_process", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("child_process")>();
 	return {
 		...actual,
-		spawnSync: ((command: string, ...rest: unknown[]) =>
-			command === "trash"
-				? { status: 1, stderr: "", stdout: "", error: new Error("trash unavailable") }
-				: (actual.spawnSync as (...args: unknown[]) => unknown)(command, ...rest)) as typeof actual.spawnSync,
+		execFile: ((command: string, ...rest: unknown[]) => {
+			if (command !== "trash") return (actual.execFile as (...args: unknown[]) => unknown)(command, ...rest);
+			const callback = rest[rest.length - 1] as (error: Error, stdout: string, stderr: string) => void;
+			queueMicrotask(() => callback(new Error("trash unavailable"), "", ""));
+			return undefined;
+		}) as typeof actual.execFile,
 	};
 });
 
