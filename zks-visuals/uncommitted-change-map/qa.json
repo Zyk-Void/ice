@@ -1,0 +1,47 @@
+{
+  "capturedAt": "2026-10-10T05:17:09.307Z",
+  "reports": [
+    {
+      "width": 1400,
+      "theme": "light",
+      "layout": "\"{\\\"width\\\":1400,\\\"rootWidth\\\":1400,\\\"theme\\\":\\\"light\\\",\\\"h1\\\":1,\\\"figures\\\":true,\\\"brokenAnchors\\\":0,\\\"externalAssets\\\":0}\"\n",
+      "violations": [],
+      "incompleteChecks": [
+        "color-contrast"
+      ],
+      "screenshot": "/tmp/zks-change-1400-light.png"
+    },
+    {
+      "width": 1400,
+      "theme": "dark",
+      "layout": "\"{\\\"width\\\":1400,\\\"rootWidth\\\":1400,\\\"theme\\\":\\\"dark\\\",\\\"h1\\\":1,\\\"figures\\\":true,\\\"brokenAnchors\\\":0,\\\"externalAssets\\\":0}\"\n",
+      "violations": [],
+      "incompleteChecks": [
+        "color-contrast"
+      ],
+      "screenshot": "/tmp/zks-change-1400-dark.png"
+    },
+    {
+      "width": 390,
+      "theme": "light",
+      "layout": "\"{\\\"width\\\":390,\\\"rootWidth\\\":390,\\\"theme\\\":\\\"light\\\",\\\"h1\\\":1,\\\"figures\\\":true,\\\"brokenAnchors\\\":0,\\\"externalAssets\\\":0}\"\n",
+      "violations": [],
+      "incompleteChecks": [
+        "color-contrast"
+      ],
+      "screenshot": "/tmp/zks-change-390-light.png"
+    },
+    {
+      "width": 390,
+      "theme": "dark",
+      "layout": "\"{\\\"width\\\":390,\\\"rootWidth\\\":390,\\\"theme\\\":\\\"dark\\\",\\\"h1\\\":1,\\\"figures\\\":true,\\\"brokenAnchors\\\":0,\\\"externalAssets\\\":0}\"\n",
+      "violations": [],
+      "incompleteChecks": [
+        "color-contrast"
+      ],
+      "screenshot": "/tmp/zks-change-390-dark.png"
+    }
+  ],
+  "filter": "\"[\\\"dock\\\"]\"\n",
+  "keyboard": "\"[\\\"header\\\"]\"\n"
+}

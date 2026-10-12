@@ -1,0 +1,54 @@
+{
+  "objective": "Harden coding-agent JSONL RPC for deterministic lifecycle ordering, observable state, bounded transport admission, client correctness, and safe introspection.",
+  "status": "in_progress",
+  "currentBatch": {
+    "objective": "Close actionable RPC shutdown, recovery, bounded transport, validation and read-only coverage gaps in one pass",
+    "implementedPendingFinalVerification": ["EOF/final-record ordering and cooperative admission settlement", "Explicit runtime-unavailable guard/recovery", "Reserved bounded input/control lanes", "Messages/catalog/shallow-tree pages", "Native cached catalog/settings invalidations", "Inline client-supplied attachments, command completions, safe diagnostics and UI text snapshot", "Header-free model response projections", "Client request/event retention bounds"],
+    "verification": "partial targeted checks passed; final combined verification pending",
+    "delegation": "Automatic worktree snapshot refused nested imported_extensions/pi-workgraph. Isolated temporary copies used; first budget-capped children made no changes and their unsupported exploration report was rejected. Replacement validator/output writers have no token cap."
+  },
+  "scope": "RPC adapter/client plus native session mutation notifications; preserve unrelated concurrent workspace edits.",
+  "implemented": [
+    "Capability discovery, validated input and 16 MiB input-record framing",
+    "Synchronous transition barriers, FIFO short mutations/preflights and live control bypass",
+    "Hook-owned/self-dependent transition refusal and 256-command pending admission ceiling",
+    "Session/model/configuration/settings/resource/entry/leaf notifications",
+    "Typed client events/dialog replies, subscriber isolation, bounded stderr, termination cleanup and capability startup handshake",
+    "Cached non-secret provider/all-model snapshots",
+    "Explicit cooperative catalog refresh/deadline/abort with generic errors and model metadata reconciliation",
+    "Entry/session count pagination, stable cursors, deterministic listing ties and literal local session search",
+    "Request-specific compact/navigation/direct-Bash cancellation and 1–300000 ms cooperative deadlines including queue time",
+    "Native operation-owned caller signal linking, pre-commit cancellation checks and independent concurrent Bash controllers",
+    "Client operation signal/deadline options with generated-ID cancellation, cleanup and explicit unconfirmed remote settlement"
+  ],
+  "verification": {
+    "targeted": { "status": "passed", "exitCode": 0, "tests": 261, "files": 33, "runs": [ { "shell": "bash-8", "tests": 165, "files": 18 }, { "shell": "bash-9", "tests": 96, "files": 15, "skippedTests": 15, "skippedFiles": 2 } ], "provider": "faux and synthetic local child fixtures; no live model requests; two API-key-gated e2e files skipped", "excludedAttempt": "bash-7 started from wrong cwd and stopped; not counted" },
+    "repository": { "command": "corepack npm@12.0.2 run check", "status": "passed", "exitCode": 0, "activeNpm": "12.0.2", "pinnedNpm": "12.0.2", "shell": "bash-10", "finalFormatting": "No fixes applied on final passing check; earlier check applied two formatting fixes" },
+    "whitespace": { "command": "git diff --check", "status": "passed", "exitCode": 0 },
+    "installedRuntime": "not_run",
+    "buildOrCuraxSnapshot": "not_published",
+    "independentFinalReview": "not_completed; original and resumed bounded reviewer exhausted budget before substantive inspection, no independent approval claimed"
+  },
+  "next": {
+    "objective": "Investigate EOF/shutdown admission and output settlement without replaying ambiguous operations or disposing a runtime beneath queued requests.",
+    "stage": "implementing_final_hardening", 
+    "acceptance": [
+      "Specify whether admitted work drains or cancels on EOF and shutdown",
+      "Do not dispatch queued work against a disposed runtime",
+      "Preserve exactly-once terminal response semantics where the transport remains writable",
+      "Keep shutdown and stalled-hook guarantees explicitly cooperative",
+      "Faux-provider regressions and pinned repository check pass"
+    ]
+  },
+  "remainingRisks": [
+    "Request cancellation/deadlines cover only compact, navigate_tree and direct RPC Bash; catalog refresh retains its separate contract",
+    "Cooperative deadlines cannot guarantee termination of signal-ignoring extensions",
+    "EOF/shutdown races and recovery after disposed-runtime creation failure",
+    "Aggregate input/output memory and live-control request bounds",
+    "Method-specific response payload validation remains incomplete",
+    "Automatic auth/catalog changes outside explicit RPC refresh and direct external settings mutations do not have a complete event contract",
+    "Tree/message/catalog pagination, detailed redacted diagnostics, attachments/completion, widget projections, session deletion and other ICE-specific inventory items remain open"
+  ],
+  "evidence": ["Plan/rpc-hardening-audit.md", "packages/coding-agent/docs/rpc.md"],
+  "gitActions": "No commit, push, merge, reset, stash or unrelated cleanup performed."
+}

@@ -1,0 +1,12 @@
+{
+  "withoutJavaScript": {
+    "visiblePanels": 3,
+    "totalPanels": 3,
+    "title": "ICE uncommitted changes: terminal UI and explicit overrides"
+  },
+  "print": {
+    "visiblePanels": 3,
+    "themeLinksVisible": false
+  },
+  "pageErrors": []
+}
