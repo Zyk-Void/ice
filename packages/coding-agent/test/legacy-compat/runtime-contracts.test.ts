@@ -8,13 +8,11 @@ import { compatibleBlackholeConfigPath, compatibleCogneeStorageDir } from "../..
 import { DefaultResourceLoader } from "../../src/core/resource-loader.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { hasTrustRequiringProjectResources } from "../../src/core/trust-manager.ts";
-import { SubagentJobRegistry } from "../../src/ice-subagent-jobs.ts";
 import { getThemeByName, initTheme, setTheme, stopThemeWatcher } from "../../src/modes/interactive/theme/theme.ts";
 import { getIceSettingsCommandSchemaResult, invokeIceSettingsCommand } from "../../src/modes/rpc/rpc-command-schema.ts";
 import { applyRpcSetting } from "../../src/modes/rpc/rpc-settings.ts";
 
 const roots: string[] = [];
-const registries: SubagentJobRegistry[] = [];
 function fixture(): string {
 	const root = mkdtempSync(join(tmpdir(), "ice-legacy-contract-"));
 	roots.push(root);
@@ -29,7 +27,6 @@ function put(root: string, name: string, text: string): string {
 	return path;
 }
 afterEach(async () => {
-	await Promise.all(registries.splice(0).map((r) => r.shutdown()));
 	stopThemeWatcher();
 	vi.unstubAllEnvs();
 	vi.restoreAllMocks();
@@ -117,41 +114,6 @@ describe("legacy runtime contracts", () => {
 		expect(loader.getExtensions().errors).toEqual([]);
 		expect(loader.getExtensions().extensions.some((e) => e.commands.has("legacy-probe"))).toBe(true);
 		expect(createHash("sha256").update(readFileSync(iceExtension)).digest("hex")).toBe(before);
-	});
-
-	it("restores ice journal records as interrupted, never dispatches them, and preserves owner isolation", () => {
-		const persist = vi.fn();
-		const notify = vi.fn();
-		const registry = new SubagentJobRegistry({ ownerSessionId: "owner-a", persist, notify });
-		registries.push(registry);
-		const snapshot = {
-			schemaVersion: 1,
-			sequence: 1,
-			job: {
-				schemaVersion: 1,
-				jobId: "old-job",
-				ownerSessionId: "owner-a",
-				launchLeafId: "leaf-a",
-				role: "explore",
-				status: "running",
-				createdAt: "2026-01-01T00:00:00.000Z",
-				startedAt: "2026-01-01T00:00:01.000Z",
-				plannedOutputBytes: 24576,
-				resultRef: "job:old-job",
-			},
-		};
-		const ignored = { type: "custom", customType: "piv-subagent-job-v1", data: snapshot };
-		registry.restore([ignored]);
-		expect(registry.list()).toEqual([]);
-		const entry = { type: "custom", customType: "ice-subagent-job-v1", data: snapshot };
-		const frozenBytes = JSON.stringify(entry);
-		registry.restore([entry]);
-		expect(registry.list()).toMatchObject([{ job: { jobId: "old-job", status: "interrupted" } }]);
-		expect(JSON.stringify(entry)).toBe(frozenBytes);
-		registry.restore([
-			{ ...entry, data: { ...snapshot, job: { ...snapshot.job, ownerSessionId: "another-owner" } } },
-		]);
-		expect(registry.list()).toHaveLength(0);
 	});
 
 	it("uses ice RPC schema and keys", async () => {

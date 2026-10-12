@@ -243,6 +243,8 @@ export type TextDecorationProvider = (line: string) => TextDecoration[];
 
 export interface EditorOptions {
 	paddingX?: number;
+	/** Gutter text before the first line (e.g. "❯ "), drawn in the border color; continuation lines are indented to match. */
+	prompt?: string;
 	autocompleteMaxVisible?: number;
 	borderStyle?: EditorBorderStyle;
 	decorations?: TextDecorationProvider;
@@ -306,6 +308,7 @@ export class Editor implements Component, Focusable {
 	protected tui: TUI;
 	private theme: EditorTheme;
 	private paddingX: number = 0;
+	private prompt = "";
 	private borderStyle: EditorBorderStyle = "single";
 
 	// Store last render width for cursor navigation
@@ -379,6 +382,7 @@ export class Editor implements Component, Focusable {
 		const paddingX = options.paddingX ?? 0;
 		this.paddingX = Number.isFinite(paddingX) ? Math.max(0, Math.floor(paddingX)) : 0;
 		this.borderStyle = options.borderStyle ?? "single";
+		this.prompt = options.prompt ?? "";
 		const maxVisible = options.autocompleteMaxVisible ?? 5;
 		this.autocompleteMaxVisible = Number.isFinite(maxVisible) ? Math.max(3, Math.min(20, Math.floor(maxVisible))) : 5;
 	}
@@ -411,6 +415,17 @@ export class Editor implements Component, Focusable {
 	setDecorations(decorations: TextDecorationProvider | undefined): void {
 		this.decorations = decorations;
 		this.tui.requestRender();
+	}
+
+	getPrompt(): string {
+		return this.prompt;
+	}
+
+	setPrompt(prompt: string): void {
+		if (this.prompt !== prompt) {
+			this.prompt = prompt;
+			this.tui.requestRender();
+		}
 	}
 
 	setPaddingX(padding: number): void {
@@ -577,7 +592,12 @@ export class Editor implements Component, Focusable {
 	render(width: number): string[] {
 		const maxPadding = Math.max(0, Math.floor((width - 1) / 2));
 		const paddingX = Math.min(this.paddingX, maxPadding);
-		const contentWidth = Math.max(1, width - paddingX * 2);
+		// The prompt is dropped when it would leave fewer than 2 columns for text.
+		const promptWidth =
+			this.prompt && visibleWidth(this.prompt) <= width - paddingX * 2 - 2 ? visibleWidth(this.prompt) : 0;
+		const contentWidth = Math.max(1, width - paddingX * 2 - promptWidth);
+		const promptGutter = promptWidth > 0 ? this.borderColor(this.prompt) : "";
+		const continuationGutter = " ".repeat(promptWidth);
 
 		// Layout width: with padding the cursor can overflow into it,
 		// without padding we reserve 1 column for the cursor.
@@ -682,7 +702,8 @@ export class Editor implements Component, Focusable {
 			const lineRightPadding = cursorInPadding ? rightPadding.slice(1) : rightPadding;
 
 			// Render the line (no side borders, just horizontal lines above and below)
-			result.push(`${leftPadding}${displayText}${padding}${lineRightPadding}`);
+			const gutter = layoutLine === layoutLines[0] ? promptGutter : continuationGutter;
+			result.push(`${leftPadding}${gutter}${displayText}${padding}${lineRightPadding}`);
 		}
 
 		// Render bottom border (with scroll indicator if more content below)
@@ -704,7 +725,7 @@ export class Editor implements Component, Focusable {
 			for (const line of autocompleteResult) {
 				const lineWidth = visibleWidth(line);
 				const linePadding = " ".repeat(Math.max(0, contentWidth - lineWidth));
-				result.push(`${leftPadding}${line}${linePadding}${rightPadding}`);
+				result.push(`${leftPadding}${continuationGutter}${line}${linePadding}${rightPadding}`);
 			}
 		}
 

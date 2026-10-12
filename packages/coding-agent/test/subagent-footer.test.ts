@@ -1,18 +1,17 @@
 import { visibleWidth } from "@zykairotis/ice-tui";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
-import {
-	IceAgentViewBridge,
-	type IceAgentViewDescriptor,
-	type IceAgentViewLiveSession,
-	type IceAgentViewLiveSessionSource,
-} from "../src/ice-agent-view-bridge.ts";
-import type { SubagentRuntimeAttention } from "../src/ice-subagent-timeout-supervisor.ts";
-import { createSubagentLiveSessionControl, SubagentLiveSessionRegistry } from "../src/ice-subagents.ts";
+import { IceAgentViewBridge, type IceAgentViewDescriptor } from "../src/ice-agent-view-bridge.ts";
 import {
 	createSubagentFooterSnapshot,
 	SubagentFooterSwitcher,
 } from "../src/modes/interactive/components/subagent-view-switcher.ts";
+import { setSymbolPreset } from "../src/modes/interactive/theme/symbols.ts";
+import {
+	createSubagentLiveSessionControl,
+	SubagentLiveSessionRegistry,
+} from "../src/subagents/runtime/live-session.ts";
+import type { SubagentRuntimeAttention } from "../src/subagents/runtime/view-state.ts";
 
 function session(sessionId: string, isStreaming = false): AgentSession {
 	return {
@@ -27,12 +26,9 @@ function runtimeAttention(overrides: Partial<SubagentRuntimeAttention> = {}): Su
 	return {
 		phase: "working",
 		state: "running",
-		initialTimeoutMs: 120_000,
-		activeBudgetMs: 120_000,
+		lifetimeDeadline: false,
 		activeElapsedMs: 45_000,
-		totalExtendedMs: 0,
-		extensionCount: 0,
-		remainingExtendableMs: 480_000,
+		observedPathCount: 1,
 		lastActivities: [
 			{
 				toolCallId: "call-1",
@@ -47,9 +43,8 @@ function runtimeAttention(overrides: Partial<SubagentRuntimeAttention> = {}): Su
 	};
 }
 
-function controlFor(child: AgentSession, attention: SubagentRuntimeAttention, awaitingExtension = false) {
+function controlFor(child: AgentSession, attention: SubagentRuntimeAttention) {
 	const control = createSubagentLiveSessionControl(child);
-	if (awaitingExtension) control.markAwaitingExtension?.();
 	return {
 		...control,
 		getRuntimeAttention: () => attention,
@@ -60,27 +55,6 @@ function fakeTheme() {
 	return {
 		fg: (_color: string, text: string) => text,
 		bg: (_color: string, text: string) => text,
-	};
-}
-
-function source(): {
-	source: IceAgentViewLiveSessionSource;
-	set: (sessions: readonly IceAgentViewLiveSession[]) => void;
-} {
-	let sessions: readonly IceAgentViewLiveSession[] = [];
-	const listeners = new Set<() => void>();
-	return {
-		source: {
-			list: () => sessions,
-			subscribe: (listener) => {
-				listeners.add(listener);
-				return () => listeners.delete(listener);
-			},
-		},
-		set: (next) => {
-			sessions = next;
-			for (const listener of listeners) listener();
-		},
 	};
 }
 
@@ -99,6 +73,11 @@ function view(overrides: Partial<IceAgentViewDescriptor> = {}): IceAgentViewDesc
 }
 
 describe("subagent footer observability", () => {
+	// Assertions use Unicode glyphs; the default preset is ASCII under a non-UTF-8 locale.
+	beforeEach(() => {
+		setSymbolPreset("unicode");
+	});
+
 	it("derives a frozen bounded snapshot with counts, attention, selection, and safe activity", () => {
 		const activities = Array.from({ length: 64 }, (_, index) => ({
 			toolCallId: `call-${index}`,
@@ -115,10 +94,8 @@ describe("subagent footer observability", () => {
 				}),
 				view({
 					id: "run-attention",
-					controlState: "awaiting-extension",
 					presentation: {
 						runtimeAttention: runtimeAttention({
-							state: "awaiting_extension",
 							repeatedFailure: { action: "bash secret-token", count: 2 },
 						}),
 					},
@@ -148,7 +125,7 @@ describe("subagent footer observability", () => {
 		);
 
 		expect(snapshot).toMatchObject({ liveCount: 2, retainedCount: 0, attentionCount: 1 });
-		expect(snapshot.selectedChild).toMatchObject({ id: "run-attention", status: "AWAITING EXTENSION" });
+		expect(snapshot.selectedChild).toMatchObject({ id: "run-attention", status: "WORKING" });
 		expect(snapshot.selectedChildIndex).toBe(2);
 		expect(snapshot.children[0]?.attention?.recentActivities).toEqual([
 			expect.objectContaining({ toolName: "tool-61", path: "src/61.ts" }),
@@ -173,6 +150,130 @@ describe("subagent footer observability", () => {
 		expect(finalizing).toMatchObject({ attentionCount: 1, selectedChild: { status: "FINALIZING" } });
 	});
 
+	it("projects registry check-in updates into the owner view and keeps overdue advisory", () => {
+		const bridge = new IceAgentViewBridge();
+		bridge.setParentSession(session("parent"));
+		const live = new SubagentLiveSessionRegistry();
+		bridge.connectLiveSessions(live);
+		const child = session("child", true);
+		const release = live.register({ runId: "run-check-in", role: "explore", session: child });
+		live.updateCheckInState("run-check-in", {
+			delivery: "owner_unavailable",
+			sequence: 1,
+			pendingSince: 121_000,
+		});
+
+		try {
+			const views = bridge.listViews();
+			const snapshot = createSubagentFooterSnapshot(views, "run-check-in", "run-check-in");
+			expect(views.find((entry) => entry.id === "run-check-in")).toMatchObject({
+				status: "working",
+				checkIn: { delivery: "owner_unavailable", sequence: 1 },
+			});
+			expect(snapshot).toMatchObject({
+				attentionCount: 1,
+				selectedChild: { status: "WORKING", needsAttention: true },
+			});
+		} finally {
+			release();
+		}
+	});
+
+	it("surfaces owner-unavailable check-ins as advisory attention without changing execution status", () => {
+		const checkIn = { delivery: "owner_unavailable" as const, sequence: 2, pendingSince: 121_000 };
+		const snapshot = createSubagentFooterSnapshot([view({ status: "working", checkIn })], "run-footer", "run-footer");
+
+		expect(snapshot).toMatchObject({
+			liveCount: 1,
+			attentionCount: 1,
+			selectedChild: {
+				status: "WORKING",
+				needsAttention: true,
+				checkIn: { delivery: "owner_unavailable", sequence: 2 },
+			},
+		});
+	});
+
+	it("identifies the displayed main agent instead of falling back to the first child", () => {
+		const bridge = new IceAgentViewBridge();
+		bridge.setParentSession(session("parent"));
+		const live = new SubagentLiveSessionRegistry();
+		bridge.connectLiveSessions(live);
+		const releaseFirst = live.register({
+			runId: "run-first",
+			role: "explorer",
+			taskId: "first-task",
+			session: session("first", true),
+		});
+		const releaseSecond = live.register({
+			runId: "run-second",
+			role: "reviewer",
+			taskId: "second-task",
+			session: session("second", true),
+		});
+		const switcher = new SubagentFooterSwitcher({ requestRender: vi.fn() } as never, fakeTheme() as never, bridge);
+
+		try {
+			const text = switcher.render(120).join("\n");
+			expect(text).toContain("2 working");
+			expect(text).toContain("Agents 2 working · ❄ ICE");
+			expect(text).not.toContain("Main agent");
+			expect(text).not.toContain("[1/2 explorer · first-task]");
+			expect(text).not.toMatch(/switch|manage/);
+		} finally {
+			switcher.dispose();
+			releaseFirst();
+			releaseSecond();
+		}
+	});
+
+	it("counts running and queued children from the runtime overview, not the streaming flag", () => {
+		const bridge = new IceAgentViewBridge();
+		bridge.setParentSession(session("parent"));
+		const live = new SubagentLiveSessionRegistry();
+		bridge.connectLiveSessions(live);
+		const releases = [
+			// run-a has not started streaming yet; the runtime overview already reports it running.
+			live.register({ runId: "run-a", role: "explorer", taskId: "a", session: session("a") }),
+			live.register({ runId: "run-b", role: "explorer", taskId: "b", session: session("b") }),
+			live.register({ runId: "run-c", role: "explorer", taskId: "c", session: session("c") }),
+		];
+		const child = (id: string, state: string) => ({
+			id,
+			agent: "explorer",
+			description: id,
+			state,
+			depth: 0,
+			running: state !== "idle",
+			background: true,
+			resident: true,
+			finished: false,
+			turns: 0,
+			tokens: 0,
+			cost: 0,
+		});
+		bridge.setSubagentControlSource({
+			overview: () => ({
+				enabled: true,
+				capacity: { running: 1, queued: 1, max: 1 },
+				maxDepth: 0,
+				children: [child("run-a", "running"), child("run-b", "queued"), child("run-c", "idle")],
+				approvals: [],
+				diagnostics: [],
+			}),
+			respondToApproval: () => false,
+			messages: () => undefined,
+			control: async () => "",
+		});
+		const switcher = new SubagentFooterSwitcher({ requestRender: vi.fn() } as never, fakeTheme() as never, bridge);
+		try {
+			expect(switcher.render(140).join("\n")).toContain("Agents 1 working · 1 queued · 1 idle");
+		} finally {
+			switcher.dispose();
+			for (const release of releases) release();
+		}
+	});
+
 	it("keeps active and retained children readable in collapsed and narrow layouts", () => {
 		const bridge = new IceAgentViewBridge();
 		bridge.setParentSession(session("parent"));
@@ -195,7 +296,6 @@ describe("subagent footer observability", () => {
 			control: controlFor(
 				attention,
 				runtimeAttention({
-					state: "awaiting_extension",
 					repeatedFailure: { action: 'bash "secret-token"', count: 2 },
 					lastActivities: [
 						{
@@ -209,7 +309,6 @@ describe("subagent footer observability", () => {
 						},
 					],
 				}),
-				true,
 			),
 		});
 		bridge.registerHistoricalSnapshot({
@@ -222,22 +321,17 @@ describe("subagent footer observability", () => {
 			messages: [],
 		});
 		bridge.requestDisplay("run-attention");
-		const switcher = new SubagentFooterSwitcher(
-			{ requestRender: vi.fn() } as never,
-			fakeTheme() as never,
-			{ matches: () => false } as never,
-			bridge,
-			vi.fn(),
-			false,
-		);
+		const switcher = new SubagentFooterSwitcher({ requestRender: vi.fn() } as never, fakeTheme() as never, bridge);
 
 		try {
 			const wide = switcher.render(120);
 			const text = wide.join("\n");
-			expect(text).toContain("2 active");
+			expect(text).toContain("1 working · 1 idle");
 			expect(text).toContain("1 retained");
 			expect(text).toContain("1 needs attention");
-			expect(text).toContain("[2/3 reviewer · api-review] AWAITING EXTENSION");
+			expect(text).toContain("[2/3 reviewer · api-review] IDLE");
+			// A child view leads with the key back to the main agent.
+			expect(text).toMatch(/IDLE · \S* ?❄ ICE · .*switch/);
 			expect(text).toContain("! bash src/api.ts");
 			expect(text).toContain("45s elapsed");
 			expect(text).not.toContain("secret-token");
@@ -274,66 +368,17 @@ describe("subagent footer observability", () => {
 			finishedAt: 11,
 			messages: [],
 		});
-		const switcher = new SubagentFooterSwitcher(
-			{ requestRender: vi.fn() } as never,
-			fakeTheme() as never,
-			{ matches: () => false } as never,
-			bridge,
-			vi.fn(),
-			false,
-		);
+		const switcher = new SubagentFooterSwitcher({ requestRender: vi.fn() } as never, fakeTheme() as never, bridge);
 
 		try {
 			const text = switcher.render(120).join("\n");
-			expect(text).toContain("0 active");
+			expect(text).toContain("none live");
 			expect(text).toContain("1 retained");
 			expect(text).toContain("COMPLETED");
 			expect(text).not.toContain("…");
 
 			bridge.requestDisplay("run-failed");
 			expect(switcher.render(120).join("\n")).toContain("FAILED");
-		} finally {
-			switcher.dispose();
-		}
-	});
-
-	it("preserves selection through reordering and chooses the nearest child after removal", () => {
-		const bridge = new IceAgentViewBridge();
-		bridge.setParentSession(session("parent"));
-		const live = source();
-		bridge.connectLiveSessions(live.source);
-		const first = session("first", true);
-		const second = session("second", true);
-		const firstEntry: IceAgentViewLiveSession = {
-			runId: "run-first",
-			role: "first",
-			taskId: "first",
-			session: first,
-		};
-		const secondEntry: IceAgentViewLiveSession = {
-			runId: "run-second",
-			role: "second",
-			taskId: "second",
-			session: second,
-		};
-		live.set([firstEntry, secondEntry]);
-		bridge.requestDisplay("run-first");
-		const requestRender = vi.fn();
-		const switcher = new SubagentFooterSwitcher(
-			{ requestRender } as never,
-			fakeTheme() as never,
-			{ matches: () => false } as never,
-			bridge,
-			vi.fn(),
-			true,
-		);
-
-		try {
-			live.set([secondEntry, firstEntry]);
-			expect(requestRender).toHaveBeenCalled();
-			expect(switcher.render(100).join("\n")).toMatch(/> ● first · first/);
-			live.set([secondEntry]);
-			expect(switcher.render(100).join("\n")).toMatch(/> ● second · second/);
 		} finally {
 			switcher.dispose();
 		}

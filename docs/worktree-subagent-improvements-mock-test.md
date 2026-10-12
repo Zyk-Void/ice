@@ -1,5 +1,7 @@
 # Integrated subagent improvements and mock-test state
 
+> **Historical implementation snapshot.** This note describes the legacy subagent system and a separate worktree; it is not a current V2 implementation or test report. See the [Subagents V2 guide](../packages/coding-agent/docs/subagents-v2.md) and [test references](../packages/coding-agent/docs/subagents-v2-architecture.md#tests-and-verification).
+
 ## Scope and status
 
 This document records the subagent implementation visible in the

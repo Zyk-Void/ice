@@ -1,0 +1,18 @@
+{
+  "name": "ice-blackhole",
+  "version": "0.4.3-ice.1",
+  "private": true,
+  "description": "Optional deterministic Blackhole compaction extension for ICE",
+  "license": "MIT",
+  "type": "module",
+  "main": "./index.ts",
+  "files": ["index.ts", "src/", "LICENSE", "PROVENANCE.md"],
+  "ice": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@zykairotis/ice-ai": ">=0.83.0 <1.0.0",
+    "@zykairotis/ice-coding-agent": ">=0.83.0 <1.0.0",
+    "@zykairotis/ice-tui": ">=0.83.0 <1.0.0"
+  }
+}

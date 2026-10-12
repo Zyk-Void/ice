@@ -364,6 +364,62 @@ export function getOsc8LinkAtColumn(line: string, column: number): string | unde
 	return undefined;
 }
 
+const OSC8_HYPERLINK = /^\x1b\]8;[^;]*;([^\x07\x1b]*)(?:\x07|\x1b\\)$/;
+
+/**
+ * Rewrite a line's OSC 8 hyperlinks. `visit` gets each text run with the URL of the link around it
+ * (undefined outside links) and returns its replacement; `keepLink` decides which link sequences stay.
+ */
+function rewriteOsc8Links(
+	line: string,
+	keepLink: (url: string) => boolean,
+	visit: (text: string, url: string | undefined) => string,
+): string {
+	if (!line.includes("\x1b]8;")) return line;
+	let result = "";
+	let activeUrl: string | undefined;
+	let i = 0;
+	while (i < line.length) {
+		const ansi = extractAnsiCode(line, i);
+		if (ansi) {
+			const hyperlink = OSC8_HYPERLINK.exec(ansi.code);
+			if (hyperlink) {
+				const url = hyperlink[1] || undefined;
+				// A closing sequence follows the link it closes.
+				if (keepLink(url ?? activeUrl ?? "")) result += ansi.code;
+				activeUrl = url;
+			} else {
+				result += ansi.code;
+			}
+			i += ansi.length;
+			continue;
+		}
+		let textEnd = i;
+		while (textEnd < line.length && !extractAnsiCode(line, textEnd)) textEnd++;
+		result += visit(line.slice(i, textEnd), activeUrl);
+		i = textEnd;
+	}
+	return result;
+}
+
+/** Remove the OSC 8 wrappers of links whose URL matches, keeping their text and styling. */
+export function stripOsc8Links(line: string, matches: (url: string) => boolean): string {
+	return rewriteOsc8Links(
+		line,
+		(url) => !matches(url),
+		(text) => text,
+	);
+}
+
+/** Wrap every text run inside the link to `url` in `open`/`close`, re-applied after inner style changes. */
+export function styleOsc8Link(line: string, url: string, open: string, close: string): string {
+	return rewriteOsc8Links(
+		line,
+		() => true,
+		(text, activeUrl) => (activeUrl === url ? `${open}${text}${close}` : text),
+	);
+}
+
 /**
  * Normalize text for terminal output without changing logical editor content.
  * Some terminals render precomposed Thai/Lao AM vowels inconsistently during
@@ -998,6 +1054,25 @@ function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): s
 }
 
 /**
+ * True when an SGR parameter list clears the background: full reset (empty or
+ * 0) or default background (49). Extended color arguments (38/48;5;n and
+ * 38/48;2;r;g;b) are skipped so color indexes are not mistaken for codes.
+ */
+function sgrResetsBackground(params: string): boolean {
+	if (params === "") return true;
+	const codes = params.split(";");
+	for (let i = 0; i < codes.length; i++) {
+		const code = codes[i];
+		if (code === "38" || code === "48") {
+			i += codes[i + 1] === "2" ? 4 : 2;
+			continue;
+		}
+		if (code === "" || code === "0" || code === "49") return true;
+	}
+	return false;
+}
+
+/**
  * Apply background color to a line, padding to full width.
  *
  * @param line - Line of text (may contain ANSI codes)
@@ -1013,7 +1088,16 @@ export function applyBackgroundToLine(line: string, width: number, bgFn: (text: 
 
 	// Apply background to content + padding
 	const withPadding = line + padding;
-	return bgFn(withPadding);
+	const sgrPattern = /\x1b\[([0-9;]*)m/g;
+	let result = "";
+	let lastIndex = 0;
+	for (const match of withPadding.matchAll(sgrPattern)) {
+		if (!sgrResetsBackground(match[1])) continue;
+		const resetIndex = match.index;
+		result += bgFn(withPadding.slice(lastIndex, resetIndex)) + match[0];
+		lastIndex = resetIndex + match[0].length;
+	}
+	return result + bgFn(withPadding.slice(lastIndex));
 }
 
 /**

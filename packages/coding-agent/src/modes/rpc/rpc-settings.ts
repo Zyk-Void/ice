@@ -1,8 +1,15 @@
 import type { SettingItem } from "@zykairotis/ice-tui";
 import type { RegisteredSettings } from "../../core/extensions/types.ts";
-import type { IceSettingsValue, PackageSource, SettingsManager, SettingsScope } from "../../core/settings-manager.ts";
-import { resolveSubagentConcurrencyPolicy } from "../../ice-subagent-concurrency.ts";
-import { parseIceSettings, resolveIceSubagentContract } from "../../ice-subagent-settings.ts";
+import type {
+	IceSettingsValue,
+	PackageSource,
+	Settings,
+	SettingsManager,
+	SettingsScope,
+} from "../../core/settings-manager.ts";
+import { DEFAULT_ASK_TIMEOUT_MS } from "../../subagents/permissions/approval.ts";
+import { parseIceSettings } from "../../subagents/settings.ts";
+import { resolveSubagentsV2Settings, type SubagentsV2Settings } from "../../subagents/v2/settings.ts";
 
 export type RpcSettingsFieldKind = "boolean" | "select" | "number" | "text" | "string-list" | "package-sources";
 export type RpcSettingsFieldScope = SettingsScope | "both";
@@ -37,7 +44,7 @@ interface RpcSettingsFieldBase {
 export type RpcSettingsField = RpcSettingsFieldBase;
 
 export interface RpcSettingsDiagnostic {
-	code: "settings_io_error" | "settings_parse_error" | "ice_policy_error";
+	code: "settings_io_error" | "settings_parse_error" | "ice_policy_error" | "ice_deprecated_setting";
 	scope: SettingsScope;
 	message: string;
 }
@@ -122,73 +129,61 @@ function setting(definition: Omit<RpcSettingsDefinition, "set"> & { key: string 
 	};
 }
 
+/** `ice.subagents` exactly as the V2 runtime resolves it: trusted-project narrowing and fail-closed diagnostics. */
+function effectiveSubagentSettings(settings: SettingsManager): SubagentsV2Settings {
+	const read = (scoped: Settings) => scoped.ice?.subagents;
+	return resolveSubagentsV2Settings({
+		global: read(settings.getGlobalSettings()),
+		project: read(settings.getProjectSettings()),
+		projectTrusted: settings.isProjectTrusted(),
+	});
+}
+
 function effectiveIceValue(settings: SettingsManager, key: string, fallback: RpcSettingsValue): RpcSettingsValue {
-	try {
-		const global = parseIceSettings(settings.getGlobalSettings().ice).subagents;
-		const project = parseIceSettings(
-			settings.isProjectTrusted() ? settings.getProjectSettings().ice : undefined,
-		).subagents;
-		if (key === "ice.subagents.enabled") return global.enabled && project.enabled;
-		if (key === "ice.hooks.enabled") {
-			const globalHooks = parseIceSettings(settings.getGlobalSettings().ice).hooks;
-			const projectHooks = parseIceSettings(
-				settings.isProjectTrusted() ? settings.getProjectSettings().ice : undefined,
-			).hooks;
-			return settings.getGlobalSettings().ice?.hooks?.enabled === false
-				? false
-				: globalHooks.enabled || projectHooks.enabled;
-		}
-		const concurrencyPolicy = resolveSubagentConcurrencyPolicy({
-			global,
-			project,
-			projectTrusted: settings.isProjectTrusted(),
-		});
-		if (key === "ice.subagents.concurrency.default") return concurrencyPolicy.defaultConcurrency;
-		if (key === "ice.subagents.concurrency.max") return concurrencyPolicy.maxConcurrency;
-		const contract = resolveIceSubagentContract({
-			global,
-			project,
-			globalFirst: true,
-			projectTrusted: settings.isProjectTrusted(),
-			role: "__ice_defaults__",
-			bundledDefaults: {
-				thinking: "medium",
-				timeoutMs: 120_000,
-				maxOutputBytes: 24_576,
-			},
-		});
+	if (key.startsWith("ice.subagents.")) {
+		const subagents = effectiveSubagentSettings(settings);
 		switch (key) {
-			case "ice.subagents.defaults.thinking":
-				return contract.values.thinking;
-			case "ice.subagents.defaults.timeoutMs":
-				return contract.values.timeoutMs;
-			case "ice.subagents.defaults.maxOutputBytes":
-				return contract.values.maxOutputBytes;
-			case "ice.subagents.allowedRoles":
-				return contract.allowedRoles.value ? [...contract.allowedRoles.value] : [];
+			case "ice.subagents.enabled":
+				// Invalid settings block launches, so they must not appear enabled.
+				return subagents.enabled && subagents.diagnostics.length === 0;
+			case "ice.subagents.defaultAgent":
+				return subagents.defaultAgent;
+			case "ice.subagents.maxConcurrent":
+				return subagents.maxConcurrent;
+			case "ice.subagents.maxDepth":
+				return subagents.maxDepth;
+			case "ice.subagents.askTimeoutMs":
+				return subagents.askTimeoutMs;
+			case "ice.subagents.disabledAgents":
+				return [...subagents.disabledAgents];
 			default:
 				return cloneValue(fallback);
 		}
+	}
+	if (key !== "ice.hooks.enabled") return cloneValue(fallback);
+	try {
+		const globalHooks = parseIceSettings(settings.getGlobalSettings().ice).hooks;
+		const projectHooks = parseIceSettings(
+			settings.isProjectTrusted() ? settings.getProjectSettings().ice : undefined,
+		).hooks;
+		return settings.getGlobalSettings().ice?.hooks?.enabled === false
+			? false
+			: globalHooks.enabled || projectHooks.enabled;
 	} catch {
-		// A malformed security-sensitive namespace must not appear enabled or
-		// expose stale permissive values through a headless projection.
-		if (key === "ice.subagents.enabled" || key === "ice.hooks.enabled") return false;
-		return cloneValue(fallback);
+		// A malformed security-sensitive namespace must not appear enabled through a headless projection.
+		return false;
 	}
 }
 
-function effectiveIceConcurrencySource(settings: SettingsManager, key: string): SettingsScope | undefined {
-	if (key !== "ice.subagents.concurrency.default" && key !== "ice.subagents.concurrency.max") return undefined;
-	try {
-		const projectTrusted = settings.isProjectTrusted();
-		const global = parseIceSettings(settings.getGlobalSettings().ice).subagents;
-		const project = parseIceSettings(projectTrusted ? settings.getProjectSettings().ice : undefined).subagents;
-		const policy = resolveSubagentConcurrencyPolicy({ global, project, projectTrusted });
-		const source = key.endsWith(".default") ? policy.sources.default : policy.sources.max;
-		return source === "global" || source === "project" ? source : undefined;
-	} catch {
-		return undefined;
-	}
+/** The scope whose `ice.subagents` value won after trust and narrowing, when one did. */
+function effectiveIceSubagentSource(settings: SettingsManager, key: string): SettingsScope | undefined {
+	if (!key.startsWith("ice.subagents.")) return undefined;
+	const effective = JSON.stringify(effectiveIceValue(settings, key, ""));
+	const projectValue = settings.isProjectTrusted()
+		? readPath(settings.getProjectSettings() as unknown as Record<string, unknown>, key)
+		: undefined;
+	if (projectValue !== undefined && JSON.stringify(projectValue) === effective) return "project";
+	return hasPath(settings.getGlobalSettings() as unknown as Record<string, unknown>, key) ? "global" : undefined;
 }
 
 function setIceValue(settings: SettingsManager, scope: SettingsScope, key: string, value: RpcSettingsValue): void {
@@ -230,7 +225,8 @@ const ICE_SETTINGS: RpcSettingsDefinition[] = [
 	iceSetting({
 		key: "ice.subagents.enabled",
 		label: "ICE subagents",
-		description: "Enable profile-based ICE delegation; disabling it blocks new child launches",
+		description:
+			"Allow new subagent launches; false in either scope blocks them while existing children stay manageable",
 		group: "ICE · Subagents",
 		kind: "boolean",
 		scope: "both",
@@ -239,76 +235,65 @@ const ICE_SETTINGS: RpcSettingsDefinition[] = [
 		read: (settings) => effectiveIceValue(settings, "ice.subagents.enabled", true) as boolean,
 	}),
 	iceSetting({
-		key: "ice.subagents.defaults.thinking",
-		label: "Subagent thinking",
-		description: "Default reasoning effort for delegated children; the parent model route is unchanged",
+		key: "ice.subagents.defaultAgent",
+		label: "Default subagent",
+		description: "Agent definition used when a task names none",
 		group: "ICE · Subagents",
-		kind: "select",
+		kind: "text",
 		scope: "both",
-		defaultValue: "medium",
-		options: THINKING_LEVELS,
+		defaultValue: "general",
+		constraints: { maxLength: 64 },
 		restartRequired: false,
-		read: (settings) => effectiveIceValue(settings, "ice.subagents.defaults.thinking", "medium") as string,
+		read: (settings) => effectiveIceValue(settings, "ice.subagents.defaultAgent", "general") as string,
 	}),
 	iceSetting({
-		key: "ice.subagents.defaults.timeoutMs",
-		label: "Subagent timeout",
-		description: "Default bounded child execution timeout in milliseconds",
-		group: "ICE · Subagents",
-		kind: "number",
-		scope: "both",
-		defaultValue: 120_000,
-		constraints: { min: 1, max: 600_000, integer: true },
-		restartRequired: false,
-		read: (settings) => effectiveIceValue(settings, "ice.subagents.defaults.timeoutMs", 120_000) as number,
-	}),
-	iceSetting({
-		key: "ice.subagents.defaults.maxOutputBytes",
-		label: "Subagent result size cap",
-		description: "Default complete parent-facing result size cap in UTF-8 bytes; this is not model tokens or cost",
+		key: "ice.subagents.maxConcurrent",
+		label: "Subagent concurrency",
+		description: "Maximum running children per parent session; a project can only lower it. Applies to new sessions",
 		group: "ICE · Subagents",
 		kind: "number",
 		scope: "both",
-		defaultValue: 24_576,
-		constraints: { min: 1_024, max: 65_536, integer: true },
-		restartRequired: false,
-		read: (settings) => effectiveIceValue(settings, "ice.subagents.defaults.maxOutputBytes", 24_576) as number,
+		defaultValue: 4,
+		constraints: { min: 1, integer: true },
+		restartRequired: true,
+		read: (settings) => effectiveIceValue(settings, "ice.subagents.maxConcurrent", 4) as number,
 	}),
 	iceSetting({
-		key: "ice.subagents.allowedRoles",
-		label: "Allowed subagent roles",
-		description: "Optional role allowlist; an empty list means no additional role restriction",
+		key: "ice.subagents.maxDepth",
+		label: "Subagent nesting depth",
+		description:
+			"Reserved for nested delegation, which is not enabled: subagents cannot launch subagents, so values above 0 have no effect yet. A project can only lower it",
+		group: "ICE · Subagents",
+		kind: "number",
+		scope: "both",
+		defaultValue: 0,
+		constraints: { min: 0, max: 4, integer: true },
+		restartRequired: false,
+		read: (settings) => effectiveIceValue(settings, "ice.subagents.maxDepth", 0) as number,
+	}),
+	iceSetting({
+		key: "ice.subagents.askTimeoutMs",
+		label: "Subagent approval timeout",
+		description: "How long a background approval waits before it is denied, in milliseconds. Applies to new sessions",
+		group: "ICE · Subagents",
+		kind: "number",
+		scope: "global",
+		defaultValue: DEFAULT_ASK_TIMEOUT_MS,
+		constraints: { min: 1_000, max: 60 * 60 * 1000, integer: true },
+		restartRequired: true,
+		read: (settings) => effectiveIceValue(settings, "ice.subagents.askTimeoutMs", DEFAULT_ASK_TIMEOUT_MS) as number,
+	}),
+	iceSetting({
+		key: "ice.subagents.disabledAgents",
+		label: "Disabled subagents",
+		description: "Agent definitions hidden from delegation; global and project lists combine",
 		group: "ICE · Subagents",
 		kind: "string-list",
 		scope: "both",
 		defaultValue: [],
 		constraints: { maxItems: 64, maxLength: 64 },
 		restartRequired: false,
-		read: (settings) => effectiveIceValue(settings, "ice.subagents.allowedRoles", []) as string[],
-	}),
-	iceSetting({
-		key: "ice.subagents.concurrency.default",
-		label: "Subagent default concurrency",
-		description: "Default active read-only children shared by batches and durable jobs",
-		group: "ICE · Subagents",
-		kind: "number",
-		scope: "both",
-		defaultValue: 4,
-		constraints: { min: 1, max: 8, integer: true },
-		restartRequired: false,
-		read: (settings) => effectiveIceValue(settings, "ice.subagents.concurrency.default", 4) as number,
-	}),
-	iceSetting({
-		key: "ice.subagents.concurrency.max",
-		label: "Subagent concurrency cap",
-		description: "Hard active-child ceiling shared by batches and durable jobs",
-		group: "ICE · Subagents",
-		kind: "number",
-		scope: "both",
-		defaultValue: 8,
-		constraints: { min: 1, max: 8, integer: true },
-		restartRequired: false,
-		read: (settings) => effectiveIceValue(settings, "ice.subagents.concurrency.max", 8) as number,
+		read: (settings) => effectiveIceValue(settings, "ice.subagents.disabledAgents", []) as string[],
 	}),
 	iceSetting({
 		key: "ice.hooks.enabled",
@@ -443,6 +428,53 @@ const BUILTIN_SETTINGS: RpcSettingsDefinition[] = [
 		options: MID_RUN_COMPACTION,
 		restartRequired: false,
 		read: (settings) => settings.getMidRunCompaction(),
+	}),
+	setting({
+		key: "compaction.reserveTokens",
+		label: "Compaction reserve",
+		description: "Tokens kept free for the prompt and response when compacting",
+		group: "Compaction",
+		kind: "number",
+		scope: "both",
+		defaultValue: 16384,
+		constraints: { min: 1, integer: true },
+		restartRequired: false,
+		read: (settings) => settings.getCompactionReserveTokens(),
+	}),
+	setting({
+		key: "compaction.keepRecentTokens",
+		label: "Compaction keep-recent",
+		description: "Recent tokens left uncompacted",
+		group: "Compaction",
+		kind: "number",
+		scope: "both",
+		defaultValue: 20000,
+		constraints: { min: 1, integer: true },
+		restartRequired: false,
+		read: (settings) => settings.getCompactionKeepRecentTokens(),
+	}),
+	setting({
+		key: "branchSummary.reserveTokens",
+		label: "Branch summary reserve",
+		description: "Tokens reserved for the prompt and response when summarizing a branch",
+		group: "Compaction",
+		kind: "number",
+		scope: "both",
+		defaultValue: 16384,
+		constraints: { min: 1, integer: true },
+		restartRequired: false,
+		read: (settings) => settings.getBranchSummarySettings().reserveTokens,
+	}),
+	setting({
+		key: "branchSummary.skipPrompt",
+		label: "Skip branch summary prompt",
+		description: "Navigate the session tree without offering a branch summary",
+		group: "Compaction",
+		kind: "boolean",
+		scope: "both",
+		defaultValue: false,
+		restartRequired: false,
+		read: (settings) => settings.getBranchSummarySkipPrompt(),
 	}),
 	setting({
 		key: "retry.enabled",
@@ -724,7 +756,7 @@ const BUILTIN_SETTINGS: RpcSettingsDefinition[] = [
 		group: "Terminal",
 		kind: "select",
 		scope: "both",
-		defaultValue: "auto",
+		defaultValue: "hidden",
 		options: FULLSCREEN_SCROLLBARS,
 		hostOnly: true,
 		restartRequired: true,
@@ -741,6 +773,67 @@ const BUILTIN_SETTINGS: RpcSettingsDefinition[] = [
 		hostOnly: true,
 		restartRequired: true,
 		read: (settings) => settings.getShowHardwareCursor(),
+	}),
+	setting({
+		key: "favoriteModels",
+		label: "Favorite models",
+		description: "Exact provider/model IDs pinned in the model selector",
+		group: "Model",
+		kind: "string-list",
+		scope: "global",
+		defaultValue: [],
+		constraints: { maxItems: 1000, maxLength: 512 },
+		restartRequired: false,
+		read: (settings) => settings.getFavoriteModels(),
+	}),
+	setting({
+		key: "httpIdleTimeoutMs",
+		label: "HTTP idle timeout",
+		description: "Provider HTTP header and body idle timeout in milliseconds; 0 disables it",
+		group: "Reliability",
+		kind: "number",
+		scope: "global",
+		defaultValue: 300000,
+		constraints: { min: 0, integer: true },
+		restartRequired: true,
+		read: (settings) => settings.getHttpIdleTimeoutMs(),
+	}),
+	setting({
+		key: "enableAnalytics",
+		label: "Analytics",
+		description: "Opt in to analytics data sharing",
+		group: "Privacy",
+		kind: "boolean",
+		scope: "global",
+		defaultValue: false,
+		restartRequired: false,
+		read: (settings) => settings.getEnableAnalytics(),
+	}),
+	setting({
+		key: "footerStyle",
+		label: "Footer style",
+		description: "One-row status line or the legacy multi-row usage footer",
+		group: "Terminal",
+		kind: "select",
+		scope: "global",
+		defaultValue: "compact",
+		options: ["compact", "legacy"],
+		hostOnly: true,
+		restartRequired: true,
+		read: (settings) => settings.getFooterStyle(),
+	}),
+	setting({
+		key: "toolStyle",
+		label: "Tool style",
+		description: "Compact bullet rows or boxed tool blocks",
+		group: "Terminal",
+		kind: "select",
+		scope: "global",
+		defaultValue: "compact",
+		options: ["compact", "boxed"],
+		hostOnly: true,
+		restartRequired: true,
+		read: (settings) => settings.getToolStyle(),
 	}),
 ];
 
@@ -917,8 +1010,7 @@ function fieldFromDefinition(definition: RpcSettingsDefinition, settingsManager:
 	const projectSettings = settingsManager.getProjectSettings() as unknown as Record<string, unknown>;
 	const effectiveValue = normalizeForSnapshot(definition, definition.read(settingsManager));
 	const effectiveSource =
-		effectiveIceConcurrencySource(settingsManager, definition.key) ??
-		settingsManager.getSettingSource(definition.key);
+		effectiveIceSubagentSource(settingsManager, definition.key) ?? settingsManager.getSettingSource(definition.key);
 	const configuredValue = normalizeForSnapshot(
 		definition,
 		readPath(globalSettings, definition.key) ?? definition.defaultValue,
@@ -966,6 +1058,8 @@ function diagnostics(settingsManager: SettingsManager): RpcSettingsDiagnostic[] 
 	if (settingsManager.isProjectTrusted()) {
 		diagnoseIceScope("project", settingsManager.getProjectSettings().ice);
 	}
+	for (const { scope, message } of effectiveSubagentSettings(settingsManager).deprecations)
+		iceDiagnostics.push({ code: "ice_deprecated_setting", scope, message });
 	const writeDiagnostics = settingsManager.drainErrors().map(({ scope }) => ({
 		code: "settings_io_error" as const,
 		scope,

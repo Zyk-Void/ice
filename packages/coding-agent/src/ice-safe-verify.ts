@@ -12,6 +12,7 @@ import type {
 	ExtensionContext,
 	ExtensionUIContext,
 	ToolCallEvent,
+	ToolInfo,
 	ToolResultEvent,
 } from "./core/extensions/types.ts";
 import { matchesEntryType } from "./core/legacy-compat/identity.ts";
@@ -46,6 +47,11 @@ const PLAN_TOOLS = [
 	"cancel_subagent_job",
 	"delegate_batch",
 	"review_batch",
+	"inspect_subagent_batch",
+	"cancel_subagent_batch",
+	// Subagent V2 (ice.subagents.v2): child mutation authority is capped by this parent mode.
+	"agent",
+	"agent_control",
 	...GOAL_TOOLS,
 ];
 const BUILD_TOOLS = [
@@ -54,10 +60,22 @@ const BUILD_TOOLS = [
 	"inspect_writer_patch",
 	"reject_writer_patch",
 	"integrate_writer_patch",
+	"agent_patch",
 	"read_plan",
 	"edit",
 	"write",
 ];
+/**
+ * Tools enabled by --allow-external in a trusted build: MCP proxy tools plus every tool from an installed
+ * package (pi-mcp-adapter direct tools use `<server>_<tool>` names; pi-web-access, ...) and ICE's
+ * Cognee memory search. All of these reach services outside the workspace.
+ */
+const EXTERNAL_INLINE_TOOLS = new Set(["cognee_search"]);
+const isExternalTool = (tool: ToolInfo) =>
+	tool.name === "mcp" ||
+	tool.name.startsWith("mcp__") ||
+	tool.sourceInfo?.origin === "package" ||
+	EXTERNAL_INLINE_TOOLS.has(tool.name);
 const MAX_PLAN_TITLE_BYTES = 512;
 const MAX_PLAN_MARKDOWN_BYTES = 64 * 1024;
 const MAX_PLAN_DECISION_REMINDERS = 3;
@@ -777,6 +795,8 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 	let lastPlanAssistantHadToolCall = false;
 	let lastPlanAssistantHadDecision = false;
 	let planContinuationScheduled = false;
+	// A user abort (Escape) ends the run on purpose; reminding would restart it.
+	let lastPlanRunAborted = false;
 	let activeVerifier:
 		| {
 				controller: AbortController;
@@ -793,7 +813,8 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 		type: "boolean",
 	});
 	ice.registerFlag("allow-external", {
-		description: "Allow unrestricted external host filesystem access in trusted build mode",
+		description:
+			"Allow unrestricted external filesystem access, configured MCP tools, and installed package tools in trusted build mode",
 		type: "boolean",
 	});
 	ice.registerFlag("ice-verify", { description: "Trusted verifier JSON argv for this process", type: "string" });
@@ -814,19 +835,33 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 		state?.mode === "build" && bashRequested() && ctx.isProjectTrusted();
 	const allowExternalRequested = () => ice.getFlag("allow-external") === true;
 	const allowExternalEffective = (ctx: ExtensionContext) =>
-		state?.mode === "build" &&
-		allowExternalRequested() &&
-		ctx.isProjectTrusted() &&
-		(ctx.mode === "tui" || ctx.mode === "rpc") &&
-		ctx.hasUI;
-	const effectiveTools = (ctx: ExtensionContext) =>
-		state?.mode === "plan"
-			? state.plan.status === "none"
-				? PLAN_TOOLS
-				: [...PLAN_TOOLS, "read_plan"]
-			: bashEffective(ctx)
-				? [...BUILD_TOOLS, "bash"]
-				: BUILD_TOOLS;
+		state?.mode === "build" && allowExternalRequested() && ctx.isProjectTrusted();
+	// Non-external extension tools that declare an access class: read tools in either mode,
+	// write tools only where Bash-level trust holds. Undeclared tools stay inactive.
+	const declaredTools = (access: "read" | "write") =>
+		ice
+			.getAllTools()
+			.filter((tool) => tool.access === access && !isExternalTool(tool))
+			.map((tool) => tool.name);
+	const effectiveTools = (ctx: ExtensionContext) => {
+		const tools =
+			state?.mode === "plan"
+				? [...PLAN_TOOLS, ...declaredTools("read")]
+				: [
+						...BUILD_TOOLS,
+						...declaredTools("read"),
+						...(state?.mode === "build" && ctx.isProjectTrusted() ? declaredTools("write") : []),
+						...(bashEffective(ctx) ? ["bash", "bash_output", "bash_kill"] : []),
+						...(allowExternalEffective(ctx)
+							? ice
+									.getAllTools()
+									.filter(isExternalTool)
+									.map((tool) => tool.name)
+							: []),
+					];
+		if (!state || state.plan.status === "none") return tools.filter((tool) => tool !== "read_plan");
+		return state.mode === "plan" ? [...tools, "read_plan"] : tools;
+	};
 	const applyTools = (ctx: ExtensionContext) => ice.setActiveTools(effectiveTools(ctx));
 	const publishCapabilityState = async (ctx: ExtensionContext): Promise<void> => {
 		if (!state) return;
@@ -904,11 +939,13 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 			ctx.ui.notify(
 				"Bash is enabled for this process. Direct path guards do not contain shell commands.",
 				"warning",
+				{ id: "safety:bash", sticky: true },
 			);
 		if (allowExternalEffective(ctx))
 			ctx.ui.notify(
-				"External filesystem access is enabled for this process. This is unrestricted host access, not a sandbox.",
+				"External filesystem access, configured MCP tools, and installed package tools are enabled for this process. This is unrestricted host access, not a sandbox.",
 				"warning",
+				{ id: "safety:external", sticky: true },
 			);
 		await options.onModeChange?.(mode, ctx);
 	};
@@ -1404,11 +1441,18 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 			state = { ...state, plan: { ...state.plan, decisionReminderCount: 0 } };
 			persist();
 		}
-		if (event.toolName === "edit" || event.toolName === "write" || event.toolName === "integrate_writer_patch") {
+		const patchApply =
+			event.toolName === "agent_patch" && (event.input as { action?: unknown } | undefined)?.action === "apply";
+		if (
+			event.toolName === "edit" ||
+			event.toolName === "write" ||
+			event.toolName === "integrate_writer_patch" ||
+			patchApply
+		) {
 			if (state.mode === "build" && state.plan.status === "approved" && !state.plan.readInBuild) {
 				return { block: true, reason: "Read approved plan with read_plan before mutation" };
 			}
-			if (event.toolName !== "integrate_writer_patch") {
+			if (event.toolName !== "integrate_writer_patch" && !patchApply) {
 				const reason = validateMutationPath(
 					event.input.path,
 					ctx.cwd,
@@ -1423,12 +1467,14 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 	});
 	ice.on("tool_result", async (event: ToolResultEvent) => {
 		if (!authorizedMutations.delete(event.toolCallId) || !state || event.isError) return;
-		if (event.toolName === "integrate_writer_patch") {
+		if (event.toolName === "integrate_writer_patch" || event.toolName === "agent_patch") {
 			const details = event.details;
 			if (
 				details &&
 				typeof details === "object" &&
-				(details as { status?: unknown }).status === "integrated" &&
+				((event.toolName === "integrate_writer_patch" &&
+					(details as { status?: unknown }).status === "integrated") ||
+					(event.toolName === "agent_patch" && (details as { status?: unknown }).status === "applied")) &&
 				(details as { verification?: unknown }).verification &&
 				typeof (details as { verification: unknown }).verification === "object" &&
 				(details as { verification: { status?: unknown } }).verification.status === "passed"
@@ -1442,6 +1488,34 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 						...(details as { verification: IceVerifierState }).verification,
 						generation,
 					},
+				};
+				persist();
+			} else if (
+				event.toolName === "agent_patch" &&
+				(details as { status?: unknown } | undefined)?.status === "rollback_conflict"
+			) {
+				state = {
+					...state,
+					mutationGeneration: state.mutationGeneration + 1,
+					verifier: { status: "pending", generation: state.mutationGeneration + 1 },
+				};
+				persist();
+			} else if (
+				event.toolName === "agent_patch" &&
+				(details as { status?: unknown } | undefined)?.status === "applied" &&
+				(details as { unverified?: unknown }).unverified === true
+			) {
+				// No verifier was configured: track the patch exactly like parent edit/write.
+				state = {
+					...state,
+					mutationGeneration: state.mutationGeneration + 1,
+					verifier: verifierArgv
+						? {
+								status: "pending",
+								generation: state.mutationGeneration + 1,
+								commandHash: commandHash(verifierArgv),
+							}
+						: state.verifier,
 				};
 				persist();
 			}
@@ -1462,6 +1536,11 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 		lastPlanAssistantHadToolCall = false;
 		lastPlanAssistantHadDecision = false;
 		planContinuationScheduled = false;
+		lastPlanRunAborted = false;
+	});
+	ice.on("agent_end", async (event) => {
+		const last = event.messages.at(-1);
+		if (last?.role === "assistant" && last.stopReason === "aborted") lastPlanRunAborted = true;
 	});
 	ice.on("turn_end", async (event) => {
 		if (!state || state.mode !== "plan" || event.message.role !== "assistant") return;
@@ -1483,6 +1562,7 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 			!lastPlanAssistantHadToolCall &&
 			!lastPlanAssistantHadDecision &&
 			!planContinuationScheduled &&
+			!lastPlanRunAborted &&
 			state.plan.decisionReminderCount < MAX_PLAN_DECISION_REMINDERS
 		) {
 			state = {
@@ -1588,11 +1668,13 @@ export default function iceSafeVerify(ice: ExtensionAPI, options: IceSafeVerifyO
 			ctx.ui.notify(
 				"Bash is enabled for this process. Direct path guards do not contain shell commands.",
 				"warning",
+				{ id: "safety:bash", sticky: true },
 			);
 		if (allowExternalEffective(ctx))
 			ctx.ui.notify(
-				"External filesystem access is enabled for this process. This is unrestricted host access, not a sandbox.",
+				"External filesystem access, configured MCP tools, and installed package tools are enabled for this process. This is unrestricted host access, not a sandbox.",
 				"warning",
+				{ id: "safety:external", sticky: true },
 			);
 		await options.onModeChange?.(mode, ctx);
 	};

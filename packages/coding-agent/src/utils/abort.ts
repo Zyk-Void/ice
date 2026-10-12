@@ -5,6 +5,14 @@ function abortReason(signal: AbortSignal): unknown {
 	return error;
 }
 
+/** Link caller cancellation to an operation-owned controller; detach at settlement. */
+export function linkAbortSignal(controller: AbortController, signal?: AbortSignal): () => void {
+	const onAbort = () => controller.abort(signal?.reason);
+	if (signal?.aborted) onAbort();
+	else signal?.addEventListener("abort", onAbort, { once: true });
+	return () => signal?.removeEventListener("abort", onAbort);
+}
+
 /** Normalize an optional public signal without imposing a deadline. */
 export function operationSignal(signal?: AbortSignal): AbortSignal {
 	return signal ?? new AbortController().signal;

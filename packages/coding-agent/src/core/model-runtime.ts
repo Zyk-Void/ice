@@ -148,6 +148,29 @@ export class ModelRuntime implements Models {
 	private readonly providerAvailabilitySeq = new Map<string, number>();
 	private availabilityError: string | undefined;
 	private readonly credentialOperations = new Map<string, Promise<unknown>>();
+	private readonly changeListeners = new Set<() => void>();
+	private changePending = false;
+
+	/** Process-local invalidation only; never exposes credentials or provider responses. */
+	subscribeChanges(listener: () => void): () => void {
+		this.changeListeners.add(listener);
+		return () => this.changeListeners.delete(listener);
+	}
+
+	private notifyChange(): void {
+		if (this.changePending) return;
+		this.changePending = true;
+		queueMicrotask(() => {
+			this.changePending = false;
+			for (const listener of [...this.changeListeners]) {
+				try {
+					listener();
+				} catch {
+					/* Observers cannot veto model/auth state updates. */
+				}
+			}
+		});
+	}
 
 	private constructor(
 		credentials: RuntimeCredentials,
@@ -276,6 +299,7 @@ export class ModelRuntime implements Models {
 			all,
 			available: all.filter((model) => this.snapshot.configuredProviders.has(model.provider)),
 		};
+		this.notifyChange();
 	}
 
 	private async runAvailabilityRefresh(seq: number, errorSeq: number, signal: AbortSignal): Promise<void> {
@@ -307,6 +331,7 @@ export class ModelRuntime implements Models {
 			auth,
 		};
 		if (errorSeq === this.availabilityErrorSeq) this.availabilityError = undefined;
+		this.notifyChange();
 	}
 
 	private queueAvailabilityRefresh(signal?: AbortSignal): Promise<void> {
@@ -320,6 +345,7 @@ export class ModelRuntime implements Models {
 			if (errorSeq === this.availabilityErrorSeq && !effectiveSignal.aborted) {
 				this.availabilityError = error instanceof Error ? error.message : String(error);
 			}
+			this.notifyChange();
 			throw error;
 		});
 	}
@@ -365,6 +391,7 @@ export class ModelRuntime implements Models {
 				auth: authByProvider,
 			};
 			if (errorSeq === this.availabilityErrorSeq) this.availabilityError = undefined;
+			this.notifyChange();
 		} catch (error) {
 			if (
 				this.providerAvailabilitySeq.get(providerId) === providerSeq &&
@@ -373,6 +400,7 @@ export class ModelRuntime implements Models {
 			) {
 				this.availabilityError = error instanceof Error ? error.message : String(error);
 			}
+			this.notifyChange();
 			throw error;
 		}
 	}
@@ -529,6 +557,7 @@ export class ModelRuntime implements Models {
 		const signal = operationSignal(options.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
 			this.credentials.setRuntimeApiKey(providerId, apiKey);
+			this.notifyChange();
 			await this.synchronizeCredentialState(
 				providerId,
 				"setRuntimeApiKey",
@@ -542,6 +571,7 @@ export class ModelRuntime implements Models {
 		const signal = operationSignal(options.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
 			this.credentials.removeRuntimeApiKey(providerId);
+			this.notifyChange();
 			await this.synchronizeCredentialState(providerId, "removeRuntimeApiKey", undefined, signal);
 		});
 	}
@@ -719,6 +749,7 @@ export class ModelRuntime implements Models {
 				// Availability errors are recorded by the latest pass; refreshed models remain usable.
 			}
 		}
+		this.notifyChange();
 		return { aborted: result.aborted || (options.signal?.aborted ?? false), errors };
 	}
 

@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { formatWithOptions } from "node:util";
 import * as _bundledIceAgentCore from "@zykairotis/ice-agent-core";
 import type { Provider } from "@zykairotis/ice-ai";
 import * as _bundledIceAiCompat from "@zykairotis/ice-ai/compat";
@@ -37,6 +38,7 @@ import type {
 	EntryRenderer,
 	Extension,
 	ExtensionAPI,
+	ExtensionContext,
 	ExtensionFactory,
 	ExtensionRuntime,
 	LoadExtensionsResult,
@@ -262,15 +264,31 @@ function createExtensionAPI(
 ): ExtensionAPI {
 	const api = {
 		// Registration methods - write to extension
-		on(event: string, handler: HandlerFn): void {
+		on(event: string, handler: HandlerFn): () => void {
 			runtime.assertActive();
-			const list = extension.handlers.get(event) ?? [];
-			list.push(handler);
-			extension.handlers.set(event, list);
+			// Copy-on-write arrays keep every dispatch's captured handler list stable.
+			extension.handlers.set(event, [...(extension.handlers.get(event) ?? []), handler]);
+			let subscribed = true;
+			return () => {
+				if (!subscribed) return;
+				subscribed = false;
+				const list = [...(extension.handlers.get(event) ?? [])];
+				const index = list.indexOf(handler);
+				if (index !== -1) list.splice(index, 1);
+				extension.handlers.set(event, list);
+			};
 		},
 
 		registerTool(tool: ToolDefinition): void {
 			runtime.assertActive();
+			if (
+				!tool.parameters ||
+				typeof tool.parameters !== "object" ||
+				!("type" in tool.parameters) ||
+				tool.parameters.type !== "object"
+			) {
+				throw new Error(`Tool '${tool.name}' parameters must be an object schema`);
+			}
 			extension.tools.set(tool.name, {
 				definition: tool,
 				sourceInfo: extension.sourceInfo,
@@ -280,6 +298,14 @@ function createExtensionAPI(
 
 		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
 			runtime.assertActive();
+			if (
+				typeof name !== "string" ||
+				name.length === 0 ||
+				/[\s/]/u.test(name) ||
+				typeof options?.handler !== "function"
+			) {
+				throw new Error("Command registration requires a nonempty name without whitespace/slashes and a handler");
+			}
 			extension.commands.set(name, {
 				name,
 				sourceInfo: extension.sourceInfo,
@@ -305,7 +331,7 @@ function createExtensionAPI(
 			shortcut: KeyId,
 			options: {
 				description?: string;
-				handler: (ctx: import("./types.ts").ExtensionContext) => Promise<void> | void;
+				handler: (ctx: ExtensionContext) => Promise<void> | void;
 			},
 		): void {
 			runtime.assertActive();
@@ -317,6 +343,12 @@ function createExtensionAPI(
 			options: { description?: string; type: "boolean" | "string"; default?: boolean | string },
 		): void {
 			runtime.assertActive();
+			if (
+				(options.type !== "boolean" && options.type !== "string") ||
+				(options.default !== undefined && typeof options.default !== options.type)
+			) {
+				throw new Error(`Flag '${name}' default must match its declared type`);
+			}
 			extension.flags.set(name, { name, extensionPath: extension.path, ...options });
 			if (options.default !== undefined && !runtime.flagValues.has(name)) {
 				runtime.flagValues.set(name, options.default);
@@ -438,6 +470,96 @@ function createExtensionAPI(
 	return api;
 }
 
+async function initializeExtension(
+	factory: ExtensionFactory,
+	extension: Extension,
+	runtime: ExtensionRuntime,
+	cwd: string,
+	eventBus: EventBus,
+): Promise<void> {
+	let initializing = true;
+	let disposed = false;
+	const defaults = new Map(runtime.flagValues);
+	const registrations: Array<() => void> = [];
+	const subscriptions = new Set<() => void>();
+	const pendingSubscriptions: Array<() => void> = [];
+	const assertActive = () => {
+		runtime.assertActive();
+		if (disposed) throw new Error("Extension factory API is no longer active");
+	};
+	const scopedRuntime = new Proxy(runtime, {
+		get(target, key) {
+			if (key === "assertActive") return assertActive;
+			if (key === "flagValues" && initializing) return defaults;
+			if (key === "refreshTools" && initializing) return () => {};
+			if (initializing && key === "registerProvider") {
+				return (name: string, config: ProviderConfig, source?: string) => {
+					registrations.push(() => runtime.registerProvider(name, config, source));
+				};
+			}
+			if (initializing && key === "registerNativeProvider") {
+				return (provider: Provider, source?: string) => {
+					registrations.push(() => runtime.registerNativeProvider(provider, source));
+				};
+			}
+			if (initializing && key === "unregisterProvider") {
+				return (name: string, source?: string) => {
+					registrations.push(() => runtime.unregisterProvider(name, source));
+				};
+			}
+			return Reflect.get(target, key);
+		},
+	});
+	const scopedBus = new Proxy(eventBus, {
+		get(target, key) {
+			if (key === "emit")
+				return (channel: string, data: unknown) => {
+					assertActive();
+					eventBus.emit(channel, data);
+				};
+			if (key === "on")
+				return (channel: string, handler: (data: unknown) => void) => {
+					assertActive();
+					let cancelled = false;
+					let detach: (() => void) | undefined;
+					const unsubscribe = () => {
+						cancelled = true;
+						detach?.();
+						subscriptions.delete(unsubscribe);
+					};
+					const attach = () => {
+						if (cancelled) return;
+						detach = eventBus.on(channel, handler);
+						subscriptions.add(unsubscribe);
+					};
+					if (initializing) pendingSubscriptions.push(attach);
+					else attach();
+					return unsubscribe;
+				};
+			return Reflect.get(target, key);
+		},
+	});
+	extension.dispose = () => {
+		disposed = true;
+		for (const unsubscribe of [...subscriptions]) unsubscribe();
+		pendingSubscriptions.length = 0;
+	};
+	try {
+		await factory(createExtensionAPI(extension, scopedRuntime, cwd, scopedBus));
+		assertActive();
+		for (const register of registrations) register();
+		for (const [name, value] of defaults) {
+			if (!runtime.flagValues.has(name)) runtime.flagValues.set(name, value);
+		}
+		for (const attach of pendingSubscriptions) attach();
+		initializing = false;
+		runtime.refreshTools();
+	} catch (error) {
+		extension.dispose();
+		throw error;
+	}
+}
+
 function isCurrentCacheToken(cacheToken: ExtensionCacheToken | undefined): cacheToken is ExtensionCacheToken {
 	return (
 		cacheToken !== undefined &&
@@ -525,8 +647,7 @@ async function loadExtension(
 		}
 
 		const extension = createExtension(extensionPath, resolvedPath);
-		const api = createExtensionAPI(extension, runtime, cwd, eventBus);
-		await factory(api);
+		await initializeExtension(factory, extension, runtime, cwd, eventBus);
 		time(`${extensionPath} factory`, "extensions");
 
 		return { extension, error: null };
@@ -548,8 +669,7 @@ export async function loadExtensionFromFactory(
 ): Promise<Extension> {
 	const extension = createExtension(extensionPath, extensionPath);
 	const resolvedCwd = resolvePath(cwd);
-	const api = createExtensionAPI(extension, runtime, resolvedCwd, eventBus);
-	await factory(api);
+	await initializeExtension(factory, extension, runtime, resolvedCwd, eventBus);
 	time(`${extensionPath} factory`, "extensions");
 	return extension;
 }
@@ -557,6 +677,60 @@ export async function loadExtensionFromFactory(
 /**
  * Load extensions from paths.
  */
+export type ExtensionConsoleLevel = "log" | "info" | "warn" | "error";
+
+export interface ExtensionConsoleEntry {
+	extensionPath: string;
+	level: ExtensionConsoleLevel;
+	text: string;
+}
+
+type ExtensionConsoleSink = (entry: ExtensionConsoleEntry) => void;
+
+/**
+ * Console output written by extensions while they load. Interactive mode enables
+ * capture before the TUI owns the terminal so stray writes do not appear above it.
+ */
+let extensionConsoleCapture: { buffer: ExtensionConsoleEntry[]; sink?: ExtensionConsoleSink } | undefined;
+
+export function enableExtensionConsoleCapture(): void {
+	extensionConsoleCapture ??= { buffer: [] };
+}
+
+/** Stop capturing and return entries no sink consumed. */
+export function disableExtensionConsoleCapture(): ExtensionConsoleEntry[] {
+	const buffered = extensionConsoleCapture?.buffer ?? [];
+	extensionConsoleCapture = undefined;
+	return buffered;
+}
+
+/** Deliver captured entries to `sink`, flushing anything buffered before it was attached. */
+export function setExtensionConsoleSink(sink: ExtensionConsoleSink): void {
+	if (!extensionConsoleCapture) return;
+	extensionConsoleCapture.sink = sink;
+	const buffered = extensionConsoleCapture.buffer.splice(0);
+	for (const entry of buffered) sink(entry);
+}
+
+async function withExtensionConsoleCapture<T>(extensionPath: string, run: () => Promise<T>): Promise<T> {
+	const capture = extensionConsoleCapture;
+	if (!capture) return run();
+	const levels: ExtensionConsoleLevel[] = ["log", "info", "warn", "error"];
+	const originals = levels.map((level) => [level, console[level]] as const);
+	for (const level of levels) {
+		console[level] = (...args: unknown[]) => {
+			const entry: ExtensionConsoleEntry = { extensionPath, level, text: formatWithOptions({}, ...args) };
+			if (capture.sink) capture.sink(entry);
+			else capture.buffer.push(entry);
+		};
+	}
+	try {
+		return await run();
+	} finally {
+		for (const [level, original] of originals) console[level] = original;
+	}
+}
+
 async function loadExtensionsInternal(
 	paths: string[],
 	cwd: string,
@@ -572,12 +746,8 @@ async function loadExtensionsInternal(
 	const resolvedRuntime = runtime ?? createExtensionRuntime();
 
 	for (const extPath of paths) {
-		const { extension, error } = await loadExtension(
-			extPath,
-			resolvedCwd,
-			resolvedEventBus,
-			resolvedRuntime,
-			cacheToken,
+		const { extension, error } = await withExtensionConsoleCapture(extPath, () =>
+			loadExtension(extPath, resolvedCwd, resolvedEventBus, resolvedRuntime, cacheToken),
 		);
 
 		if (error) {

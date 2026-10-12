@@ -1,0 +1,62 @@
+{
+  "capturedAt": "2026-10-10T05:11:15.397Z",
+  "branch": "integration/all-worktrees-experimental",
+  "head": "23777df4037a4858917c69f28b074c2fec070d44",
+  "headStableDuringCapture": true,
+  "parent": {
+    "status": " M packages/coding-agent/CHANGELOG.md\n M packages/coding-agent/src/modes/interactive/components/session-header.ts\n M packages/coding-agent/src/modes/interactive/interactive-mode.ts\n M packages/coding-agent/test/new-messages-pill.test.ts\n M packages/coding-agent/test/session-header.test.ts\n?? imported_extensions/pi-workgraph/\n?? random-story.md",
+    "files": [
+      {
+        "path": "packages/coding-agent/CHANGELOG.md",
+        "added": 1,
+        "deleted": 0
+      },
+      {
+        "path": "packages/coding-agent/src/modes/interactive/components/session-header.ts",
+        "added": 17,
+        "deleted": 8
+      },
+      {
+        "path": "packages/coding-agent/src/modes/interactive/interactive-mode.ts",
+        "added": 1,
+        "deleted": 1
+      },
+      {
+        "path": "packages/coding-agent/test/new-messages-pill.test.ts",
+        "added": 86,
+        "deleted": 1
+      },
+      {
+        "path": "packages/coding-agent/test/session-header.test.ts",
+        "added": 9,
+        "deleted": 7
+      }
+    ],
+    "added": 114,
+    "deleted": 17,
+    "stagedFiles": [],
+    "diffSha256": "a70fb3cf223a679d3e3b203a73be6296cdebf752a3d881e403cd442659eda021"
+  },
+  "nested": {
+    "head": "16c4f74f4abacffdad6bfcd143747a42d37c2498",
+    "status": " M src/bd.ts\n M src/tools.ts\n?? docs/workgraph-user-guide.md",
+    "files": [
+      {
+        "path": "imported_extensions/pi-workgraph/src/bd.ts",
+        "added": 11,
+        "deleted": 1
+      },
+      {
+        "path": "imported_extensions/pi-workgraph/src/tools.ts",
+        "added": 2,
+        "deleted": 2
+      }
+    ],
+    "diffSha256": "89a0de7bb8f62e9f5c402b4590cd712747cf9bab1189fd7b2ba65573bf557b98"
+  },
+  "limits": [
+    "Report artifacts excluded from git scope.",
+    "Source diff inspected; repository tests, check, build, and live runtime not run for this report.",
+    "Snapshot is not a continuously refreshed repository dashboard."
+  ]
+}

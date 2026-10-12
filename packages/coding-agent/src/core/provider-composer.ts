@@ -425,12 +425,18 @@ export function composeModelProvider(
 	extension: ProviderConfigInput | undefined,
 ): Provider {
 	const config = modelConfig.getProvider(providerId);
+	const configuredContextWindows = new Map<string, number>();
+	for (const definition of config?.models ?? []) {
+		if (definition.contextWindow !== undefined) {
+			configuredContextWindows.set(definition.id, definition.contextWindow);
+		}
+	}
 	let extensionOAuthCredential: OAuthCredentials | undefined;
 	let refreshedExtensionModels: ProviderConfigInput["models"];
 	const currentExtension = (): ProviderConfigInput | undefined =>
 		extension && refreshedExtensionModels ? { ...extension, models: refreshedExtensionModels } : extension;
-	// models.json modelOverrides are the topmost user-config layer: they apply once,
-	// after custom-model upserts, extension model replacement, and legacy OAuth projection.
+	// Explicit context windows in the models.json catalog remain authoritative when an
+	// extension refreshes the same model. Per-model overrides remain the topmost layer.
 	const getModels = () => {
 		let models = applyExtension(
 			providerId,
@@ -441,8 +447,11 @@ export function composeModelProvider(
 			models = extension.oauth.modifyModels(models, extensionOAuthCredential);
 		}
 		return models.map((model) => {
+			const configuredContextWindow = configuredContextWindows.get(model.id);
+			const catalogModel =
+				configuredContextWindow === undefined ? model : { ...model, contextWindow: configuredContextWindow };
 			const override = config?.modelOverrides?.[model.id];
-			return override ? applyModelOverride(model, override) : model;
+			return override ? applyModelOverride(catalogModel, override) : catalogModel;
 		});
 	};
 	// Validate eagerly so registration/reload reports structural errors immediately.

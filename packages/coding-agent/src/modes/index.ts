@@ -5,7 +5,13 @@
 export { InteractiveMode, type InteractiveModeOptions } from "./interactive/interactive-mode.ts";
 export type { JsonAgentSessionEvent } from "./json-event.ts";
 export { type PrintModeOptions, runPrintMode } from "./print-mode.ts";
-export { type ModelInfo, RpcClient, type RpcClientOptions, type RpcEventListener } from "./rpc/rpc-client.ts";
+export {
+	type ModelInfo,
+	RpcClient,
+	type RpcClientOptions,
+	type RpcEventListener,
+	type RpcOperationOptions,
+} from "./rpc/rpc-client.ts";
 export {
 	buildIceSettingsCommandSchema,
 	clearCustomStructuredCommands,
@@ -35,10 +41,26 @@ export type {
 	RpcSettingUpdate,
 } from "./rpc/rpc-settings.ts";
 export type {
+	RpcAttachment,
+	RpcCapabilities,
 	RpcCommand,
+	RpcCompletions,
+	RpcDiagnostics,
+	RpcEntryPage,
+	RpcEvent,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
+	RpcMessagePage,
+	RpcModelSnapshot,
+	RpcModelsChangedEvent,
+	RpcModelsRefreshResult,
+	RpcProviderInfo,
+	RpcProviderSnapshot,
 	RpcResponse,
+	RpcSessionChangedEvent,
+	RpcSessionPage,
 	RpcSessionState,
 	RpcSlashCommand,
+	RpcTreePage,
+	RpcUIState,
 } from "./rpc/rpc-types.ts";

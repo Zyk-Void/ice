@@ -299,11 +299,13 @@ const QWEN_TOKEN_PLAN_REASONING_EFFORT_UNSUPPORTED_MODEL_IDS = new Set([
 ]);
 
 const KIMI_K3_MAX_TOKENS = 131072;
+// Default 5-minute cache-write rate; the opt-in 1-hour rate is $6/M tokens.
+// https://platform.kimi.ai/docs/pricing/chat
 const KIMI_K3_COST = {
 	input: 3,
 	output: 15,
 	cacheRead: 0.3,
-	cacheWrite: 0,
+	cacheWrite: 3,
 } as const;
 // Kimi Coding is subscription-backed, so models.dev reports zero cost. Use the
 // equivalent Moonshot API rates to estimate the value of subscription usage.
@@ -1985,8 +1987,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		}
 
 		// Process Kimi For Coding models
-		if (data["kimi-for-coding"]?.models) {
-			const kimiModels = data["kimi-for-coding"].models as Record<string, ModelsDevModel>;
+		if (data["kimi-code-plan-global"]?.models) {
+			const kimiModels = data["kimi-code-plan-global"].models as Record<string, ModelsDevModel>;
 			const hasCanonicalModel = Object.prototype.hasOwnProperty.call(kimiModels, "kimi-for-coding");
 
 			const kimiAliases = new Set(["k2p5", "k2p6", "k2p7"]);

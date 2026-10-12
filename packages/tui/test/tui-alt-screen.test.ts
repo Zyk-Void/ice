@@ -645,6 +645,40 @@ describe("TuiAltScreen", () => {
 		}
 	});
 
+	it("keeps action links out of terminal output and highlights them on hover", async () => {
+		const terminal = new RecordingTerminal(20, 3);
+		const openedUrls: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			openUrl: (url) => openedUrls.push(url),
+			isActionUrl: (url) => url.startsWith("app:"),
+		});
+		const external = "https://example.com/";
+		tui.addChild(new Text(`${hyperlink("act", "app:one")} x\n${hyperlink("web", external)}`, 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+		const written = () => terminal.events.map((event) => (event.type === "write" ? event.data : "")).join("");
+		assert.ok(!written().includes("app:one"));
+		assert.ok(written().includes(`\x1b]8;;${external}`));
+		assert.ok(!written().includes("\x1b[7m"));
+
+		terminal.events.length = 0;
+		terminal.sendInput("\x1b[<35;2;1M");
+		await terminal.waitForRender();
+		assert.ok(written().includes("\x1b[7mact\x1b[27m"));
+		assert.ok(!written().includes("app:one"));
+
+		terminal.events.length = 0;
+		terminal.sendInput("\x1b[<35;2;2M");
+		await terminal.waitForRender();
+		assert.ok(!written().includes("\x1b[7m"));
+
+		terminal.sendInput("\x1b[<0;2;1M");
+		terminal.sendInput("\x1b[<0;2;1m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(openedUrls, ["app:one"]);
+		tui.stop();
+	});
+
 	it("opens an OSC 8 hyperlink on click but not on drag", async () => {
 		const terminal = new RecordingTerminal(20, 3);
 		const openedUrls: string[] = [];

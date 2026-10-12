@@ -108,10 +108,16 @@ function maybeCompact(ice: ExtensionAPI, ctx: ExtensionContext, state: TriggerSt
 		},
 		onError: (error) => {
 			state.compactInFlight = false;
+			if (error.message === "Already compacted") {
+				// Another compaction path already appended a compaction entry.
+				state.midRunCompactionSuspended = false;
+				if (config.midRunCompaction === "resume") sendResume(ice, state);
+				return;
+			}
 			state.midRunCompactionSuspended = true;
 			if (error.message !== "Compaction cancelled")
 				notify(ctx, `Blackhole compaction failed: ${error.message}`, "error");
-			if (config.midRunCompaction === "resume") sendResume(ice, state);
+			if (error.message !== "Compaction cancelled" && config.midRunCompaction === "resume") sendResume(ice, state);
 		},
 	});
 }

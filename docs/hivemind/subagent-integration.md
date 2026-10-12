@@ -1,6 +1,8 @@
 # Hivemind Integration with ICE Subagents
 
-**Status:** Target integration; depends on the subagent V1 contract.
+> **Historical proposal.** Hivemind is not implemented. This document was written against the V1 `delegate` / `SubagentExecutor` contract, which Subagents V2 replaced. Do not use those names as current APIs; any future Hivemind work must be redesigned against the [current V2 guide](../../packages/coding-agent/docs/subagents-v2.md) and [architecture](../../packages/coding-agent/docs/subagents-v2-architecture.md).
+
+**Status:** Unimplemented target; this proposal's V1 API assumptions are superseded.
 
 ## Dependency direction
 

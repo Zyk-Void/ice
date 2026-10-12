@@ -187,6 +187,12 @@ function extensionFixture(
 		abort?: () => void;
 		stopAfterTurn?: () => void;
 		idle?: boolean;
+		additionalToolNames?: string[];
+		additionalTools?: Array<{
+			name: string;
+			access?: "read" | "write";
+			sourceInfo: { source: string; origin: string };
+		}>;
 	} = {},
 ) {
 	const { root } = fixture();
@@ -223,6 +229,12 @@ function extensionFixture(
 		},
 		getFlag(name: string) {
 			return options.flags?.[name];
+		},
+		getAllTools() {
+			return [
+				...[...tools.keys(), ...(options.additionalToolNames ?? [])].map((name) => ({ name })),
+				...(options.additionalTools ?? []),
+			];
 		},
 		sendMessage(message: { content: string }, sendOptions?: unknown) {
 			steeredMessages.push(message.content);
@@ -311,6 +323,10 @@ function extensionFixture(
 	};
 }
 
+function legacyTools(names: string[] | undefined): string[] | undefined {
+	return names?.filter((name) => !["agent", "agent_control", "agent_patch"].includes(name));
+}
+
 async function draftPlan(
 	runtime: ReturnType<typeof extensionFixture>,
 	title = "Add guard",
@@ -384,10 +400,84 @@ describe("ICE guarded extension", () => {
 		expect(Object.isFrozen(snapshots[0]?.tools)).toBe(true);
 	});
 
+	it("enables installed package tools and Cognee search by source, not by name", async () => {
+		const external = (name: string, source: string) => ({ name, sourceInfo: { source, origin: "package" } });
+		const inline = (name: string) => ({ name, sourceInfo: { source: "inline", origin: "top-level" } });
+		const runtime = extensionFixture({
+			flags: { "ice-mode": "build", "allow-external": true },
+			additionalTools: [
+				external("cua-driver_list_windows", "npm:pi-mcp-adapter"),
+				external("mcpScript", "npm:pi-mcp-adapter@2.37.0"),
+				external("web_search", "npm:pi-web-access"),
+				inline("cognee_search"),
+				inline("unlisted_inline_tool"),
+			],
+			hasUI: true,
+		});
+		await runtime.emit("session_start");
+		expect(runtime.activeTools.at(-1)).toEqual(
+			expect.arrayContaining(["cua-driver_list_windows", "mcpScript", "web_search", "cognee_search"]),
+		);
+		expect(runtime.activeTools.at(-1)).not.toContain("unlisted_inline_tool");
+
+		const withoutExternal = extensionFixture({
+			flags: { "ice-mode": "build" },
+			additionalTools: [external("web_search", "npm:pi-web-access")],
+			hasUI: true,
+		});
+		await withoutExternal.emit("session_start");
+		expect(withoutExternal.activeTools.at(-1)).not.toContain("web_search");
+		expect(
+			await runtime.emit("tool_call", { toolCallId: "direct", toolName: "cua-driver_list_windows", input: {} }),
+		).toBeUndefined();
+	});
+
+	it("exposes declared extension tools by access class, mode, and trust", async () => {
+		const declared = (name: string, access: "read" | "write", origin = "top-level") => ({
+			name,
+			access,
+			sourceInfo: { source: "local", origin },
+		});
+		const additionalTools = [
+			declared("wg_status", "read"),
+			declared("wg_claim", "write"),
+			declared("pkg_claim", "write", "package"),
+			{ name: "wg_undeclared", sourceInfo: { source: "local", origin: "top-level" } },
+		];
+		const active = async (flags: Record<string, string | boolean | undefined>, trusted = true) => {
+			const runtime = extensionFixture({ flags, additionalTools, trusted, hasUI: true });
+			await runtime.emit("session_start");
+			const tools = runtime.activeTools.at(-1) ?? [];
+			const claim = await runtime.emit("tool_call", { toolCallId: "c", toolName: "wg_claim", input: {} });
+			return { tools, claim };
+		};
+
+		const plan = await active({ "ice-mode": "plan" });
+		expect(plan.tools).toContain("wg_status");
+		expect(plan.tools).not.toContain("wg_claim");
+		expect(plan.claim).toMatchObject({ block: true });
+
+		const build = await active({ "ice-mode": "build" });
+		expect(build.tools).toEqual(expect.arrayContaining(["wg_status", "wg_claim"]));
+		expect(build.claim).toBeUndefined();
+
+		const untrusted = await active({ "ice-mode": "build" }, false);
+		expect(untrusted.tools).toContain("wg_status");
+		expect(untrusted.tools).not.toContain("wg_claim");
+		expect(untrusted.claim).toMatchObject({ block: true });
+
+		// A declaration never bypasses the external-tool policy or exposes undeclared tools.
+		for (const { tools } of [plan, build, untrusted]) {
+			expect(tools).not.toContain("pkg_claim");
+			expect(tools).not.toContain("wg_undeclared");
+		}
+	});
+
 	it("publishes external capability only for an approved trusted build", async () => {
 		const snapshots: IceCapabilityState[] = [];
 		const runtime = extensionFixture({
-			flags: { "ice-mode": "build", "allow-external": true },
+			flags: { "ice-mode": "build", "ice-allow-bash": true, "allow-external": true },
+			additionalToolNames: ["mcp", "mcp__cua_driver"],
 			hasUI: true,
 			onCapabilityChange: async (capabilities) => {
 				snapshots.push(capabilities);
@@ -395,8 +485,22 @@ describe("ICE guarded extension", () => {
 		});
 		await runtime.emit("session_start");
 		expect(snapshots.at(-1)).toMatchObject({ mode: "build", allowExternal: true });
+		expect(snapshots.at(-1)?.tools).toEqual(expect.arrayContaining(["mcp", "mcp__cua_driver"]));
+		expect(
+			await runtime.emit("tool_call", { toolCallId: "mcp-allowed", toolName: "mcp", input: {} }),
+		).toBeUndefined();
+		expect(
+			await runtime.emit("tool_call", { toolCallId: "cua-allowed", toolName: "mcp__cua_driver", input: {} }),
+		).toBeUndefined();
+		expect(
+			await runtime.emit("tool_call", {
+				toolCallId: "mcp-unregistered",
+				toolName: "mcp__not_registered",
+				input: {},
+			}),
+		).toMatchObject({ block: true });
 		expect(runtime.notifications).toContain(
-			"External filesystem access is enabled for this process. This is unrestricted host access, not a sandbox.",
+			"External filesystem access, configured MCP tools, and installed package tools are enabled for this process. This is unrestricted host access, not a sandbox.",
 		);
 	});
 
@@ -404,13 +508,32 @@ describe("ICE guarded extension", () => {
 		const snapshots: IceCapabilityState[] = [];
 		const runtime = extensionFixture({
 			flags: { "ice-mode": "build", "allow-external": true },
+			additionalToolNames: ["mcp", "mcp__cua_driver"],
 			trusted: false,
+			hasUI: true,
 			onCapabilityChange: async (capabilities) => {
 				snapshots.push(capabilities);
 			},
 		});
 		await runtime.emit("session_start");
 		expect(snapshots.at(-1)).toMatchObject({ mode: "build", allowExternal: false });
+		expect(snapshots.at(-1)?.tools).not.toContain("mcp");
+		expect(snapshots.at(-1)?.tools).not.toContain("mcp__cua_driver");
+		expect(
+			await runtime.emit("tool_call", { toolCallId: "mcp-untrusted", toolName: "mcp__cua_driver", input: {} }),
+		).toMatchObject({ block: true });
+	});
+
+	it("enables MCP for headless external-access requests; approvals fail closed in the adapter", async () => {
+		const runtime = extensionFixture({
+			flags: { "ice-mode": "build", "allow-external": true },
+			additionalToolNames: ["mcp", "mcp__cua_driver"],
+		});
+		await runtime.emit("session_start");
+		expect(runtime.activeTools.at(-1)).toEqual(expect.arrayContaining(["mcp", "mcp__cua_driver"]));
+		expect(
+			await runtime.emit("tool_call", { toolCallId: "mcp-headless", toolName: "mcp__cua_driver", input: {} }),
+		).toBeUndefined();
 	});
 
 	it("injects OMP-style planning instructions while in plan mode", async () => {
@@ -445,9 +568,9 @@ describe("ICE guarded extension", () => {
 	});
 
 	it("applies the default plan tool set and independently denies unknown calls", async () => {
-		const plan = extensionFixture();
+		const plan = extensionFixture({ additionalToolNames: ["mcp", "mcp__cua_driver"] });
 		await plan.emit("session_start");
-		expect(plan.activeTools.at(-1)).toEqual([
+		expect(legacyTools(plan.activeTools.at(-1))).toEqual([
 			"read",
 			"grep",
 			"find",
@@ -463,6 +586,8 @@ describe("ICE guarded extension", () => {
 			"cancel_subagent_job",
 			"delegate_batch",
 			"review_batch",
+			"inspect_subagent_batch",
+			"cancel_subagent_batch",
 			"goal_question",
 			"goal_questionnaire",
 			"propose_goal_draft",
@@ -479,13 +604,17 @@ describe("ICE guarded extension", () => {
 		expect(await plan.emit("tool_call", { toolCallId: "1b", toolName: "read_plan", input: {} })).toMatchObject({
 			block: true,
 		});
-		expect(await plan.emit("tool_call", { toolCallId: "2", toolName: "mcp_unknown", input: {} })).toMatchObject({
+		expect(await plan.emit("tool_call", { toolCallId: "2", toolName: "mcp__cua_driver", input: {} })).toMatchObject({
 			block: true,
 		});
 
-		const build = extensionFixture({ flags: { "ice-mode": "build", "ice-allow-bash": true } });
+		const build = extensionFixture({
+			flags: { "ice-mode": "build", "ice-allow-bash": true },
+			hasUI: true,
+			additionalToolNames: ["mcp", "mcp__cua_driver"],
+		});
 		await build.emit("session_start");
-		expect(build.activeTools.at(-1)).toEqual([
+		expect(legacyTools(build.activeTools.at(-1))).toEqual([
 			"read",
 			"grep",
 			"find",
@@ -498,6 +627,8 @@ describe("ICE guarded extension", () => {
 			"cancel_subagent_job",
 			"delegate_batch",
 			"review_batch",
+			"inspect_subagent_batch",
+			"cancel_subagent_batch",
 			"goal_question",
 			"goal_questionnaire",
 			"propose_goal_draft",
@@ -511,14 +642,20 @@ describe("ICE guarded extension", () => {
 			"inspect_writer_patch",
 			"reject_writer_patch",
 			"integrate_writer_patch",
-			"read_plan",
 			"edit",
 			"write",
 			"bash",
+			"bash_output",
+			"bash_kill",
 		]);
 		expect(
 			await build.emit("tool_call", { toolCallId: "3", toolName: "bash", input: { command: "true" } }),
 		).toBeUndefined();
+		// The background shell tools come and go with bash.
+		expect(await build.emit("tool_call", { toolCallId: "3b", toolName: "bash_output", input: {} })).toBeUndefined();
+		expect(await plan.emit("tool_call", { toolCallId: "3c", toolName: "bash_output", input: {} })).toMatchObject({
+			block: true,
+		});
 		expect(
 			await build.emit("tool_call", {
 				toolCallId: "4",
@@ -529,12 +666,18 @@ describe("ICE guarded extension", () => {
 		expect(
 			await build.emit("tool_call", { toolCallId: "5", toolName: "propose_goal_draft", input: {} }),
 		).toBeUndefined();
-		expect(await build.emit("tool_call", { toolCallId: "6", toolName: "mcp", input: {} })).toMatchObject({
+		expect(await build.emit("tool_call", { toolCallId: "6", toolName: "mcp__cua_driver", input: {} })).toMatchObject({
 			block: true,
 		});
 		expect(build.notifications).toContain(
 			"Bash is enabled for this process. Direct path guards do not contain shell commands.",
 		);
+	});
+
+	it.each([false, true])("hides saved plan reading in build mode without a plan (Bash: %s)", async (allowBash) => {
+		const runtime = extensionFixture({ flags: { "ice-mode": "build", "ice-allow-bash": allowBash } });
+		await runtime.emit("session_start");
+		expect(runtime.activeTools.at(-1)).not.toContain("read_plan");
 	});
 
 	it("exposes saved plan reading only after a draft exists", async () => {
@@ -892,6 +1035,29 @@ describe("ICE guarded extension", () => {
 		expect(runtime.appended.at(-1)?.data).toMatchObject({ plan: { decisionReminderCount: 3 } });
 	});
 
+	it("does not remind or restart a plan run the user aborted", async () => {
+		const runtime = extensionFixture({ hasUI: true });
+		await runtime.emit("session_start");
+		const aborted = { role: "assistant", content: [], stopReason: "aborted" };
+		await runtime.emit("agent_start");
+		await runtime.emit("turn_end", { message: aborted });
+		await runtime.emit("agent_end", { messages: [aborted] });
+		await runtime.emit("agent_settled");
+		expect(runtime.steeredMessages.filter((message) => message.includes("PLAN MODE DECISION REQUIRED"))).toHaveLength(
+			0,
+		);
+		// The next ordinary prose-only run is still reminded.
+		await runtime.emit("agent_start");
+		await runtime.emit("turn_end", {
+			message: { role: "assistant", content: [{ type: "text", text: "Still thinking" }] },
+		});
+		await runtime.emit("agent_end", { messages: [] });
+		await runtime.emit("agent_settled");
+		expect(runtime.steeredMessages.filter((message) => message.includes("PLAN MODE DECISION REQUIRED"))).toHaveLength(
+			1,
+		);
+	});
+
 	it("does not schedule plan continuations in print mode", async () => {
 		const runtime = extensionFixture();
 		await runtime.emit("session_start");
@@ -982,7 +1148,7 @@ describe("ICE guarded extension", () => {
 	it("requires current-process Bash opt-in and project trust", async () => {
 		const untrusted = extensionFixture({ flags: { "ice-mode": "build", "ice-allow-bash": true }, trusted: false });
 		await untrusted.emit("session_start");
-		expect(untrusted.activeTools.at(-1)).toEqual([
+		expect(legacyTools(untrusted.activeTools.at(-1))).toEqual([
 			"read",
 			"grep",
 			"find",
@@ -995,6 +1161,8 @@ describe("ICE guarded extension", () => {
 			"cancel_subagent_job",
 			"delegate_batch",
 			"review_batch",
+			"inspect_subagent_batch",
+			"cancel_subagent_batch",
 			"goal_question",
 			"goal_questionnaire",
 			"propose_goal_draft",
@@ -1008,7 +1176,6 @@ describe("ICE guarded extension", () => {
 			"inspect_writer_patch",
 			"reject_writer_patch",
 			"integrate_writer_patch",
-			"read_plan",
 			"edit",
 			"write",
 		]);
@@ -1040,6 +1207,79 @@ describe("ICE guarded extension", () => {
 		});
 		await successfulMutation(runtime);
 		expect(runtime.appended.at(-1)?.data).toMatchObject({ mutationGeneration: 1 });
+	});
+
+	it("gates V2 patch mutation on build and plan reread, then records successful verification", async () => {
+		const plan = extensionFixture();
+		await plan.emit("session_start");
+		expect(plan.activeTools.at(-1)).toEqual(expect.arrayContaining(["agent", "agent_control"]));
+		expect(
+			await plan.emit("tool_call", {
+				toolCallId: "plan-patch",
+				toolName: "agent_patch",
+				input: { action: "apply" },
+			}),
+		).toMatchObject({ block: true });
+		const build = extensionFixture({ hasUI: true, planChoice: "Approve and execute" });
+		await build.emit("session_start");
+		await draftPlan(build);
+		await build.tools.get("propose_plan")!.execute("plan", { title: "Add guard" }, undefined, undefined, build.ctx);
+		await build.emit("agent_settled");
+		expect(
+			await build.emit("tool_call", {
+				toolCallId: "unread-patch",
+				toolName: "agent_patch",
+				input: { action: "apply" },
+			}),
+		).toMatchObject({ block: true, reason: expect.stringContaining("read_plan") });
+		await build.tools.get("read_plan")!.execute("read", {}, undefined, undefined, build.ctx);
+		expect(
+			await build.emit("tool_call", { toolCallId: "patch", toolName: "agent_patch", input: { action: "apply" } }),
+		).toBeUndefined();
+		await build.emit("tool_result", {
+			toolCallId: "patch",
+			toolName: "agent_patch",
+			input: { action: "apply" },
+			details: { status: "applied", verification: { status: "passed", commandHash: "patch-check" } },
+			isError: false,
+		});
+		expect(build.appended.at(-1)?.data).toMatchObject({
+			mutationGeneration: 1,
+			checkedGeneration: 1,
+			verifier: { status: "passed", commandHash: "patch-check" },
+		});
+	});
+
+	it("leaves V2 rollback conflicts verification-pending", async () => {
+		const runtime = extensionFixture({ flags: { "ice-mode": "build" } });
+		await runtime.emit("session_start");
+		await runtime.emit("tool_call", { toolCallId: "patch", toolName: "agent_patch", input: { action: "apply" } });
+		await runtime.emit("tool_result", {
+			toolCallId: "patch",
+			toolName: "agent_patch",
+			input: { action: "apply" },
+			details: { status: "rollback_conflict" },
+			isError: false,
+		});
+		expect(runtime.appended.at(-1)?.data).toMatchObject({
+			mutationGeneration: 1,
+			checkedGeneration: 0,
+			verifier: { status: "pending" },
+		});
+	});
+
+	it("tracks an unverified V2 patch apply like a parent edit, never as checked", async () => {
+		const runtime = extensionFixture({ flags: { "ice-mode": "build" } });
+		await runtime.emit("session_start");
+		await runtime.emit("tool_call", { toolCallId: "patch", toolName: "agent_patch", input: { action: "apply" } });
+		await runtime.emit("tool_result", {
+			toolCallId: "patch",
+			toolName: "agent_patch",
+			input: { action: "apply" },
+			details: { status: "applied", writtenPaths: ["a.txt"], unverified: true },
+			isError: false,
+		});
+		expect(runtime.appended.at(-1)?.data).toMatchObject({ mutationGeneration: 1, checkedGeneration: 0 });
 	});
 
 	it("records verified writer integration as an already-checked generation", async () => {
@@ -1212,7 +1452,7 @@ describe("ICE guarded extension", () => {
 		(saved.data as { guardRoot: string; baseline: { root: string } }).guardRoot = resumedRoot;
 		(saved.data as { baseline: { root: string } }).baseline.root = resumedRoot;
 		await resumed.emit("session_start");
-		expect(resumed.activeTools.at(-1)).toEqual([
+		expect(legacyTools(resumed.activeTools.at(-1))).toEqual([
 			"read",
 			"grep",
 			"find",
@@ -1225,6 +1465,8 @@ describe("ICE guarded extension", () => {
 			"cancel_subagent_job",
 			"delegate_batch",
 			"review_batch",
+			"inspect_subagent_batch",
+			"cancel_subagent_batch",
 			"goal_question",
 			"goal_questionnaire",
 			"propose_goal_draft",
@@ -1238,7 +1480,6 @@ describe("ICE guarded extension", () => {
 			"inspect_writer_patch",
 			"reject_writer_patch",
 			"integrate_writer_patch",
-			"read_plan",
 			"edit",
 			"write",
 		]);

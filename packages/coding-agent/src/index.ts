@@ -20,8 +20,10 @@ export {
 	type ParsedSkillBlock,
 	type PromptOptions,
 	parseSkillBlock,
+	type SessionConfiguration,
 	type SessionStats,
 } from "./core/agent-session.ts";
+export { SessionRuntimeUnavailableError } from "./core/agent-session-runtime.ts";
 export { readStoredCredential } from "./core/auth-storage.ts";
 // Compaction
 export {
@@ -76,6 +78,7 @@ export type {
 	Extension,
 	ExtensionActions,
 	ExtensionAPI,
+	ExtensionChromeOptions,
 	ExtensionCommandContext,
 	ExtensionCommandContextActions,
 	ExtensionContext,
@@ -85,6 +88,7 @@ export type {
 	ExtensionFactory,
 	ExtensionFlag,
 	ExtensionHandler,
+	ExtensionNotifyOptions,
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionUIContext,
@@ -243,6 +247,7 @@ export {
 	type SessionInfo,
 	type SessionInfoEntry,
 	SessionManager,
+	type SessionManagerEvent,
 	type SessionMessageEntry,
 	type SessionTreeNode,
 	sessionEntryToContextMessages,
@@ -327,20 +332,12 @@ export {
 	type ProjectTrustStoreEntry,
 	type ProjectTrustUpdate,
 } from "./core/trust-manager.ts";
-// Explicit parent-owned ICE adapter APIs. Importing these grants no child authority.
-export {
-	type IceCapabilitySnapshot,
-	type IceChildDispatchContext,
-	type IceDelegableTool,
-	isIceDelegableAdapterId,
-	registerIceDelegableTool,
-} from "./ice-subagent-capabilities.ts";
-export { type IceHookHandler, registerIceSubagentHook } from "./ice-subagent-settings.ts";
-export {
-	type IceSubagentMcpAdapter,
-	type IceSubagentMcpToolAuthorization,
-	registerIceSubagentMcpAdapter,
-} from "./ice-subagents.ts";
+export type {
+	IceSubagentApprovalAnswer,
+	IceSubagentOverview,
+	IceSubagentOverviewApproval,
+	IceSubagentOverviewChild,
+} from "./ice-agent-view-bridge.ts";
 // Main entry point
 export { type MainOptions, main } from "./main.ts";
 // Run modes for programmatic SDK usage
@@ -351,6 +348,8 @@ export {
 	type JsonAgentSessionEvent,
 	type ModelInfo,
 	type PrintModeOptions,
+	type RpcAttachment,
+	type RpcCapabilities,
 	RpcClient,
 	type RpcClientOptions,
 	type RpcCommand,
@@ -363,10 +362,23 @@ export {
 	type RpcCommandSchema,
 	type RpcCommandSchemaResult,
 	type RpcCommandSource,
+	type RpcCompletions,
+	type RpcDiagnostics,
+	type RpcEntryPage,
+	type RpcEvent,
 	type RpcEventListener,
 	type RpcExtensionUIRequest,
 	type RpcExtensionUIResponse,
+	type RpcMessagePage,
+	type RpcModelSnapshot,
+	type RpcModelsChangedEvent,
+	type RpcModelsRefreshResult,
+	type RpcOperationOptions,
+	type RpcProviderInfo,
+	type RpcProviderSnapshot,
 	type RpcResponse,
+	type RpcSessionChangedEvent,
+	type RpcSessionPage,
 	type RpcSessionState,
 	type RpcSettingsConstraints,
 	type RpcSettingsDiagnostic,
@@ -377,6 +389,8 @@ export {
 	type RpcSettingsSnapshot,
 	type RpcSettingsValue,
 	type RpcSettingUpdate,
+	type RpcTreePage,
+	type RpcUIState,
 	registerCustomStructuredCommand,
 	runPrintMode,
 	runRpcMode,
@@ -431,6 +445,33 @@ export {
 	Theme,
 	type ThemeColor,
 } from "./modes/interactive/theme/theme.ts";
+export { type IceHookHandler, registerIceSubagentHook } from "./subagents/settings.ts";
+// Explicit parent-owned ICE adapter APIs. Importing these grants no child authority.
+export {
+	type IceCapabilitySnapshot,
+	type IceChildDispatchContext,
+	type IceDelegableTool,
+	isIceDelegableAdapterId,
+	registerIceDelegableTool,
+} from "./subagents/tools/adapters.ts";
+export {
+	type IceSubagentMcpAdapter,
+	type IceSubagentMcpToolAuthorization,
+	registerIceSubagentMcpAdapter,
+} from "./subagents/types.ts";
+// Subagents V2 for SDK sessions: the launcher's extension and view bridge as an inline extension.
+// Programmatic child launch for trusted parent extensions (keyed by `ice.events`).
+export {
+	getIceSubagentController,
+	ICE_SUBAGENT_CONTROLLER_KEY,
+	type IceSubagentController,
+	type IceSubagentOpenPatch,
+	type IceSubagentPatchPreview,
+	type IceSubagentRunResult,
+	type IceSubagentStartOptions,
+	type IceSubagentTask,
+} from "./subagents/v2/controller.ts";
+export { createIceSubagents, type IceSubagentsSdk, type IceSubagentsSdkOptions } from "./subagents/v2/sdk.ts";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.ts";
 export { parseFrontmatter, stripFrontmatter } from "./utils/frontmatter.ts";

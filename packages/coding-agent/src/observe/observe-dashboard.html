@@ -1,0 +1,1691 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ICE Observe — Signal Room</title>
+<style>
+	:root {
+		/* Vercel-dark base: black canvas, neutral surfaces, blue signal accents. */
+		--bg: #000000;
+		--bg-deep: #050505;
+		--panel: #0a0a0a;
+		--panel-raised: #111111;
+		--panel-hover: #161616;
+		--line: #1f1f1f;
+		--line-strong: #2e2e2e;
+		--text: #ededed;
+		--text-soft: #a1a1a1;
+		--text-muted: #737373;
+		--text-faint: #525252;
+		--cyan: #46a8ff;
+		--blue: #3291ff;
+		--mint: #4ade80;
+		--amber: #f5c451;
+		--coral: #ff6369;
+		--violet: #a78bfa;
+		--rose: #fb7185;
+		--orange: #f59e0b;
+		--indigo: #818cf8;
+		--slate: #737373;
+		--cyan-wash: rgba(70, 168, 255, 0.12);
+		--blue-wash: rgba(50, 145, 255, 0.12);
+		--mint-wash: rgba(74, 222, 128, 0.12);
+		--amber-wash: rgba(245, 196, 81, 0.12);
+		--coral-wash: rgba(255, 99, 105, 0.12);
+		--radius-sm: 6px;
+		--radius-md: 8px;
+		--radius-lg: 10px;
+		--shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
+		--shadow-drawer: -18px 0 44px rgba(0, 0, 0, 0.62);
+		--inspector-width: clamp(500px, 42vw, 1080px);
+		--ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+		--mono: "Geist Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+		--sans: Geist, "Inter", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+	}
+
+	* { box-sizing: border-box; margin: 0; padding: 0; }
+	html, body { height: 100%; }
+	body {
+		background: var(--bg);
+		color: var(--text);
+		font-family: var(--sans);
+		font-size: 13px;
+		line-height: 1.45;
+		overflow: hidden;
+	}
+	button, input { font: inherit; }
+	button { color: inherit; }
+	button, [role="button"] { -webkit-tap-highlight-color: transparent; }
+	button:focus-visible, input:focus-visible, [role="button"]:focus-visible {
+		outline: 2px solid var(--cyan);
+		outline-offset: 2px;
+	}
+	::selection { background: rgba(50, 145, 255, 0.32); color: var(--text); }
+	::-webkit-scrollbar { width: 9px; height: 9px; }
+	::-webkit-scrollbar-track { background: var(--bg-deep); }
+	::-webkit-scrollbar-thumb { background: #2e2e2e; border: 2px solid var(--bg-deep); border-radius: 8px; }
+	::-webkit-scrollbar-thumb:hover { background: #444; }
+	.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+	.sr-only {
+		position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+		overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+	}
+
+	#frame {
+		height: 100vh;
+		min-height: 560px;
+		display: grid;
+		grid-template-rows: auto auto minmax(0, 1fr);
+		background: var(--bg);
+	}
+
+	/* ---------- shared primitives ---------- */
+	.panel {
+		background: var(--panel);
+		border: 1px solid var(--line);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow);
+	}
+	.eyebrow {
+		color: var(--text-muted);
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		line-height: 1.2;
+		text-transform: uppercase;
+	}
+	.icon {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex: none;
+	}
+	.icon svg { display: block; width: 16px; height: 16px; }
+	.icon-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 7px;
+		min-height: 34px;
+		padding: 0 11px;
+		border: 1px solid var(--line-strong);
+		border-radius: var(--radius-sm);
+		background: var(--panel-raised);
+		color: var(--text-soft);
+		cursor: pointer;
+		transition: background 160ms var(--ease), border-color 160ms var(--ease), color 160ms var(--ease), transform 160ms var(--ease);
+	}
+	.icon-button:hover { background: var(--panel-hover); border-color: #3f3f3f; color: var(--text); transform: translateY(-1px); }
+	.icon-button .icon svg { width: 15px; height: 15px; }
+	.icon-button[aria-pressed="true"] { border-color: rgba(50, 145, 255, 0.6); background: var(--cyan-wash); color: var(--cyan); }
+	.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex: none; }
+	.status-dot.live { background: var(--cyan); box-shadow: 0 0 0 4px rgba(70, 168, 255, 0.14); }
+	.status-dot.lost { background: var(--coral); box-shadow: 0 0 0 4px rgba(255, 99, 105, 0.1); }
+
+	/* ---------- overview metrics ---------- */
+	#overview { padding: 10px 20px 0; min-width: 0; }
+	.overview-head {
+		display: flex;
+		align-items: end;
+		justify-content: space-between;
+		gap: 16px;
+		margin-bottom: 7px;
+	}
+	.overview-title { font-size: 16px; font-weight: 650; letter-spacing: -0.02em; }
+	.overview-subtitle { color: var(--text-muted); font-size: 11px; margin-top: 1px; }
+	.overview-meta { color: var(--text-muted); font-size: 11px; text-align: right; }
+	.run-selector-wrap { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-bottom: 4px; }
+	.run-selector-label { color: var(--text-faint); font: 10px var(--mono); text-transform: uppercase; letter-spacing: 0.1em; }
+	#run-select { max-width: min(42vw, 360px); min-height: 28px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel-raised); color: var(--text-soft); font: 11px var(--mono); }
+	#run-select:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+	.metric-grid {
+		display: grid;
+		grid-template-columns: minmax(190px, 1.25fr) repeat(4, minmax(120px, 1fr));
+		gap: 8px;
+	}
+	.metric-card {
+		min-width: 0;
+		min-height: 70px;
+		padding: 9px 11px;
+		border: 1px solid var(--line);
+		border-radius: var(--radius-md);
+		background: var(--panel);
+	}
+	.metric-card.context { background: var(--panel); border-color: var(--line-strong); }
+	.metric-label {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		color: var(--text-muted);
+		font-size: 11px;
+		font-weight: 650;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+	.metric-value { margin-top: 5px; color: var(--text); font-size: 18px; font-weight: 650; letter-spacing: -0.03em; }
+	.metric-value.mono { font-size: 17px; letter-spacing: -0.06em; }
+	.metric-unit { color: var(--text-muted); font-size: 11px; font-weight: 500; letter-spacing: 0; }
+	.metric-note { color: var(--text-faint); font-size: 11px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.context-readout { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
+	.context-meter { height: 4px; margin-top: 7px; overflow: hidden; border-radius: 4px; background: #1f1f1f; }
+	.context-meter span { display: block; height: 100%; min-width: 2px; border-radius: inherit; background: var(--cyan); transition: width 300ms var(--ease), background 200ms var(--ease); }
+	.context-meter.warn span { background: var(--amber); }
+	.context-meter.danger span { background: var(--coral); }
+
+	/* ---------- pulse / lanes ---------- */
+	#pulse-wrap { padding: 10px 20px 0; min-width: 0; }
+	.pulse-panel { padding: 12px 15px 10px; box-shadow: inset 0 1px 0 color-mix(in srgb, var(--pulse-accent, var(--cyan)) 55%, transparent); transition: box-shadow 180ms var(--ease); }
+	.pulse-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+	.pulse-title { display: flex; align-items: center; gap: 9px; min-width: 0; }
+	.pulse-title h2 { font-size: 13px; font-weight: 650; }
+	.live-mark { width: 7px; height: 7px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 0 4px var(--cyan-wash); }
+	.pulse-summary { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+	.pulse-controls { display: flex; align-items: center; gap: 12px; }
+	.pulse-stats { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 10px; }
+	.pulse-stat { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
+	.pulse-stat strong { color: var(--text-soft); font: 600 11px var(--mono); }
+	.range-tabs { display: inline-flex; align-items: center; gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg-deep); }
+	.range-tab { min-width: 31px; height: 23px; padding: 0 7px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); font: 10px var(--mono); cursor: pointer; transition: background 150ms var(--ease), color 150ms var(--ease); }
+	.range-tab:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+	.range-tab[aria-selected="true"] { background: var(--blue); color: #07101d; font-weight: 700; }
+	.pulse-legend { display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 10px; }
+	.legend-key { display: inline-flex; align-items: center; gap: 5px; }
+	.legend-swatch { width: 7px; height: 7px; border-radius: 2px; }
+	.legend-swatch.tool { background: var(--blue); }
+	.legend-swatch.message { background: var(--cyan); }
+	.legend-swatch.error { background: var(--coral); }
+	.legend-swatch.agent { background: var(--violet); }
+	#pulse-scope-rail[hidden] { display: none; }
+	#pulse-scope-rail { display: flex; gap: 2px; height: 3px; margin-top: 12px; overflow: hidden; border-radius: 999px; background: var(--line); }
+	.pulse-scope-segment { min-width: 3px; border-radius: 999px; opacity: 0.9; }
+	#pulse { display: grid; grid-template-columns: repeat(42, minmax(3px, 1fr)); align-items: end; gap: 4px; height: 64px; margin-top: 9px; padding: 0 2px 10px; border-bottom: 1px solid var(--line); }
+	.pulse-bar { position: relative; display: flex; align-items: stretch; width: 100%; min-height: 3px; padding: 0; border: 0; border-radius: 3px 3px 1px 1px; background: #1f1f1f; opacity: 0.9; cursor: pointer; transition: height 220ms var(--ease), opacity 160ms var(--ease), background 160ms var(--ease), outline 160ms var(--ease); }
+	.pulse-bar:hover, .pulse-bar:focus-visible { opacity: 1; }
+	.pulse-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+	.pulse-bar.selected { opacity: 1; outline: 2px solid var(--cyan); outline-offset: 2px; box-shadow: 0 0 12px rgba(70, 168, 255, 0.45); }
+	.pulse-segments { display: flex; align-items: stretch; width: 100%; min-height: 3px; overflow: hidden; border-radius: inherit; }
+	.pulse-segment { min-width: 2px; flex: 1 1 0; opacity: 0.9; }
+	.pulse-segment.blue, .pulse-scope-segment.blue { background: var(--blue); }
+	.pulse-segment.violet, .pulse-scope-segment.violet { background: var(--violet); }
+	.pulse-segment.cyan, .pulse-scope-segment.cyan { background: var(--cyan); }
+	.pulse-segment.green, .pulse-scope-segment.green { background: var(--mint); }
+	.pulse-segment.amber, .pulse-scope-segment.amber { background: var(--amber); }
+	.pulse-segment.rose, .pulse-scope-segment.rose { background: var(--rose); }
+	.pulse-segment.orange, .pulse-scope-segment.orange { background: var(--orange); }
+	.pulse-segment.indigo, .pulse-scope-segment.indigo { background: var(--indigo); }
+	.pulse-segment.slate, .pulse-scope-segment.slate { background: var(--slate); }
+	.pulse-bar.has-error { box-shadow: inset 0 -2px 0 var(--coral); }
+	.pulse-bar.empty { height: 3px !important; background: #1a1a1a; opacity: 1; cursor: default; }
+	.pulse-bar.empty .pulse-segments { display: none; }
+	.pulse-bar.empty:disabled { pointer-events: none; }
+	.pulse-bar::after { content: ""; position: absolute; right: 0; bottom: -11px; left: 0; height: 2px; background: transparent; }
+	.pulse-bar:last-child::after { background: var(--cyan); box-shadow: 0 0 9px rgba(70, 168, 255, 0.7); }
+	.pulse-axis { display: flex; justify-content: space-between; color: var(--text-faint); font: 10px/1 var(--mono); margin-top: 8px; }
+	.lanes-row { display: flex; align-items: center; gap: 8px; min-height: 25px; margin-top: 10px; overflow: hidden; }
+	.lanes-label { color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; flex: none; }
+	#lanes { display: flex; align-items: center; gap: 6px; overflow-x: auto; min-width: 0; padding-bottom: 2px; }
+	.lane-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 7px;
+		min-height: 23px;
+		padding: 0 8px;
+		border: 1px solid var(--line-strong);
+		border-radius: 999px;
+		background: var(--panel-raised);
+		color: var(--text-soft);
+		font-size: 11px;
+		white-space: nowrap;
+	}
+	.lane-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--blue); }
+	.lane-chip.done::before { background: var(--mint); }
+	.lane-chip.fault { border-color: rgba(255, 99, 105, 0.5); color: #ffc3c6; }
+	.lane-chip.fault::before { background: var(--coral); }
+	.lane-chip.terminal { opacity: 0.62; }
+	.lane-phase { color: var(--text-muted); }
+	.lane-empty { color: var(--text-faint); font-size: 11px; }
+
+	/* ---------- workspace / stream ---------- */
+	#workspace {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 10px var(--inspector-width);
+		gap: 0;
+		min-height: 0;
+		margin: 10px 20px 16px;
+	}
+	.stream-panel, .inspector { min-height: 0; overflow: hidden; }
+	.inspector-resizer {
+		position: relative;
+		z-index: 2;
+		min-width: 10px;
+		cursor: col-resize;
+		touch-action: none;
+	}
+	.inspector-resizer::before {
+		content: "";
+		position: absolute;
+		top: 8px;
+		bottom: 8px;
+		left: 4px;
+		width: 2px;
+		border-radius: 2px;
+		background: transparent;
+		transition: background 140ms var(--ease), box-shadow 140ms var(--ease);
+	}
+	.inspector-resizer:hover::before,
+	.inspector-resizer:focus-visible::before,
+	body.is-resizing .inspector-resizer::before {
+		background: var(--blue);
+		box-shadow: 0 0 12px rgba(50, 145, 255, 0.45);
+	}
+	.inspector-resizer:focus-visible { outline: 2px solid var(--cyan); outline-offset: -1px; }
+	body.is-resizing { cursor: col-resize; user-select: none; }
+	.stream-panel { display: flex; flex-direction: column; }
+	.stream-head { padding: 14px 15px 0; flex: none; }
+	.stream-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+	.stream-heading h2 { font-size: 15px; font-weight: 650; }
+	.stream-heading p { color: var(--text-muted); font-size: 11px; }
+	.stream-tools { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+	.filter-tabs { display: flex; align-items: center; gap: 4px; min-width: 0; overflow-x: auto; }
+	.filter-tab {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		min-height: 29px;
+		padding: 0 9px;
+		border: 1px solid transparent;
+		border-radius: 7px;
+		background: transparent;
+		color: var(--text-muted);
+		font-size: 11px;
+		white-space: nowrap;
+		cursor: pointer;
+		transition: background 150ms var(--ease), border-color 150ms var(--ease), color 150ms var(--ease);
+	}
+	.filter-tab:hover { color: var(--text-soft); background: rgba(255,255,255,0.035); }
+	.filter-tab[aria-pressed="true"] { border-color: rgba(50, 145, 255, 0.4); background: var(--cyan-wash); color: var(--cyan); }
+	.filter-key { color: var(--text-faint); font: 10px var(--mono); }
+	.filter-tab[aria-pressed="true"] .filter-key { color: rgba(70, 168, 255, 0.8); }
+	.filter-count { color: var(--text-faint); font: 10px var(--mono); }
+	.search-box { position: relative; width: 190px; flex: none; }
+	.search-box input {
+		width: 100%;
+		height: 30px;
+		padding: 0 28px 0 30px;
+		border: 1px solid var(--line-strong);
+		border-radius: 7px;
+		background: var(--bg-deep);
+		color: var(--text);
+		font-size: 11px;
+	}
+	.search-box input::placeholder { color: var(--text-faint); }
+	.search-icon { position: absolute; left: 9px; top: 7px; color: var(--text-faint); pointer-events: none; }
+	.search-icon svg { width: 14px; height: 14px; }
+	.search-clear { position: absolute; right: 5px; top: 5px; width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: var(--text-muted); cursor: pointer; }
+	.search-clear:hover { color: var(--text); }
+	.follow-button { margin-left: auto; flex: none; }
+	.follow-button .follow-live { display: inline-flex; align-items: center; gap: 6px; }
+	.follow-button .follow-live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); }
+	.follow-button.is-paused { border-color: rgba(245, 196, 81, 0.45); background: var(--amber-wash); color: var(--amber); }
+	#event-scroll { min-height: 0; flex: 1; overflow-y: auto; padding: 7px 8px 12px; }
+	#event-list { display: flex; flex-direction: column; gap: 4px; }
+	.event-row {
+		position: relative;
+		display: grid;
+		grid-template-columns: 3px 58px 28px minmax(0, 1fr) auto 14px;
+		align-items: center;
+		gap: 10px;
+		min-height: 46px;
+		padding: 7px 10px 7px 0;
+		border: 1px solid var(--line);
+		border-radius: var(--radius-md);
+		background: var(--panel-raised);
+		cursor: pointer;
+		transition: background 150ms var(--ease), border-color 150ms var(--ease), color 150ms var(--ease), transform 150ms var(--ease);
+	}
+	.event-row.row-enter { animation: row-in 220ms var(--ease) both; }
+	@keyframes row-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+	.event-row:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+	.event-row.selected { border-color: rgba(50, 145, 255, 0.55); background: rgba(50, 145, 255, 0.08); }
+	.event-row.pulse-match:not(.selected) { border-color: rgba(70, 168, 255, 0.28); background: rgba(50, 145, 255, 0.045); }
+	.event-row.error { border-color: rgba(255, 99, 105, 0.22); }
+	.event-row.selected.error { border-color: rgba(255, 99, 105, 0.6); background: var(--coral-wash); }
+	.event-rail { align-self: stretch; min-height: 30px; border-radius: 0 4px 4px 0; background: var(--blue); }
+	.event-rail.message { background: var(--cyan); }
+	.event-rail.system { background: var(--amber); }
+	.event-rail.done { background: var(--mint); }
+	.event-rail.error { background: var(--coral); }
+	.event-rail.agent { background: var(--violet); }
+	.event-time { align-self: center; color: var(--text-faint); font-size: 10px; }
+	.event-icon {
+		width: 26px;
+		height: 26px;
+		display: grid;
+		place-items: center;
+		border: 1px solid var(--line-strong);
+		border-radius: 8px;
+		background: var(--bg-deep);
+		color: var(--blue);
+	}
+	.event-icon.message { color: var(--cyan); background: var(--cyan-wash); border-color: rgba(70, 168, 255, 0.3); }
+	.event-icon.system { color: var(--amber); background: var(--amber-wash); border-color: rgba(245, 196, 81, 0.28); }
+	.event-icon.error { color: var(--coral); background: var(--coral-wash); border-color: rgba(255, 99, 105, 0.3); }
+	.event-icon.agent { color: var(--violet); background: rgba(167, 139, 250, 0.12); border-color: rgba(167, 139, 250, 0.3); }
+	.event-icon svg { width: 15px; height: 15px; }
+	.event-body { min-width: 0; }
+	.event-topline { display: flex; align-items: center; gap: 7px; min-width: 0; }
+	.event-kind { color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+	.event-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 12px; font-weight: 600; }
+	.thread-badge { display: inline-flex; align-items: center; gap: 5px; max-width: 42%; margin-left: auto; overflow: hidden; color: var(--text-faint); font: 9px var(--mono); white-space: nowrap; }
+	.thread-badge span:last-child { overflow: hidden; text-overflow: ellipsis; }
+	.thread-badge { border: 1px solid transparent; border-radius: 999px; padding: 2px 5px; }
+	.event-row:hover .thread-badge { border-color: var(--line-strong); }
+	.thread-swatch { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--slate); }
+	.thread-swatch.blue { background: var(--blue); }
+	.thread-swatch.violet { background: var(--violet); }
+	.thread-swatch.cyan { background: var(--cyan); }
+	.thread-swatch.green { background: var(--mint); }
+	.thread-swatch.amber { background: var(--amber); }
+	.thread-swatch.rose { background: var(--rose); }
+	.thread-swatch.orange { background: var(--orange); }
+	.thread-swatch.indigo { background: var(--indigo); }
+	.thread-swatch.slate { background: var(--slate); }
+	.event-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; color: var(--text-muted); font: 11px var(--mono); }
+	.event-subject.muted { color: var(--text-muted); }
+	.event-status {
+		display: inline-flex;
+		align-items: center;
+		min-height: 19px;
+		padding: 0 6px;
+		border-radius: 5px;
+		background: var(--blue-wash);
+		color: var(--blue);
+		font: 10px/1 var(--mono);
+		letter-spacing: 0.03em;
+		text-transform: uppercase;
+	}
+	.event-status.done { background: var(--mint-wash); color: var(--mint); }
+	.event-status.running { background: var(--blue-wash); color: var(--blue); }
+	.event-status.error { background: var(--coral-wash); color: var(--coral); }
+	.event-duration { color: var(--text-muted); font-size: 10px; white-space: nowrap; }
+	.event-chevron { color: var(--text-faint); }
+	.event-chevron svg { width: 14px; height: 14px; }
+	.empty-stream { display: grid; place-items: center; min-height: 220px; padding: 28px; text-align: center; color: var(--text-muted); }
+	.empty-stream[hidden] { display: none; }
+	.empty-stream .empty-icon { width: 42px; height: 42px; display: grid; place-items: center; margin-bottom: 12px; border: 1px solid var(--line-strong); border-radius: 12px; color: var(--cyan); background: var(--cyan-wash); }
+	.empty-stream h3 { color: var(--text-soft); font-size: 14px; }
+	.empty-stream p { max-width: 36ch; margin-top: 5px; font-size: 12px; }
+
+	/* ---------- inspector ---------- */
+	.inspector { display: flex; flex-direction: column; background: #080808; border-color: #242424; }
+	.inspector-head { display: flex; align-items: start; justify-content: space-between; gap: 10px; padding: 17px 16px 15px; border-bottom: 1px solid var(--line); background: #080808; }
+	.inspector-title { margin-top: 3px; font-size: 15px; font-weight: 650; }
+	.inspector-close { display: none; width: 30px; height: 30px; padding: 0; border: 1px solid var(--line-strong); border-radius: 7px; background: transparent; color: var(--text-muted); cursor: pointer; }
+	.inspector-close:hover { background: var(--panel-hover); color: var(--text); }
+	#inspector-body { min-height: 0; flex: 1; overflow-y: auto; }
+	.inspector-empty { display: grid; place-items: center; min-height: 280px; padding: 28px; text-align: center; color: var(--text-muted); }
+	.inspector-empty .empty-icon { width: 44px; height: 44px; display: grid; place-items: center; margin-bottom: 12px; border: 1px solid var(--line-strong); border-radius: 13px; color: var(--blue); background: var(--blue-wash); }
+	.inspector-empty h3 { color: var(--text-soft); font-size: 13px; }
+	.inspector-empty p { max-width: 28ch; margin-top: 5px; font-size: 11px; }
+	.detail-hero { display: flex; align-items: center; gap: 10px; padding: 15px 16px; border-bottom: 1px solid var(--line); background: #0d0d0d; }
+	.detail-hero .event-icon { width: 34px; height: 34px; }
+	.detail-hero-copy { min-width: 0; flex: 1; }
+	.detail-hero-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 650; }
+	.detail-hero-subtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; color: var(--text-muted); font: 10px var(--mono); }
+	.detail-section { padding: 15px 16px 16px; border-bottom: 1px solid var(--line); }
+	.detail-section:last-child { border-bottom: 0; }
+	.detail-measure { margin-left: auto; color: var(--text-faint); font: 10px var(--mono); white-space: nowrap; }
+	.detail-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
+	.detail-section h3 { color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: 0.13em; text-transform: uppercase; }
+	.detail-copy { min-height: 25px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: transparent; color: var(--text-muted); font-size: 10px; cursor: pointer; }
+	.detail-copy:hover { border-color: var(--cyan); color: var(--cyan); }
+	.detail-kv { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 7px 12px; font-size: 11px; }
+	.detail-kv dt { color: var(--text-muted); }
+	.detail-kv dd { min-width: 0; overflow-wrap: anywhere; color: var(--text-soft); }
+	.detail-kv dd.mono { color: var(--text); font-size: 10px; }
+	.detail-evidence { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding: 11px 16px; border-bottom: 1px solid var(--line); background: #0a0a0a; }
+	.detail-evidence-label { margin-right: 3px; color: var(--text-faint); font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+	.evidence-chip { display: inline-flex; align-items: center; min-height: 22px; padding: 0 7px; border: 1px solid var(--line-strong); border-radius: 999px; background: #111; color: var(--text-soft); font: 10px var(--mono); }
+	.evidence-chip.active { border-color: rgba(50, 145, 255, 0.55); background: var(--blue-wash); color: var(--blue); }
+	.detail-prose { color: var(--text-soft); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+	.detail-pre {
+		max-height: min(62vh, 760px);
+		overflow: auto;
+		padding: 8px 0;
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		background: var(--bg-deep);
+		color: #d4d4d4;
+		font: 10px/1.55 var(--mono);
+		white-space: normal;
+	}
+	.code-line {
+		display: grid;
+		grid-template-columns: 42px minmax(max-content, 1fr);
+		min-width: max-content;
+		min-height: 1.55em;
+		padding-right: 14px;
+	}
+	.code-line.diff {
+		grid-template-columns: 15px 42px minmax(max-content, 1fr);
+	}
+	.code-number { padding-right: 10px; color: var(--text-faint); text-align: right; user-select: none; }
+	.code-marker { color: var(--text-faint); text-align: center; user-select: none; }
+	.code-text { white-space: pre; }
+	.code-line.diff-added { background: rgba(74, 222, 128, 0.1); color: #c6f3d4; }
+	.code-line.diff-added .code-marker { color: var(--mint); }
+	.code-line.diff-removed { background: rgba(255, 99, 105, 0.12); color: #ffc3c6; }
+	.code-line.diff-removed .code-marker { color: var(--coral); }
+	.code-line.diff-header { color: var(--blue); font-weight: 650; }
+	.raw-disclosure {
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		background: var(--bg-deep);
+	}
+	.raw-disclosure summary {
+		padding: 9px 10px;
+		color: var(--text-soft);
+		cursor: pointer;
+		font-size: 11px;
+		font-weight: 650;
+		list-style: none;
+	}
+	.raw-disclosure summary::-webkit-details-marker { display: none; }
+	.raw-disclosure summary::before { content: "▸"; display: inline-block; width: 16px; color: var(--cyan); transition: transform 160ms var(--ease); }
+	.raw-disclosure[open] summary::before { transform: rotate(90deg); }
+	.raw-disclosure summary:hover { color: var(--text); background: rgba(255,255,255,0.035); }
+	.raw-disclosure .detail-pre { border: 0; border-top: 1px solid var(--line); border-radius: 0 0 8px 8px; }
+	.diff-section { background: transparent; }
+	.drawer-backdrop { display: none; }
+
+	/* ---------- responsive ---------- */
+	@media (max-width: 1220px) {
+		.metric-grid { grid-template-columns: minmax(200px, 1.2fr) repeat(3, minmax(120px, 1fr)); }
+		.metric-card:last-child { display: none; }
+	}
+	@media (max-width: 1060px) {
+		#workspace { grid-template-columns: minmax(0, 1fr); }
+		.inspector-resizer { display: none; }
+		.inspector { position: fixed; z-index: 30; top: 0; right: 0; bottom: 0; width: min(420px, 92vw); border-radius: var(--radius-lg) 0 0 var(--radius-lg); box-shadow: var(--shadow-drawer); transform: translateX(105%); transition: transform 220ms var(--ease); }
+		.inspector.open { transform: translateX(0); }
+		.inspector-close { display: grid; place-items: center; }
+		.drawer-backdrop { position: fixed; z-index: 20; inset: 0; display: block; background: rgba(0, 0, 0, 0.66); opacity: 0; pointer-events: none; transition: opacity 220ms var(--ease); }
+		.drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+	}
+	@media (max-width: 780px) {
+		body { overflow: auto; }
+		#frame { min-height: 100vh; height: auto; overflow: visible; grid-template-rows: auto auto minmax(520px, 1fr); }
+		.icon-button { width: 34px; padding: 0; }
+		#overview, #pulse-wrap { padding-left: 14px; padding-right: 14px; }
+		.overview-head { flex-direction: column; align-items: stretch; gap: 8px; }
+		.run-selector-wrap { justify-content: flex-start; }
+		#run-select { flex: 1; max-width: none; }
+		.overview-meta { display: none; }
+		.metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+		.metric-card:last-child { display: block; }
+		.metric-card.context { grid-column: 1 / -1; }
+		.metric-card { min-height: 84px; }
+		#workspace { min-height: 520px; margin: 12px 14px 14px; }
+		.stream-tools { flex-wrap: wrap; }
+		.filter-tabs { order: 2; width: 100%; }
+		.search-box { flex: 1; width: auto; }
+		.follow-button { margin-left: 0; }
+		.follow-button { width: auto; padding: 0 10px; }
+		#pulse { height: 56px; gap: 3px; }
+		.pulse-controls { gap: 7px; }
+		.pulse-stats { display: none; }
+		.pulse-legend { display: none; }
+	}
+	@media (max-width: 520px) {
+		.pulse-head { align-items: flex-start; }
+		.pulse-summary { display: none; }
+		.range-tab { min-width: 28px; padding: 0 5px; }
+		.overview-title { font-size: 16px; }
+		.metric-card { padding: 11px; }
+		.metric-value { font-size: 18px; }
+		.metric-value.mono { font-size: 16px; }
+		.event-row { grid-template-columns: 3px 28px minmax(0, 1fr) auto 12px; gap: 8px; min-height: 50px; padding-right: 8px; }
+		.event-time { display: none; }
+		.event-kind { display: none; }
+		.thread-badge { display: none; }
+		.event-icon { width: 28px; height: 28px; }
+		.event-subject { font-size: 11px; }
+		.event-duration { font-size: 9px; }
+		.event-status { display: none; }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		*, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+	}
+</style>
+</head>
+<body>
+<div id="frame">
+	<section id="overview" aria-labelledby="overview-title">
+		<div class="overview-head">
+			<div>
+				<h1 id="overview-title" class="overview-title">Session overview</h1>
+				<p class="overview-subtitle">A live read on context pressure, throughput, and delegated work.</p>
+			</div>
+			<div>
+				<div class="run-selector-wrap"><label class="run-selector-label" for="run-select">Scope</label><select id="run-select" aria-label="Select observability scope"><option value="all">All agents</option></select></div>
+				<div class="overview-meta mono" id="overview-meta">awaiting session signal</div>
+			</div>
+		</div>
+		<div class="metric-grid">
+			<div class="metric-card context">
+				<div class="metric-label"><span>Context pressure</span><span class="metric-unit" id="context-window">— window</span></div>
+				<div class="context-readout"><div class="metric-value mono" id="context-value">—</div><span class="metric-unit">used</span></div>
+				<div id="context-meter" class="context-meter"><span style="width: 0%"></span></div>
+			</div>
+			<div class="metric-card">
+				<div class="metric-label">Tokens</div>
+				<div class="metric-value mono" id="tokens-value">—</div>
+				<div class="metric-note" id="tokens-note">input + output + cache</div>
+			</div>
+			<div class="metric-card">
+				<div class="metric-label">Spend</div>
+				<div class="metric-value mono" id="cost-value">—</div>
+				<div class="metric-note">reported session cost</div>
+			</div>
+			<div class="metric-card">
+				<div class="metric-label">Events</div>
+				<div class="metric-value mono" id="events-value">0</div>
+				<div class="metric-note" id="events-note">activity retained</div>
+			</div>
+			<div class="metric-card">
+				<div class="metric-label">Active lanes</div>
+				<div class="metric-value mono" id="lanes-value">0</div>
+				<div class="metric-note" id="lanes-note">delegated work</div>
+			</div>
+		</div>
+	</section>
+
+	<section id="pulse-wrap" aria-labelledby="pulse-title">
+		<div class="pulse-panel panel">
+			<div class="pulse-head">
+				<div class="pulse-title"><span class="live-mark" aria-hidden="true"></span><h2 id="pulse-title">Live activity pulse</h2><span class="pulse-summary mono" id="pulse-summary">no events</span></div>
+				<div class="pulse-controls">
+					<div class="pulse-stats" aria-label="Activity metrics"><span class="pulse-stat"><strong id="pulse-events">0</strong>events</span><span class="pulse-stat"><strong id="pulse-tools">0</strong>tools</span><span class="pulse-stat"><strong id="pulse-gap">—</strong>avg gap</span></div>
+					<div id="range-tabs" class="range-tabs" role="tablist" aria-label="Activity time range">
+						<button class="range-tab" type="button" role="tab" data-range="1m" aria-selected="false">1m</button>
+						<button class="range-tab" type="button" role="tab" data-range="3m" aria-selected="false">3m</button>
+						<button class="range-tab" type="button" role="tab" data-range="5m" aria-selected="true">5m</button>
+						<button class="range-tab" type="button" role="tab" data-range="10m" aria-selected="false">10m</button>
+					</div>
+					<div class="pulse-legend" aria-label="Pulse legend">
+						<span class="legend-key">height = volume</span>
+						<span class="legend-key"><span class="legend-swatch tool"></span>color = agent</span>
+						<span class="legend-key"><span class="legend-swatch error"></span>error</span>
+					</div>
+				</div>
+			</div>
+		<div id="pulse-scope-rail" aria-label="Active main-agent traces"></div>
+		<div id="pulse" role="img" aria-label="Live combined activity pulse"></div>
+		<div class="pulse-axis mono"><span id="pulse-start">—</span><span>activity density</span><span>now</span></div>
+		<div class="lanes-row"><span class="lanes-label">Lanes</span><div id="lanes"><span class="lane-empty">No delegated lanes yet</span></div></div>
+	</div>
+	</section>
+
+	<main id="workspace">
+		<section class="stream-panel panel" aria-labelledby="stream-title">
+			<div class="stream-head">
+				<div class="stream-heading"><h2 id="stream-title">Event stream</h2><p id="stream-count" class="mono">0 visible</p></div>
+				<div class="stream-tools">
+					<div id="filter-tabs" class="filter-tabs" role="toolbar" aria-label="Event filters"></div>
+					<label class="search-box"><span class="sr-only">Search activity</span><span class="search-icon icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg></span><input id="search" type="search" placeholder="Search activity" autocomplete="off"><button id="search-clear" class="search-clear" type="button" aria-label="Clear search" hidden>×</button></label>
+					<button id="follow-button-mobile" class="icon-button follow-button" type="button" aria-pressed="false" title="Pause or follow the live feed (Space)"><span class="follow-live">Following</span></button>
+				</div>
+			</div>
+			<div id="event-scroll">
+				<div id="event-list" role="listbox" aria-label="Session activity"></div>
+				<div id="stream-empty" class="empty-stream" hidden>
+					<div class="empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16M4 12h10M4 17.5h16"/><circle cx="18" cy="12" r="2"/></svg></div>
+					<h3>No matching activity</h3><p>Change the filter or search term. The live stream will keep collecting events in the background.</p>
+				</div>
+			</div>
+		</section>
+
+		<div id="inspector-resizer" class="inspector-resizer" role="separator" aria-orientation="vertical" aria-valuemin="500" aria-valuemax="1200" aria-valuenow="0" aria-label="Resize forensic detail inspector" title="Drag to resize forensic detail inspector" tabindex="0"></div>
+		<aside id="inspector" class="inspector panel" aria-labelledby="inspector-title">
+			<div class="inspector-head"><div><div class="eyebrow">Forensic detail</div><h2 id="inspector-title" class="inspector-title">Inspector</h2></div><button id="inspector-close" class="inspector-close" type="button" aria-label="Close event inspector"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="m4 4 8 8M12 4 4 12"/></svg></button></div>
+			<div id="inspector-body"></div>
+		</aside>
+	</main>
+</div>
+<div id="drawer-backdrop" class="drawer-backdrop"></div>
+
+<script>
+"use strict";
+
+const MAX_ROWS = 500;
+const PULSE_BINS = 42;
+const PULSE_RANGES = { "1m": 60 * 1000, "3m": 3 * 60 * 1000, "5m": 5 * 60 * 1000, "10m": 10 * 60 * 1000 };
+const FILTERS = [
+	{ key: "all", label: "All activity", short: "all", digit: "0" },
+	{ key: "tool", label: "Tools", short: "tools", digit: "1" },
+	{ key: "message", label: "Messages", short: "messages", digit: "2" },
+	{ key: "skill", label: "Skills", short: "skills", digit: "3" },
+	{ key: "compaction", label: "Compaction", short: "compact", digit: "4" },
+	{ key: "retry", label: "Retries", short: "retries", digit: "5" },
+	{ key: "queue", label: "Queue", short: "queue", digit: "6" },
+	{ key: "subagent", label: "Subagents", short: "agents", digit: "7" },
+];
+
+const state = {
+	items: new Map(),
+	order: [],
+	selectedId: null,
+	selectedBinKeys: new Set(),
+	pulseSelectionActive: false,
+	filter: "all",
+	query: "",
+	paused: false,
+	timeRange: "5m",
+	header: null,
+	lanes: [],
+	threads: new Map(),
+	runs: [],
+	scope: "all",
+	selectedRunId: "all",
+	liveRunId: null,
+};
+
+const $ = (id) => document.getElementById(id);
+const runSelect = $("run-select");
+const eventList = $("event-list");
+const eventScroll = $("event-scroll");
+const workspace = $("workspace");
+const inspector = $("inspector");
+const inspectorBody = $("inspector-body");
+const inspectorResizer = $("inspector-resizer");
+const pulseScopeRail = $("pulse-scope-rail");
+const INSPECTOR_WIDTH_KEY = "ice-observe-inspector-width";
+const INSPECTOR_MIN_WIDTH = 500;
+const INSPECTOR_MAX_WIDTH = 1200;
+
+function iconSvg(name) {
+	const paths = {
+		activity: '<path d="M2 12h3l2-7 3.2 11 2-6H14l1.5 2H22"/>',
+		tool: '<circle cx="6.2" cy="6.2" r="2.8"/><path d="m8.3 8.3 5.8 5.8M13.2 14.2l2.1 2.1M15.2 12.1l2.1 2.1"/>',
+		message: '<path d="M3 4.5h18v11H8l-5 4v-4H3z"/><path d="M7 9h10M7 12h6"/>',
+		skill: '<path d="m12 2 2.3 6.1L20 10l-5.7 2-2.3 6-2.3-6L4 10l5.7-1.9z"/>',
+		compaction: '<path d="M5 4h14v5H5zM5 15h14v5H5zM8 9v6M16 9v6"/>',
+		retry: '<path d="M4 8a7 7 0 0 1 12-3l2 2M20 8V4M20 8h-4M20 16a7 7 0 0 1-12 3l-2-2M4 16v4M4 16h4"/>',
+		queue: '<path d="M4 5h16M4 10h10M4 15h16M4 20h10"/>',
+		subagent: '<circle cx="8" cy="8" r="3"/><circle cx="16" cy="8" r="3"/><path d="M3.5 19c.8-3.1 2.3-4.6 4.5-4.6s3.7 1.5 4.5 4.6M11.5 19c.8-3.1 2.3-4.6 4.5-4.6s3.7 1.5 4.5 4.6"/>',
+		error: '<path d="M12 3 2.8 20h18.4z"/><path d="M12 9v5M12 17.5v.1"/>',
+		info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 10v5M12 7.5v.1"/>',
+		chevron: '<path d="m9 6 6 6-6 6"/>',
+		copy: '<rect x="6" y="6" width="9" height="9" rx="1"/><path d="M9 6V4h9v9h-3"/>',
+	};
+	return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.info}</svg>`;
+}
+
+function element(tag, className, text) {
+	const node = document.createElement(tag);
+	if (className) node.className = className;
+	if (text !== undefined) node.textContent = text;
+	return node;
+}
+
+function fmtClock(ts) {
+	if (!ts) return "—";
+	const date = new Date(ts);
+	return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(date);
+}
+
+function fmtDate(ts) {
+	if (!ts) return "—";
+	return new Intl.DateTimeFormat(undefined, { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(ts));
+}
+
+function fmtDuration(ms) {
+	if (ms === undefined || ms === null || !Number.isFinite(ms)) return "—";
+	if (ms < 1000) return `${Math.round(ms)}ms`;
+	if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
+	const minutes = Math.floor(ms / 60000);
+	return `${minutes}m${Math.round((ms % 60000) / 1000)}s`;
+}
+
+function fmtCompact(value) {
+	if (!Number.isFinite(value)) return "—";
+	if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}m`;
+	if (value >= 1000) return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k`;
+	return String(Math.round(value));
+}
+
+function fmtPercent(value) {
+	return value === null || value === undefined || !Number.isFinite(value) ? "—" : `${value.toFixed(1)}%`;
+}
+
+function firstLine(text) {
+	const line = String(text || "").split("\n")[0].trim();
+	return line.length > 150 ? `${line.slice(0, 150)}…` : line;
+}
+
+function prettyArgs(args) {
+	if (!args) return "";
+	try { return JSON.stringify(JSON.parse(args), null, 2); } catch { return args; }
+}
+
+function parsePayload(payload) {
+	if (!payload) return undefined;
+	try { return JSON.parse(payload); } catch { return undefined; }
+}
+
+function createCodeBlock(content, options = {}) {
+	const diff = options.diff === true;
+	const pre = element("pre", `detail-pre${diff ? " diff-code" : ""}`);
+	const lines = String(content ?? "").split("\n");
+	const width = String(lines.length).length;
+	for (const [index, lineText] of lines.entries()) {
+		let rowClass = "code-line";
+		const row = element("span", diff ? `${rowClass} diff` : rowClass);
+		if (!diff) {
+			row.append(element("span", "code-number", String(index + 1).padStart(width, " ")), element("span", "code-text", lineText));
+		} else {
+			const match = lineText.match(/^([-+ ])(\s*(?:\d+|\.\.\.))\s(.*)$/);
+			const marker = match?.[1] ?? "";
+			const number = match?.[2] ?? "";
+			const text = match?.[3] ?? lineText;
+			if (marker === "+") rowClass += " diff-added";
+			else if (marker === "-") rowClass += " diff-removed";
+			else if (lineText.startsWith("@@")) rowClass += " diff-header";
+			row.className = `${rowClass} diff`;
+			row.append(element("span", "code-marker", marker), element("span", "code-number", number), element("span", "code-text", text));
+		}
+		pre.append(row);
+	}
+	return pre;
+}
+
+function objectValue(value, key) {
+	return value && typeof value === "object" && !Array.isArray(value) ? value[key] : undefined;
+}
+
+function editEntries(args) {
+	if (!args || typeof args !== "object" || Array.isArray(args)) return undefined;
+	const path = typeof args.path === "string" ? args.path : typeof args.file_path === "string" ? args.file_path : "";
+	let edits = args.edits;
+	if (typeof edits === "string") {
+		try { edits = JSON.parse(edits); } catch { edits = []; }
+	}
+	if (!Array.isArray(edits) && typeof args.oldText === "string" && typeof args.newText === "string") {
+		edits = [{ oldText: args.oldText, newText: args.newText }];
+	}
+	if (!Array.isArray(edits) || edits.length === 0) return undefined;
+	const valid = edits.filter((edit) => edit && typeof edit.oldText === "string" && typeof edit.newText === "string");
+	return valid.length ? { path, edits: valid } : undefined;
+}
+
+function replacementDiff(path, edits) {
+	const lines = [`@@ ${path || "file"} @@`];
+	for (const [index, edit] of edits.entries()) {
+		lines.push(`@@ replacement ${index + 1} @@`);
+		const oldLines = edit.oldText.split("\n");
+		const newLines = edit.newText.split("\n");
+		const width = String(Math.max(oldLines.length, newLines.length)).length;
+		for (const [lineIndex, line] of oldLines.entries()) lines.push(`-${String(lineIndex + 1).padStart(width, " ")} ${line}`);
+		for (const [lineIndex, line] of newLines.entries()) lines.push(`+${String(lineIndex + 1).padStart(width, " ")} ${line}`);
+	}
+	return lines.join("\n");
+}
+
+function toolDiff(item) {
+	const toolName = String(item.toolName || "").toLowerCase();
+	const args = parsePayload(item.args);
+	if (toolName === "write" && typeof objectValue(args, "content") === "string") {
+		const content = objectValue(args, "content");
+		const path = objectValue(args, "path") || objectValue(args, "file_path") || "new file";
+		const lines = String(content).split("\n");
+		const width = String(lines.length).length;
+		return { title: `Write diff · ${path}`, content: [`@@ ${path} @@`, ...lines.map((line, index) => `+${String(index + 1).padStart(width, " ")} ${line}`)].join("\n") };
+	}
+	if (toolName !== "edit") return undefined;
+	const result = parsePayload(item.raw);
+	const detailsDiff = objectValue(objectValue(result, "details"), "diff");
+	if (typeof detailsDiff === "string" && detailsDiff.length > 0) return { title: "Applied diff", content: detailsDiff };
+	const input = editEntries(args);
+	return input ? { title: `Edit diff · ${input.path || "file"}`, content: replacementDiff(input.path, input.edits) } : undefined;
+}
+
+function kindMeta(item) {
+	if (item.kind === "tool") return { label: "Tool", icon: item.state === "error" ? "error" : "tool", group: "tool" };
+	if (item.kind === "subagent") return { label: "Subagent", icon: item.state === "error" ? "error" : "subagent", group: "agent" };
+	if (item.kind === "message") return { label: item.role === "user" ? "User" : "Assistant", icon: "message", group: "message" };
+	if (item.kind === "skill") return { label: "Skill", icon: "skill", group: "system" };
+	if (item.kind === "compaction") return { label: "Compaction", icon: "compaction", group: "system" };
+	if (item.kind === "retry") return { label: "Retry", icon: "retry", group: "system" };
+	return { label: "Queue", icon: "queue", group: "system" };
+}
+
+/** The argument a reader identifies a tool call by (path, command, pattern...), if any. */
+function argSummary(item) {
+	const args = parsePayload(item.args);
+	if (!args || typeof args !== "object" || Array.isArray(args)) return "";
+	for (const key of ["path", "file_path", "command", "pattern", "query", "url", "task", "description", "prompt"]) {
+		if (typeof args[key] === "string" && args[key].trim()) return firstLine(args[key]);
+	}
+	return "";
+}
+
+function subjectOf(item) {
+	if (item.kind === "tool") return item.toolName || "tool execution";
+	if (item.kind === "subagent") return item.toolName ? `${item.threadName} · ${item.toolName}` : item.threadName || "subagent";
+	if (item.kind === "message") return firstLine(item.text) || (item.role === "user" ? "Prompt" : "Response");
+	if (item.kind === "skill") return firstLine(item.text || "skill invocation");
+	return firstLine(item.text || kindMeta(item).label);
+}
+
+function detailOf(item) {
+	if (item.kind === "tool") {
+		const target = argSummary(item);
+		if (item.state === "running") return target || "Awaiting result…";
+		const outcome = firstLine(item.result);
+		return target && outcome ? `${target} → ${outcome}` : target || outcome || firstLine(item.args);
+	}
+	// A message's first line is already its title; show the rest as detail.
+	if (item.kind === "message") return firstLine(String(item.text || "").split("\n").slice(1).join(" "));
+	return firstLine(item.result || "");
+}
+
+function stateLabel(item) {
+	if (item.state) return item.state;
+	if (item.kind === "message") return "recorded";
+	return "observed";
+}
+
+function eventKey(item) {
+	return `${item.runId || item.mainThreadId}:${item.id}`;
+}
+
+function threadLookupKey(item, threadKey) {
+	return `${item.runId || item.mainThreadId}:${threadKey}`;
+}
+
+function visibleOrder() {
+	return state.order.filter((id) => {
+		const item = state.items.get(id);
+		if (!item) return false;
+		if (state.filter !== "all" && item.kind !== state.filter) return false;
+		if (!state.query) return true;
+		const haystack = [item.kind, item.eventType, item.role, item.toolName, item.delegationToolName, item.threadKey, item.threadName, item.state, item.text, item.args, item.result, item.raw].filter(Boolean).join(" ").toLowerCase();
+		return haystack.includes(state.query.toLowerCase());
+	});
+}
+
+function renderFilterTabs() {
+	const container = $("filter-tabs");
+	container.replaceChildren(...FILTERS.map((filter) => {
+		const button = element("button", "filter-tab");
+		button.type = "button";
+		button.dataset.filter = filter.key;
+		button.setAttribute("aria-pressed", String(filter.key === state.filter));
+		button.title = `${filter.label} (press ${filter.digit})`;
+		button.append(element("span", "filter-key", filter.digit), element("span", "filter-label", filter.short));
+		const count = state.order.filter((id) => state.items.get(id)?.kind === filter.key).length;
+		if (filter.key !== "all") button.append(element("span", "filter-count mono", String(count)));
+		button.addEventListener("click", () => setFilter(filter.key));
+		return button;
+	}));
+}
+
+function setFilter(filter) {
+	state.filter = filter;
+	renderFilterTabs();
+	renderStream();
+}
+
+function setQuery(query) {
+	state.query = query.trim();
+	$("search-clear").hidden = state.query.length === 0;
+	renderStream();
+}
+
+function rowClass(item) {
+	const meta = kindMeta(item);
+	const classes = ["event-row", meta.group];
+	const key = eventKey(item);
+	if (key === state.selectedId) classes.push("selected");
+	if (state.selectedBinKeys.has(key)) classes.push("pulse-match");
+	if (item.state === "error") classes.push("error");
+	return classes.join(" ");
+}
+
+const THREAD_COLORS = new Set(["blue", "violet", "cyan", "green", "amber", "rose", "orange", "indigo", "slate"]);
+
+function safeThreadColor(color) {
+	return THREAD_COLORS.has(color) ? color : "slate";
+}
+
+function threadLabel(item) {
+	const main = state.threads.get(threadLookupKey(item, item.mainThreadId)) || state.threads.get(item.mainThreadId);
+	const thread = state.threads.get(threadLookupKey(item, item.threadKey)) || state.threads.get(item.threadKey);
+	const name = thread?.threadName || item.threadName;
+	if (item.threadKind !== "subagent") return name || main?.threadName || "main";
+	return `${main?.threadName || `main · ${String(item.mainThreadId || "").slice(0, 10)}`} → ${name || "subagent"}`;
+}
+
+function appendThreadBadge(parent, item) {
+	const badge = element("span", "thread-badge");
+	const thread = state.threads.get(threadLookupKey(item, item.threadKey)) || state.threads.get(item.threadKey);
+	const swatch = element("span", `thread-swatch ${safeThreadColor(thread?.threadColor || item.threadColor)}`);
+	badge.append(swatch, element("span", "", threadLabel(item)));
+	badge.title = `${item.runId} · ${item.threadKey}`;
+	parent.append(badge);
+}
+
+function renderRow(item, isNew = true) {
+	const meta = kindMeta(item);
+	const row = element("article", `${rowClass(item)}${isNew ? " row-enter" : ""}`);
+	const key = eventKey(item);
+	row.dataset.id = String(item.id);
+	row.dataset.key = key;
+	row.tabIndex = 0;
+	row.setAttribute("role", "option");
+	row.setAttribute("aria-selected", String(key === state.selectedId));
+	const rail = element("span", `event-rail ${meta.group} ${item.state || ""}`);
+	const time = element("time", "event-time mono", fmtClock(item.ts));
+	time.dateTime = item.ts ? new Date(item.ts).toISOString() : "";
+	const icon = element("span", `event-icon ${meta.group} ${item.state === "error" ? "error" : ""}`);
+	icon.innerHTML = iconSvg(meta.icon);
+	const body = element("div", "event-body");
+	const topline = element("div", "event-topline");
+	topline.append(element("span", "event-kind", meta.label), element("span", "event-title", subjectOf(item)));
+	appendThreadBadge(topline, item);
+	// Only stateful events (tools, subagents) carry a status chip; "recorded"/"observed" is noise.
+	if (item.state) topline.append(element("span", `event-status ${item.state}`, stateLabel(item)));
+	body.append(topline);
+	const detail = detailOf(item);
+	if (detail) body.append(element("div", "event-subject", detail));
+	const duration = element("span", "event-duration mono", fmtDuration(item.durationMs));
+	const chevron = element("span", "event-chevron icon");
+	chevron.innerHTML = iconSvg("chevron");
+	row.append(rail, time, icon, body, duration, chevron);
+	row.addEventListener("click", () => selectRow(key));
+	row.addEventListener("keydown", (event) => {
+		if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectRow(key); }
+	});
+	return row;
+}
+
+function updateRowPresentation(row, item) {
+	const key = eventKey(item);
+	row.className = rowClass(item);
+	row.setAttribute("aria-selected", String(key === state.selectedId));
+}
+
+function renderStream(changedId) {
+	const ids = visibleOrder();
+	const existing = new Map([...eventList.children].map((row) => [row.dataset.key, row]));
+	const desired = new Set(ids);
+	for (const row of [...eventList.children]) {
+		if (!desired.has(row.dataset.key)) row.remove();
+	}
+
+	let cursor = eventList.firstElementChild;
+	for (const id of ids) {
+		const item = state.items.get(id);
+		if (!item) continue;
+		let row = existing.get(id);
+		if (!row) {
+			row = renderRow(item);
+			existing.set(id, row);
+		} else if (id === changedId) {
+			// Replace in place and advance the cursor past it; the old row may be the cursor itself,
+			// and inserting before a detached node throws.
+			const replacement = renderRow(item, false);
+			if (row === cursor) cursor = replacement;
+			row.replaceWith(replacement);
+			row = replacement;
+			existing.set(id, row);
+		} else {
+			updateRowPresentation(row, item);
+		}
+		if (row !== cursor) eventList.insertBefore(row, cursor);
+		else cursor = cursor.nextElementSibling;
+	}
+	$("stream-empty").hidden = ids.length > 0;
+	$("stream-count").textContent = `${ids.length} visible`;
+}
+
+function appendItem(item) {
+	const key = eventKey(item);
+	if (state.items.has(key)) {
+		patchItem(item);
+		return;
+	}
+	state.items.set(key, item);
+	state.order.push(key);
+	if (state.order.length > MAX_ROWS) {
+		const evicted = state.order.splice(0, state.order.length - MAX_ROWS);
+		for (const id of evicted) state.items.delete(id);
+	}
+	renderFilterTabs();
+	renderStream(key);
+	renderOverview();
+	renderPulse();
+	if (!state.paused) eventScroll.scrollTop = eventScroll.scrollHeight;
+}
+
+function patchItem(item) {
+	const key = eventKey(item);
+	// An update for an item this view never saw (or already evicted) is still live activity.
+	if (!state.items.has(key)) {
+		appendItem(item);
+		return;
+	}
+	state.items.set(key, item);
+	renderStream(key);
+	renderOverview();
+	renderPulse();
+	if (key === state.selectedId) renderInspector(item, { openDrawer: false });
+}
+
+function selectRow(id, options = {}) {
+	const item = state.items.get(id);
+	if (!item) return;
+	state.selectedId = id;
+	state.pulseSelectionActive = true;
+	if (options.preservePulse !== true) state.selectedBinKeys.clear();
+	renderStream();
+	renderPulse();
+	renderInspector(item);
+	const row = document.querySelector(`[data-key="${CSS.escape(String(id))}"]`);
+	if (options.focus !== false) row?.focus({ preventScroll: true });
+	row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function selectPulseBin(bin) {
+	const item = bin[bin.length - 1];
+	if (!item) return;
+	if (!bin.some((candidate) => visibleOrder().includes(eventKey(candidate)))) {
+		state.filter = "all";
+		state.query = "";
+		$("search").value = "";
+		$("search-clear").hidden = true;
+		renderFilterTabs();
+	}
+	state.selectedBinKeys = new Set(bin.map(eventKey));
+	selectRow(eventKey(item), { preservePulse: true });
+}
+
+function openInspector() {
+	inspector.classList.add("open");
+	$("drawer-backdrop").classList.add("open");
+}
+
+function closeInspector() {
+	inspector.classList.remove("open");
+	$("drawer-backdrop").classList.remove("open");
+}
+
+function wideInspectorLayout() {
+	return window.matchMedia("(min-width: 1061px)").matches;
+}
+
+function inspectorWidthBounds() {
+	const workspaceWidth = workspace.getBoundingClientRect().width;
+	const maxWidth = Math.min(INSPECTOR_MAX_WIDTH, Math.max(INSPECTOR_MIN_WIDTH, workspaceWidth - 320));
+	return { min: INSPECTOR_MIN_WIDTH, max: maxWidth };
+}
+
+function setInspectorWidth(width, persist = true) {
+	if (!wideInspectorLayout()) return;
+	const bounds = inspectorWidthBounds();
+	const next = Math.round(Math.min(bounds.max, Math.max(bounds.min, width)));
+	document.documentElement.style.setProperty("--inspector-width", `${next}px`);
+	inspectorResizer.setAttribute("aria-valuemin", String(bounds.min));
+	inspectorResizer.setAttribute("aria-valuemax", String(Math.round(bounds.max)));
+	inspectorResizer.setAttribute("aria-valuenow", String(next));
+	if (persist) {
+		try { localStorage.setItem(INSPECTOR_WIDTH_KEY, String(next)); } catch {}
+	}
+}
+
+function restoreInspectorWidth() {
+	try {
+		const saved = Number(localStorage.getItem(INSPECTOR_WIDTH_KEY));
+		if (Number.isFinite(saved)) setInspectorWidth(saved, false);
+	} catch {}
+	const current = inspector.getBoundingClientRect().width;
+	if (current > 0) setInspectorWidth(current, false);
+}
+
+let resizingInspector = false;
+function resizeInspectorFromPointer(event) {
+	if (!resizingInspector || !wideInspectorLayout()) return;
+	const rect = workspace.getBoundingClientRect();
+	setInspectorWidth(rect.right - event.clientX);
+}
+
+inspectorResizer.addEventListener("pointerdown", (event) => {
+	if (!wideInspectorLayout() || (event.pointerType === "mouse" && event.button !== 0)) return;
+	resizingInspector = true;
+	inspectorResizer.setPointerCapture(event.pointerId);
+	document.body.classList.add("is-resizing");
+	event.preventDefault();
+});
+inspectorResizer.addEventListener("pointermove", resizeInspectorFromPointer);
+function stopInspectorResize() {
+	if (!resizingInspector) return;
+	resizingInspector = false;
+	document.body.classList.remove("is-resizing");
+}
+inspectorResizer.addEventListener("pointerup", stopInspectorResize);
+inspectorResizer.addEventListener("pointercancel", stopInspectorResize);
+inspectorResizer.addEventListener("lostpointercapture", stopInspectorResize);
+inspectorResizer.addEventListener("keydown", (event) => {
+	if (!wideInspectorLayout()) return;
+	const current = inspector.getBoundingClientRect().width;
+	if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+		event.preventDefault();
+		setInspectorWidth(current + (event.key === "ArrowLeft" ? 24 : -24));
+	} else if (event.key === "Home") {
+		event.preventDefault();
+		setInspectorWidth(INSPECTOR_MIN_WIDTH);
+	} else if (event.key === "End") {
+		event.preventDefault();
+		setInspectorWidth(inspectorWidthBounds().max);
+	}
+});
+
+function addDetailSection(title, content, type = "prose", copyable = false) {
+	const section = element("section", "detail-section");
+	const head = element("div", "detail-section-head");
+	head.append(element("h3", "", title));
+	if (copyable) {
+		const button = element("button", "detail-copy", "Copy");
+		button.type = "button";
+		button.addEventListener("click", async () => {
+			try {
+				await navigator.clipboard.writeText(content);
+				button.textContent = "Copied";
+				setTimeout(() => { button.textContent = "Copy"; }, 1600);
+			} catch { button.textContent = "Unavailable"; }
+		});
+		head.append(button);
+	}
+	if (type === "pre") {
+		const lineCount = String(content).split("\n").length;
+		head.append(element("span", "detail-measure", `${lineCount} lines · ${fmtCompact(String(content).length)} chars`));
+	}
+	const body = type === "pre" ? createCodeBlock(content) : element("div", "detail-prose", content);
+	section.append(head, body);
+	inspectorBody.append(section);
+}
+
+function addDiffSection(title, content) {
+	const section = element("section", "detail-section diff-section");
+	const head = element("div", "detail-section-head");
+	head.append(element("h3", "", title));
+	const button = element("button", "detail-copy", "Copy diff");
+	button.type = "button";
+	button.addEventListener("click", async () => {
+		try {
+			await navigator.clipboard.writeText(content);
+			button.textContent = "Copied";
+			setTimeout(() => { button.textContent = "Copy diff"; }, 1600);
+		} catch { button.textContent = "Unavailable"; }
+	});
+	head.append(element("span", "detail-measure", `${String(content).split("\n").length} lines · ${fmtCompact(String(content).length)} chars`), button);
+	section.append(head, createCodeBlock(content, { diff: true }));
+	inspectorBody.append(section);
+}
+
+function addRawSection(content) {
+	const section = element("section", "detail-section");
+	const head = element("div", "detail-section-head");
+	head.append(element("h3", "", "Raw payload"));
+	const button = element("button", "detail-copy", "Copy raw");
+	button.type = "button";
+	button.addEventListener("click", async () => {
+		try {
+			await navigator.clipboard.writeText(content);
+			button.textContent = "Copied";
+			setTimeout(() => { button.textContent = "Copy raw"; }, 1600);
+		} catch { button.textContent = "Unavailable"; }
+	});
+	head.append(button);
+	const details = document.createElement("details");
+	details.className = "raw-disclosure";
+	const summary = document.createElement("summary");
+	const lineCount = String(content).split("\n").length;
+	summary.textContent = `Show raw event data · ${lineCount} line${lineCount === 1 ? "" : "s"}`;
+	details.append(summary, createCodeBlock(content));
+	section.append(head, details);
+	inspectorBody.append(section);
+}
+
+function renderInspector(item, options = {}) {
+	if (options.openDrawer !== false && window.matchMedia("(max-width: 1060px)").matches) openInspector();
+	// Live updates re-render the selected event; keep the reader's scroll position and open disclosures.
+	const sameItem = inspectorBody.dataset.key === eventKey(item);
+	const previousScroll = inspectorBody.scrollTop;
+	const previousOpen = [...inspectorBody.querySelectorAll("details")].map((details) => details.open);
+	inspectorBody.dataset.key = eventKey(item);
+	inspectorBody.replaceChildren();
+	const meta = kindMeta(item);
+	const hero = element("div", "detail-hero");
+	const heroIcon = element("span", `event-icon ${meta.group} ${item.state === "error" ? "error" : ""}`);
+	heroIcon.innerHTML = iconSvg(meta.icon);
+	const heroCopy = element("div", "detail-hero-copy");
+	heroCopy.append(element("div", "detail-hero-title", subjectOf(item)), element("div", "detail-hero-subtitle mono", `event #${item.id} · ${fmtDate(item.ts)}`));
+	const heroStatus = element("span", `event-status ${item.state || ""}`, stateLabel(item));
+	hero.append(heroIcon, heroCopy, heroStatus);
+	inspectorBody.append(hero);
+
+	const eventSection = element("section", "detail-section");
+	const eventHead = element("div", "detail-section-head");
+	eventHead.append(element("h3", "", "Event metadata"));
+	const copyAll = element("button", "detail-copy", "Copy event");
+	copyAll.type = "button";
+	copyAll.addEventListener("click", async () => {
+		try {
+			await navigator.clipboard.writeText(JSON.stringify(item, null, 2));
+			copyAll.textContent = "Copied";
+			setTimeout(() => { copyAll.textContent = "Copy event"; }, 1600);
+		} catch { copyAll.textContent = "Unavailable"; }
+	});
+	eventHead.append(copyAll);
+	const kv = element("dl", "detail-kv");
+	const addKv = (label, value, mono = false) => { kv.append(element("dt", "", label), element("dd", mono ? "mono" : "", value)); };
+	addKv("kind", meta.label);
+	addKv("event", item.eventType || "observed", true);
+	addKv("time", fmtDate(item.ts), true);
+	addKv("run", item.runId, true);
+	addKv("trace", eventKey(item), true);
+	addKv("thread", threadLabel(item));
+	addKv("thread key", item.threadKey, true);
+	if (item.parentThreadId) addKv("parent thread", item.parentThreadId, true);
+	if (item.toolName) addKv("tool", item.toolName, true);
+	if (item.delegationToolName) addKv("delegator", item.delegationToolName, true);
+	if (item.role) addKv("role", item.role);
+	addKv("state", stateLabel(item));
+	if (item.durationMs !== undefined) addKv("duration", fmtDuration(item.durationMs), true);
+	if (item.updates !== undefined) addKv("updates", String(item.updates), true);
+	eventSection.append(eventHead, kv);
+	inspectorBody.append(eventSection);
+
+	const diff = item.kind === "tool" ? toolDiff(item) : undefined;
+	const evidence = element("div", "detail-evidence");
+	evidence.append(element("span", "detail-evidence-label", "Evidence"));
+	const evidenceNames = [];
+	evidenceNames.push("thread identity");
+	if (item.text) evidenceNames.push(item.kind === "message" ? "message" : "status");
+	if (item.args) evidenceNames.push("args");
+	if (item.result) evidenceNames.push(item.kind === "compaction" ? "summary" : "result");
+	if (diff) evidenceNames.push("diff");
+	if (item.raw) evidenceNames.push("raw");
+	if (!evidenceNames.length) evidenceNames.push("metadata only");
+	evidence.append(...evidenceNames.map((name, index) => element("span", `evidence-chip${index === 0 ? " active" : ""}`, name)));
+	inspectorBody.append(evidence);
+	if (diff) addDiffSection(diff.title, diff.content);
+	if (item.args) addDetailSection("Arguments", prettyArgs(item.args), "pre", true);
+	if (item.text) addDetailSection(item.kind === "message" ? "Message" : item.kind === "compaction" && item.result ? "Lifecycle" : "Detail", item.text);
+	if (item.result) addDetailSection(item.kind === "compaction" ? "Compaction summary" : "Result", item.result, "pre", true);
+	if (item.raw && item.raw !== item.args && item.raw !== item.result) addRawSection(item.raw);
+	if (sameItem) {
+		for (const [index, details] of [...inspectorBody.querySelectorAll("details")].entries()) {
+			if (previousOpen[index]) details.open = true;
+		}
+		inspectorBody.scrollTop = previousScroll;
+	}
+}
+
+function renderEmptyInspector() {
+	delete inspectorBody.dataset.key;
+	inspectorBody.replaceChildren();
+	const empty = element("div", "inspector-empty");
+	const icon = element("div", "empty-icon");
+	icon.innerHTML = iconSvg("activity");
+	empty.append(icon, element("h3", "", "Select an event to inspect"), element("p", "", "Arguments, results, timing, and lifecycle metadata will open here without interrupting the live feed."));
+	inspectorBody.append(empty);
+}
+
+function renderHeader(header) {
+	state.header = header;
+	const context = header.context;
+	const percent = context?.percent ?? null;
+	$("context-value").textContent = fmtPercent(percent);
+	$("context-window").textContent = context?.contextWindow ? `${fmtCompact(context.contextWindow)} window` : "— window";
+	const meter = $("context-meter");
+	meter.classList.toggle("warn", percent !== null && percent >= 70 && percent < 90);
+	meter.classList.toggle("danger", percent !== null && percent >= 90);
+	meter.querySelector("span").style.width = `${Math.min(100, Math.max(0, percent || 0))}%`;
+	const usage = header.usage || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+	const total = usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+	$("tokens-value").textContent = fmtCompact(total);
+	$("tokens-note").textContent = `${fmtCompact(usage.input)} in · ${fmtCompact(usage.output)} out`;
+	$("cost-value").textContent = `$${Number(usage.cost || 0).toFixed(3)}`;
+	$("overview-meta").textContent = `${header.model || "no model"} · ${header.thinkingLevel || "default"} · started ${fmtDate(header.startedAt)}`;
+	renderOverview();
+}
+
+function renderOverview() {
+	const activeLanes = state.lanes.filter((lane) => !lane.terminal).length;
+	$("events-value").textContent = String(state.order.length);
+	$("events-note").textContent = state.order.length === MAX_ROWS ? `latest ${MAX_ROWS} retained` : "activity retained";
+	$("lanes-value").textContent = String(activeLanes);
+	$("lanes-note").textContent = state.lanes.length ? `${state.lanes.length} observed lane${state.lanes.length === 1 ? "" : "s"}` : "delegated work";
+}
+
+function pulseWeight(item) {
+	if (item.state === "error") return 2;
+	if (item.kind === "tool") return item.state === "running" ? 1.25 : 1;
+	if (item.kind === "subagent") return 0.75;
+	if (item.kind === "message") return 0.25;
+	return 0.35;
+}
+
+function pulseTrace(item) {
+	const main = state.threads.get(threadLookupKey(item, item.mainThreadId)) || state.threads.get(item.mainThreadId);
+	return {
+		key: `${item.runId || item.mainThreadId}:${item.mainThreadId}`,
+		name: main?.threadName || item.threadName || `main · ${String(item.mainThreadId || "").slice(0, 10)}`,
+		color: safeThreadColor(main?.threadColor || item.threadColor),
+	};
+}
+
+function setTimeRange(range) {
+	if (!PULSE_RANGES[range]) return;
+	state.timeRange = range;
+	for (const button of document.querySelectorAll(".range-tab")) button.setAttribute("aria-selected", String(button.dataset.range === range));
+	renderPulse();
+}
+
+function renderPulse() {
+	const pulse = $("pulse");
+	const items = state.order.map((id) => state.items.get(id)).filter(Boolean);
+	const latestItemTs = items.reduce((latest, item) => Number.isFinite(item.ts) ? Math.max(latest, item.ts) : latest, 0);
+	const historicalRun = state.scope !== "all" && state.selectedRunId !== "all" && state.selectedRunId !== state.liveRunId;
+	const latest = historicalRun && latestItemTs > 0 ? latestItemTs : Math.max(Date.now(), latestItemTs);
+	const span = PULSE_RANGES[state.timeRange];
+	const binSpan = span / PULSE_BINS;
+	// Anchor edges to epoch time. A continuously sliding window makes events jump between
+	// adjacent bars every second when they sit near a boundary, which looks like flicker.
+	const latestBin = Math.floor(latest / binSpan);
+	const earliest = (latestBin - PULSE_BINS + 1) * binSpan;
+	const windowItems = items.filter((item) => item.ts >= earliest && item.ts <= latest);
+	const bins = Array.from({ length: PULSE_BINS }, () => []);
+	for (const item of windowItems) {
+		const index = Math.min(PULSE_BINS - 1, Math.max(0, Math.floor((item.ts - earliest) / binSpan)));
+		bins[index].push(item);
+	}
+	const scopeTotals = new Map();
+	for (const item of windowItems) {
+		const trace = pulseTrace(item);
+		const current = scopeTotals.get(trace.key) || { ...trace, volume: 0 };
+		current.volume += pulseWeight(item);
+		scopeTotals.set(trace.key, current);
+	}
+	const traces = [...scopeTotals.values()].sort((left, right) => right.volume - left.volume);
+	// The share rail compares agents; with one agent it is a meaningless full bar.
+	pulseScopeRail.hidden = traces.length < 2;
+	pulseScopeRail.replaceChildren(...traces.map((trace) => {
+		const segment = element("span", `pulse-scope-segment ${trace.color}`);
+		segment.style.flex = String(Math.max(0.1, trace.volume));
+		segment.title = `${trace.name} · ${trace.volume.toFixed(2)} volume`;
+		return segment;
+	}));
+	const panel = pulse.closest(".pulse-panel");
+	if (panel) panel.style.setProperty("--pulse-accent", `var(--${traces.length === 1 ? traces[0].color : "cyan"})`);
+	const maxVolume = Math.max(1, ...bins.map((bin) => bin.reduce((sum, item) => sum + pulseWeight(item), 0)));
+	pulse.replaceChildren(...bins.map((bin, index) => {
+		const volume = bin.reduce((sum, item) => sum + pulseWeight(item), 0);
+		const selected = state.pulseSelectionActive && bin.some((item) => state.selectedBinKeys.has(eventKey(item)) || eventKey(item) === state.selectedId);
+		const hasError = bin.some((item) => item.state === "error");
+		const bar = element("button", `pulse-bar${bin.length ? `${selected ? " selected" : ""}${hasError ? " has-error" : ""}` : " empty"}`);
+		bar.type = "button";
+		bar.disabled = bin.length === 0;
+		bar.style.height = bin.length ? `${12 + Math.round(Math.sqrt(volume / maxVolume) * 76)}%` : "3%";
+		const byTrace = new Map();
+		for (const item of bin) {
+			const trace = pulseTrace(item);
+			byTrace.set(trace.key, (byTrace.get(trace.key) || 0) + pulseWeight(item));
+		}
+		const segments = element("span", "pulse-segments");
+		for (const [traceKey, traceVolume] of byTrace) {
+			const trace = scopeTotals.get(traceKey) || pulseTrace(bin[0]);
+			const segment = element("span", `pulse-segment ${trace.color}`);
+			segment.style.flexGrow = String(traceVolume);
+			segment.title = `${trace.name} · ${traceVolume.toFixed(2)} volume`;
+			segments.append(segment);
+		}
+		bar.append(segments);
+		const traceCount = new Set(bin.map((item) => pulseTrace(item).key)).size;
+		bar.title = bin.length ? `${bin.length} events · ${traceCount} agent${traceCount === 1 ? "" : "s"} · ${volume.toFixed(2)} volume` : "No events in this interval";
+		bar.setAttribute("aria-label", `${bin.length} events from ${traceCount} agent${traceCount === 1 ? "" : "s"} in pulse interval ${index + 1}${selected ? ", selected" : ""}`);
+		if (bin.length) bar.addEventListener("click", () => selectPulseBin(bin));
+		return bar;
+	}));
+	const ordered = [...windowItems].sort((left, right) => left.ts - right.ts);
+	const gaps = [];
+	for (let index = 1; index < ordered.length; index++) {
+		const gap = ordered[index].ts - ordered[index - 1].ts;
+		if (gap > 0) gaps.push(gap);
+	}
+	const averageGap = gaps.length ? gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length : 0;
+	$("pulse-events").textContent = String(windowItems.length);
+	$("pulse-tools").textContent = String(windowItems.filter((item) => item.kind === "tool").length);
+	$("pulse-gap").textContent = averageGap ? fmtDuration(averageGap) : "—";
+	$("pulse-summary").textContent = windowItems.length ? `${traces.length} agent${traces.length === 1 ? "" : "s"} · ${state.timeRange} window` : `${state.timeRange} window · waiting`;
+	$("pulse-start").textContent = fmtClock(earliest);
+	pulse.setAttribute("aria-label", windowItems.length ? `Combined activity pulse with ${windowItems.length} events from ${traces.length} agents over the last ${state.timeRange}` : `No activity in the last ${state.timeRange}`);
+}
+
+function fmtLaneElapsed(ms) { return ms === undefined ? "—" : fmtDuration(ms); }
+
+function renderLanes(lanes) {
+	state.lanes = lanes || [];
+	const active = state.lanes.filter((lane) => !lane.terminal).length;
+	$("lanes").replaceChildren(...(state.lanes.length ? state.lanes.map((lane) => {
+		const phase = lane.phase || lane.status || "observed";
+		const fault = phase === "failed" || phase === "timed_out" || lane.status === "error";
+		const chip = element("span", `lane-chip ${fault ? "fault" : ""} ${lane.terminal ? "terminal" : ""}`);
+		const name = lane.threadName || lane.role || lane.runId?.slice(0, 8) || lane.streamKey?.slice(0, 8) || "lane";
+		chip.append(element("span", `thread-swatch ${safeThreadColor(lane.threadColor)}`), element("span", "", name), element("span", "lane-phase mono", `${phase} · ${fmtLaneElapsed(lane.elapsedMs)}`));
+		chip.title = [lane.threadKey, lane.toolName, lane.currentTool, lane.currentPath, lane.summary].filter(Boolean).join(" · ");
+		return chip;
+	}) : [element("span", "lane-empty", "No delegated lanes yet")]));
+	$("lanes-value").textContent = String(active);
+	$("lanes-note").textContent = state.lanes.length ? `${state.lanes.length} observed lane${state.lanes.length === 1 ? "" : "s"}` : "delegated work";
+}
+
+function setPaused(paused) {
+	state.paused = paused;
+	for (const button of [$("follow-button-mobile")]) {
+		button.classList.toggle("is-paused", paused);
+		button.setAttribute("aria-pressed", String(paused));
+		button.title = paused ? "Resume live feed (Space)" : "Pause or follow the live feed (Space)";
+		const label = button.querySelector(".button-label");
+		if (label) label.textContent = paused ? "Paused" : "Following";
+		const live = button.querySelector(".follow-live");
+		if (live) live.textContent = paused ? "Paused" : "Following";
+	}
+	if (!paused) eventScroll.scrollTop = eventScroll.scrollHeight;
+}
+
+function togglePaused() { setPaused(!state.paused); }
+
+function renderRunSelector() {
+	const selected = state.scope === "all" ? "all" : state.selectedRunId || state.liveRunId || "";
+	const all = document.createElement("option");
+	all.value = "all";
+	all.textContent = "All agents · live combined";
+	runSelect.replaceChildren(all, ...state.runs.map((run) => {
+		const option = document.createElement("option");
+		option.value = run.runId;
+		const name = run.sessionName || run.sessionId.slice(0, 12);
+		option.textContent = `${name} · ${run.sessionId.slice(0, 8)} · ${run.status === "running" ? "live" : "finished"}`;
+		return option;
+	}));
+	if (selected) runSelect.value = selected;
+}
+
+async function loadSelectedRun(runId) {
+	const selected = runId || "all";
+	state.scope = selected === "all" ? "all" : "run";
+	state.selectedRunId = selected;
+	renderRunSelector();
+	try {
+		const response = await fetch(selected === "all" ? "/state?view=all" : `/state?runId=${encodeURIComponent(selected)}`);
+		if (!response.ok) return;
+		loadSnapshot(await response.json());
+	} catch {
+		// The shared owner may be between run-store writes; the next refresh retries.
+	}
+}
+
+async function refreshRuns() {
+	try {
+		const response = await fetch("/runs?limit=50", { cache: "no-store" });
+		if (!response.ok) return;
+		const result = await response.json();
+		state.runs = Array.isArray(result.runs) ? result.runs : [];
+		if (state.scope !== "all" && !state.selectedRunId && state.liveRunId) state.selectedRunId = state.liveRunId;
+		renderRunSelector();
+	} catch {
+		// Older/shared servers without replay support leave the live view usable.
+	}
+}
+
+/**
+ * Live events carry their run id; a single-run view takes only its own run's events, so a run
+ * still being written by another ICE process keeps streaming without refetching its snapshot.
+ */
+function acceptsLiveEvent(runId) {
+	if (state.scope === "all") return true;
+	return !runId || runId === (state.selectedRunId || state.liveRunId);
+}
+
+/** Overview metrics describe one run: the live run in the combined view, else the selected run. */
+function acceptsHeader(header) {
+	const target = state.scope === "all" ? state.liveRunId : state.selectedRunId;
+	return !target || !header.runId || header.runId === target;
+}
+
+function loadSnapshot(snapshot) {
+	const pulseSelectionWasActive = state.pulseSelectionActive;
+	const combined = snapshot.view === "all";
+	if (snapshot.liveRunId) state.liveRunId = snapshot.liveRunId;
+	else if (!state.liveRunId && snapshot.runId) state.liveRunId = snapshot.runId;
+	state.scope = combined ? "all" : "run";
+	state.selectedRunId = combined ? "all" : snapshot.runId || state.selectedRunId || state.liveRunId;
+	if (Array.isArray(snapshot.runs)) state.runs = snapshot.runs;
+	state.header = snapshot;
+	state.order = [];
+	state.items.clear();
+	state.selectedBinKeys.clear();
+	state.pulseSelectionActive = pulseSelectionWasActive;
+	for (const item of snapshot.items || []) {
+		const key = eventKey(item);
+		state.items.set(key, item);
+		state.order.push(key);
+	}
+	state.lanes = snapshot.lanes || [];
+	state.threads = new Map();
+	for (const thread of snapshot.threads || []) {
+		const key = `${thread.runId || snapshot.runId}:${thread.threadKey}`;
+		state.threads.set(key, thread);
+		if (!state.threads.has(thread.threadKey)) state.threads.set(thread.threadKey, thread);
+	}
+	renderRunSelector();
+	renderHeader(snapshot);
+	renderLanes(state.lanes);
+	renderFilterTabs();
+	renderStream();
+	renderOverview();
+	renderPulse();
+	if (state.selectedId === null || !state.items.has(state.selectedId)) {
+		state.selectedId = state.order.length ? state.order[state.order.length - 1] : null;
+		state.pulseSelectionActive = false;
+	}
+	if (state.selectedId !== null && state.items.has(state.selectedId)) renderInspector(state.items.get(state.selectedId), { openDrawer: false });
+	else renderEmptyInspector();
+	if (!state.paused) eventScroll.scrollTop = eventScroll.scrollHeight;
+}
+
+function connect() {
+	const source = new EventSource("/events");
+	source.addEventListener("snapshot", (event) => {
+		const snapshot = JSON.parse(event.data);
+		// The server sends the combined snapshot on connect and when a new run appears; a reader
+		// inspecting one run stays on it and only refreshes the run list.
+		if (state.scope === "all" || snapshot.view !== "all") loadSnapshot(snapshot);
+		else if (Array.isArray(snapshot.runs)) {
+			state.runs = snapshot.runs;
+			if (snapshot.liveRunId) state.liveRunId = snapshot.liveRunId;
+			renderRunSelector();
+		}
+	});
+	source.addEventListener("runs", (event) => { state.runs = JSON.parse(event.data); renderRunSelector(); });
+	source.addEventListener("activity", (event) => { const item = JSON.parse(event.data); if (acceptsLiveEvent(item.runId)) appendItem(item); });
+	source.addEventListener("activity_update", (event) => { const item = JSON.parse(event.data); if (acceptsLiveEvent(item.runId)) patchItem(item); });
+	source.addEventListener("lane", (event) => {
+		const lane = JSON.parse(event.data);
+		if (!acceptsLiveEvent(lane.runId)) return;
+		const laneKey = `${lane.runId || "current"}:${lane.streamKey}`;
+		const index = state.lanes.findIndex((item) => `${item.runId || "current"}:${item.streamKey}` === laneKey);
+		if (index < 0) state.lanes.push(lane);
+		else state.lanes[index] = lane;
+		renderLanes(state.lanes);
+		renderOverview();
+	});
+	source.addEventListener("thread", (event) => {
+		const thread = JSON.parse(event.data);
+		if (!acceptsLiveEvent(thread.runId)) return;
+		state.threads.set(`${thread.runId || thread.mainThreadId}:${thread.threadKey}`, thread);
+		if (state.lanes.length) renderLanes(state.lanes);
+	});
+	source.addEventListener("header", (event) => { const header = JSON.parse(event.data); if (acceptsHeader(header)) renderHeader(header); });
+}
+
+$("follow-button-mobile").addEventListener("click", togglePaused);
+runSelect.addEventListener("change", () => { void loadSelectedRun(runSelect.value); });
+for (const button of document.querySelectorAll(".range-tab")) button.addEventListener("click", () => setTimeRange(button.dataset.range));
+$("inspector-close").addEventListener("click", closeInspector);
+$("drawer-backdrop").addEventListener("click", closeInspector);
+restoreInspectorWidth();
+window.addEventListener("resize", () => {
+	if (wideInspectorLayout()) setInspectorWidth(inspector.getBoundingClientRect().width, false);
+});
+$("search").addEventListener("input", (event) => setQuery(event.target.value));
+$("search-clear").addEventListener("click", () => { $("search").value = ""; setQuery(""); $("search").focus(); });
+eventScroll.addEventListener("scroll", () => {
+	const atBottom = eventScroll.scrollHeight - eventScroll.scrollTop - eventScroll.clientHeight < 36;
+	if (!atBottom && !state.paused) setPaused(true);
+});
+document.addEventListener("keydown", (event) => {
+	const target = event.target;
+	const typing = target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+	if (!typing && event.key >= "0" && event.key <= "7") setFilter(FILTERS[Number(event.key)].key);
+	else if (!typing && event.key === " ") { event.preventDefault(); togglePaused(); }
+	else if (event.key === "Escape") closeInspector();
+	else if (!typing && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+		event.preventDefault();
+		const ids = visibleOrder();
+		if (!ids.length) return;
+		const index = ids.indexOf(state.selectedId);
+		const next = event.key === "ArrowDown" ? ids[Math.min(ids.length - 1, index + 1)] : ids[Math.max(0, index <= 0 ? 0 : index - 1)];
+		selectRow(next);
+	}
+});
+
+renderFilterTabs();
+renderEmptyInspector();
+renderPulse();
+void refreshRuns();
+setInterval(() => { void refreshRuns(); }, 1500);
+setInterval(() => {
+	const historicalRun = state.scope !== "all" && state.selectedRunId !== null && state.selectedRunId !== state.liveRunId;
+	// Rebuilding the bars would drop keyboard focus from a pulse bar every second.
+	const pulseFocused = $("pulse").contains(document.activeElement);
+	if (!historicalRun && !pulseFocused && state.order.length > 0) renderPulse();
+}, 1000);
+connect();
+</script>
+</body>
+</html>

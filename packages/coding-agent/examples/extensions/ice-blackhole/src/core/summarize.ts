@@ -159,7 +159,7 @@ const mergePrevious = (prev: string, fresh: string): string => {
 
 export const compile = (input: CompileInput): string => {
 	const blocks = filterNoise(normalize(input.messages));
-	const data = buildSections({ blocks });
+	const data = buildSections({ blocks, fileOps: input.fileOps });
 	const fresh = formatSummary(data);
 
 	// Strip OM content first (## Reflections / ## Observations + preamble),

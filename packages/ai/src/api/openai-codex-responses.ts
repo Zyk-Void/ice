@@ -46,6 +46,7 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import { getRetryDelayMs } from "../utils/retry.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
@@ -188,11 +189,15 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 			reject(new Error("Request was aborted"));
 			return;
 		}
-		const timeout = setTimeout(resolve, ms);
-		signal?.addEventListener("abort", () => {
+		const onAbort = () => {
 			clearTimeout(timeout);
 			reject(new Error("Request was aborted"));
-		});
+		};
+		const timeout = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		signal?.addEventListener("abort", onAbort, { once: true });
 	});
 }
 
@@ -442,7 +447,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						const retryAfterDelayMs = getRetryAfterDelayMs(response.headers);
 						const delayMs =
 							retryAfterDelayMs === undefined
-								? BASE_DELAY_MS * 2 ** attempt
+								? getRetryDelayMs(BASE_DELAY_MS, attempt + 1)
 								: validateRetryDelayMs(retryAfterDelayMs, options);
 
 						await sleep(delayMs, options?.signal);
@@ -469,7 +474,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						!(lastError instanceof RetryDelayExceededError) &&
 						!lastError.message.includes("usage limit")
 					) {
-						const delayMs = BASE_DELAY_MS * 2 ** attempt;
+						const delayMs = getRetryDelayMs(BASE_DELAY_MS, attempt + 1);
 						await sleep(delayMs, options?.signal);
 						continue;
 					}
@@ -802,13 +807,12 @@ async function* parseSSE(response: Response, signal?: AbortSignal): AsyncGenerat
 			if (signal?.aborted) {
 				throw new Error("Request was aborted");
 			}
-			if (done) break;
-			buffer += decoder.decode(value, { stream: true });
+			buffer += done ? `${decoder.decode()}\n\n` : decoder.decode(value, { stream: true });
 
-			let idx = buffer.indexOf("\n\n");
-			while (idx !== -1) {
-				const chunk = buffer.slice(0, idx);
-				buffer = buffer.slice(idx + 2);
+			let boundary = /\r?\n\r?\n/.exec(buffer);
+			while (boundary) {
+				const chunk = buffer.slice(0, boundary.index);
+				buffer = buffer.slice(boundary.index + boundary[0].length);
 
 				const dataLines = chunk
 					.split("\n")
@@ -827,8 +831,9 @@ async function* parseSSE(response: Response, signal?: AbortSignal): AsyncGenerat
 						}
 					}
 				}
-				idx = buffer.indexOf("\n\n");
+				boundary = /\r?\n\r?\n/.exec(buffer);
 			}
+			if (done) break;
 		}
 	} finally {
 		signal?.removeEventListener("abort", onAbort);

@@ -1,5 +1,7 @@
 # ICE Subagent Audit Report
 
+> **Historical V1 audit (2026-08-10).** This report inspects the legacy `ice-subagents.ts` implementation, which was later replaced by Subagents V2. Its findings are not verified against the current V2 source and should not be treated as either confirmed or fixed in V2. Re-audit the current implementation before relying on the findings. See the [current V2 guide](../packages/coding-agent/docs/subagents-v2.md) and [architecture](../packages/coding-agent/docs/subagents-v2-architecture.md).
+
 Date: 2026-08-10
 Scope: current workspace, with emphasis on delegated child sessions, unsafe host execution, scoped tools, durable jobs, and related tests.
 

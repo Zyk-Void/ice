@@ -5,6 +5,7 @@ import { configureHttpDispatcher } from "./core/http-dispatcher.ts";
 import { formatAgentPackImportResult, importRufloAgentPack } from "./ice-agent-packs.ts";
 import { IceAgentViewBridge } from "./ice-agent-view-bridge.ts";
 import iceCogneeExtension from "./ice-cognee.ts";
+import { createPiMcpSubagentAdapter } from "./ice-mcp-bridge.ts";
 import { refreshLocalModelsForStartup } from "./ice-provider.ts";
 import iceProviderSettings from "./ice-provider-settings.ts";
 import {
@@ -13,13 +14,19 @@ import {
 	type IceMode,
 	validateIceStartupArgs,
 } from "./ice-safe-verify.ts";
-import { getIceSubagentHookHandlers } from "./ice-subagent-settings.ts";
-import iceSubagents, { getSubagentGlobalAgentsDir, normalizeUnsafeSubagentStartupArgs } from "./ice-subagents.ts";
 import { main } from "./main.ts";
+import { getSubagentGlobalAgentsDir } from "./subagents/definitions/paths.ts";
+import { getIceSubagentHookHandlers } from "./subagents/settings.ts";
+import { normalizeUnsafeSubagentStartupArgs, registerIceSubagentMcpAdapter } from "./subagents/types.ts";
+import { runAgentsCli } from "./subagents/v2/cli.ts";
+import iceSubagentsV2 from "./subagents/v2/extension.ts";
 
 process.title = "ice";
 process.env.ICE_CODING_AGENT = "true";
 process.env.AI_AGENT = "ice";
+// pi packages (pi-mcp-adapter, ...) resolve their config via PI_CODING_AGENT_DIR and otherwise fall back to
+// ~/.pi/agent, silently ignoring ICE's own mcp.json and sharing approval/cache state with stock pi.
+process.env.PI_CODING_AGENT_DIR ??= getAgentDir();
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 configureHttpDispatcher();
 
@@ -48,6 +55,11 @@ if (importPackArgs.length === 1) {
 		console.error(error instanceof Error ? error.message : String(error));
 		process.exit(1);
 	}
+}
+if (rawArgs[0] === "agents") {
+	const result = runAgentsCli(rawArgs.slice(1), { cwd: process.cwd(), agentDir: getAgentDir() });
+	process.stdout.write(result.stdout);
+	process.exit(result.exitCode);
 }
 let args: string[];
 try {
@@ -93,13 +105,24 @@ await main(args, {
 		{ name: "ice-cognee", factory: iceCogneeExtension, hidden: true, priority: "before-user" },
 		{
 			name: "ice-subagents",
-			factory: (ice) =>
-				iceSubagents(ice, {
+			factory: (ice) => {
+				// Give subagents the parent's pi-mcp-adapter servers through the public adapter seam.
+				const unregisterMcp = registerIceSubagentMcpAdapter(
+					ice.events,
+					createPiMcpSubagentAdapter({
+						agentDir: getAgentDir(),
+						getParentSession: () => agentViewBridge.getParentSession(),
+					}),
+				);
+				ice.on("session_shutdown", () => unregisterMcp());
+				const subagentOptions = {
 					hookHandlers: getIceSubagentHookHandlers(ice.events),
 					agentViewBridge,
 					getIceMode: () => currentIceMode,
 					getIceCapabilityState: () => currentIceCapabilityState,
-				}),
+				};
+				return iceSubagentsV2(ice, subagentOptions);
+			},
 			hidden: true,
 			priority: "before-user",
 		},

@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ICE — File and Self Delegation</title>
+<title>Historical ICE V1 Subagent Guide (Superseded)</title>
 <style>
 :root{color-scheme:dark;font-family:system-ui,sans-serif;background:#101114;color:#e8e9ed}body{max-width:1000px;margin:auto;padding:3rem 1.4rem;line-height:1.65}h1{font-size:2.5rem;line-height:1.16;letter-spacing:-.04em}h2{margin-top:2.4rem;font-size:1.4rem}p{max-width:85ch;color:#c4c7ce}code,pre{font-family:ui-monospace,monospace}code{color:#a8d6cb}pre{background:#1b1d23;border:1px solid #30343d;border-radius:10px;padding:1rem;overflow:auto}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:1rem}.card{background:#17191e;padding:1.2rem;border:1px solid #30343d;border-radius:10px}.card h2{margin:0 0 .6rem}table{width:100%;border-collapse:collapse}th,td{text-align:left;vertical-align:top;padding:.7rem;border-bottom:1px solid #30343d}.note{border-left:3px solid #a8d6cb;padding-left:1rem}footer{margin-top:3rem;color:#969ba7;font-size:.9rem}a{color:#a8d6cb}
 </style>
 </head>
 <body>
+<aside class="note"><strong>Historical V1 operator guide.</strong> This page describes the retired file/self-delegation API and is not current V2 documentation. Use the <a href="../packages/coding-agent/docs/subagents-v2.md">Subagents V2 guide</a> and its linked reference pages. The historical examples below have not been migrated to the V2 tool schema.</aside>
 <header><p>ICE VOID / OPERATOR GUIDE / 10 SEPTEMBER 2026</p><h1>One Ice loop.<br>Bounded delegated work.</h1><p>Choose a parent-derived child or a Markdown specialist. Both use Ice's model runtime and the same scope, budget, policy-hook, cancellation, and evidence boundaries.</p></header>
 <section class="grid">
 <article class="card"><h2>Self</h2><p><code>role: "self"</code> snapshots the current parent instructions. Optional child guidance is additive. Fresh history is the default; privileged management tools are never inherited.</p></article>
@@ -42,5 +43,5 @@
 </tbody></table>
 <h2>Observe and stop</h2><p><code>/agents</code> and <code>/subagents</code> expose existing child views. <code>list_subagent_profiles</code> reports sources, effective tools, models, and skip reasons. Inspect and extend an existing <code>needs_time</code> child rather than launching a duplicate. Set <code>ice.subagents.enabled: false</code> to block new work while preserving owned job inspection and cancellation.</p>
 <h2>Migration and boundaries</h2><p>Legacy <code>~/.ice/agent/agents</code> files are reported in a collision-aware manifest; nothing is moved or deleted. An explicit custom agent directory retains <code>&lt;agentDir&gt;/agents</code>. Settings and credentials remain in their existing locations.</p><p>Host Bash, command hooks, and external MCP services are not a sandbox. An adapter must use existing authorized connections and enforce its own external-resource policy. Provider-free tests do not certify every real model provider or independently installed MCP extension.</p>
-<footer>Detailed examples and troubleshooting: <a href="../packages/coding-agent/docs/subagent-user-guide.md">subagent user guide</a>. Implementation evidence: <code>.artifacts/ice-self-user-ready-20260910/</code>.</footer>
+<footer>Historical implementation evidence: <code>.artifacts/ice-self-user-ready-20260910/</code>. Current usage documentation: <a href="../packages/coding-agent/docs/subagents-v2.md">Subagents V2</a>.</footer>
 </body></html>

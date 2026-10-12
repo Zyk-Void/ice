@@ -34,6 +34,8 @@ Ice does not include a built-in sandbox. Built-in tools can read files, write fi
 
 This is intentional. Ice is designed to operate on local source trees, invoke project toolchains, and integrate with the user's existing development environment. A partial in-process sandbox would be easy to misunderstand as a security boundary while still depending on the host shell, filesystem, package managers, credentials, and extension code. Real isolation needs to come from the operating system or a virtualization/container boundary.
 
+ICE's Subagents V2 adds deny-first, parent-capped tool permissions and optional Git worktree isolation. These reduce accidental authority and make changes reviewable; they do not sandbox a child process. Child Bash, MCP adapters, and other approved effects still run through the host process and must be treated as host-authorized operations. See [Subagents V2](subagents-v2.md) for the exact rules and limitations.
+
 Project trust is only an input-loading guard. It prevents a repository from silently changing ice's settings or extensions before you approve it. It does not make untrusted code, untrusted prompts, or untrusted model output safe. Prompt injection from repository files, comments, documentation, context files, or build output is expected local-agent risk and cannot be reliably prevented by ice.
 
 ## Running Untrusted or Unmonitored Work

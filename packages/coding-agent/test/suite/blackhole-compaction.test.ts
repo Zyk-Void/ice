@@ -231,27 +231,23 @@ describe("optional Blackhole compaction extension", () => {
 		});
 	});
 
-	it("lists running background subagent jobs and recent actions in the summary", async () => {
+	it("lists running subagents and recent actions in the summary", async () => {
 		configureBlackhole();
 		const harness = await createHarness({ extensionFactories: [iceBlackholeExtension] });
 		harnesses.push(harness);
 		const branchEntries = [
 			{
 				type: "custom",
-				id: "job-1",
+				id: "child-1",
 				parentId: null,
 				timestamp: new Date().toISOString(),
-				customType: "ice-subagent-job-v1",
-				data: {
-					schemaVersion: 1,
-					sequence: 1,
-					job: { jobId: "job-1", role: "explore", status: "running", createdAt: new Date().toISOString() },
-				},
+				customType: "ice-subagent-v2-child",
+				data: { id: "ag_1", name: "scout", agent: "explore", state: "running", description: "map the parser" },
 			},
 			{
 				type: "message",
 				id: "keep-entry",
-				parentId: "job-1",
+				parentId: "child-1",
 				timestamp: new Date().toISOString(),
 				message: { role: "user", content: "recent user turn", timestamp: Date.now() } as AgentMessage,
 			},
@@ -287,11 +283,12 @@ describe("optional Blackhole compaction extension", () => {
 		} as SessionBeforeCompactEvent);
 		expect(result).toMatchObject({
 			compaction: {
-				details: { engine: "blackhole", runningAgents: 1 },
+				details: { engine: "blackhole", subagents: 1 },
 			},
 		});
-		expect(result?.compaction?.summary).toContain("[Running Agents]");
-		expect(result?.compaction?.summary).toContain("explore (running) job job-1: re-check via inspect_subagent_job");
+		expect(result?.compaction?.summary).toContain("[Subagents]");
+		expect(result?.compaction?.summary).toContain("scout (ag_1) · explore · running · map the parser");
+		expect(result?.compaction?.summary).toContain("running; check agent_control action=status id=ag_1");
 		expect(result?.compaction?.summary).toContain("[Last Actions]");
 		expect(result?.compaction?.summary).toContain('Read "/tmp/a.ts"');
 	});

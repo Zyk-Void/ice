@@ -1,5 +1,7 @@
 # ICE Subagent Progress
 
+> Historical (V1 subagent era, last updated before 2026-09-11). Subagents V2 replaced this plan; see `packages/coding-agent/docs/subagents-v2.md`, `Plan/subagent-rewrite.md`, and the Near-Term Roadmap in `idea.md`.
+
 _Last updated: 2026-08-13_
 
 ## 2026-08-13 Cognee + Blackhole contract repair

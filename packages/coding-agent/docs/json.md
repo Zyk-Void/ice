@@ -23,7 +23,7 @@ type JsonAgentSessionEvent =
     };
 ```
 
-`queue_update` emits the full pending steering and follow-up queues whenever they change. `compaction_start` and `compaction_end` cover both manual and automatic compaction.
+`queue_update` emits the full pending steering and follow-up queues whenever they change. The legacy `steering` and `followUp` text arrays remain, and `steeringEntries` / `followUpEntries` provide each item's stable queue ID and message. RPC clients can pass an entry ID to `remove_queued_message` to cancel that specific pending item. `compaction_start` and `compaction_end` cover both manual and automatic compaction.
 
 Other base events come from
 [`AgentEvent`](https://github.com/Zykairotis/ice/blob/void/packages/agent/src/types.ts):

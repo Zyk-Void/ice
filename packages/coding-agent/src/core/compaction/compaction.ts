@@ -602,17 +602,32 @@ export async function completeSummarization(
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 ): Promise<AssistantMessage> {
-	// Summaries are standalone requests, so isolate routing and avoid cache writes that cannot be reused.
+	// Summaries are text-only standalone requests, even when called with a tool-bearing SDK context.
+	const summarizationContext: Context = { ...context, tools: undefined };
 	const requestOptions: SimpleStreamOptions = {
 		...options,
+		toolChoice: undefined,
 		cacheRetention: "none",
 		sessionId: uuidv7(),
 	};
 	const produce = async (): Promise<AssistantMessage> =>
 		streamFn
-			? (await streamFn(model, context, requestOptions)).result()
-			: completeSimple(model, context, requestOptions);
-	return retryAssistantCall(produce, retry, requestOptions.signal, callbacks);
+			? (await streamFn(model, summarizationContext, requestOptions)).result()
+			: completeSimple(model, summarizationContext, requestOptions);
+	const response = await retryAssistantCall(produce, retry, requestOptions.signal, callbacks);
+	if (requestOptions.signal?.aborted || response.stopReason === "aborted") {
+		return { ...response, stopReason: "aborted", errorMessage: "Summarization aborted" };
+	}
+	if (response.stopReason === "error") return response;
+	let error: string | undefined;
+	if (response.stopReason !== "stop") {
+		error = `Incomplete summarization (stop reason: ${response.stopReason})`;
+	} else if (response.content.some((block) => block.type === "toolCall")) {
+		error = "Summarization returned tool calls";
+	} else if (!contentText(response.content).trim()) {
+		error = "Summarization returned no text";
+	}
+	return error ? { ...response, stopReason: "error", errorMessage: error } : response;
 }
 
 /**
@@ -711,6 +726,9 @@ export async function generateSummaryWithUsage(
 		callbacks,
 	);
 
+	if (response.stopReason === "aborted") {
+		throw new DOMException("Summarization aborted", "AbortError");
+	}
 	if (response.stopReason === "error") {
 		throw new Error(`Summarization failed: ${response.errorMessage || "Unknown error"}`);
 	}
@@ -993,6 +1011,9 @@ async function generateTurnPrefixSummary(
 		callbacks,
 	);
 
+	if (response.stopReason === "aborted") {
+		throw new DOMException("Turn prefix summarization aborted", "AbortError");
+	}
 	if (response.stopReason === "error") {
 		throw new Error(`Turn prefix summarization failed: ${response.errorMessage || "Unknown error"}`);
 	}

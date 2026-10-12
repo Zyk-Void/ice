@@ -346,6 +346,13 @@ async function streamAssistantResponse(
 			case "done":
 			case "error": {
 				const finalMessage = await response.result();
+				// A provider can report an abort as an error when its signal checks race
+				// the abort. Once the run signal is aborted, an error stop reason is an
+				// abort artifact, not a provider failure - reclassify so cancellation is
+				// not surfaced, retried, or compacted as an error.
+				if (finalMessage.stopReason === "error" && signal?.aborted) {
+					finalMessage.stopReason = "aborted";
+				}
 				if (addedPartial) {
 					context.messages[context.messages.length - 1] = finalMessage;
 				} else {
@@ -494,8 +501,10 @@ async function executeToolCallsParallel(
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallBatch> {
-	const finalizedCalls: FinalizedToolCallEntry[] = [];
+	const finalizedCalls: Promise<FinalizedToolCallOutcome>[] = [];
 
+	// Preparation (validation and beforeToolCall, which may ask for approval) stays sequential and
+	// in call order; each prepared call starts executing at once instead of waiting for later preparations.
 	for (const toolCall of toolCalls) {
 		await emit({
 			type: "tool_execution_start",
@@ -512,14 +521,14 @@ async function executeToolCallsParallel(
 				isError: preparation.isError,
 			} satisfies FinalizedToolCallOutcome;
 			await emitToolExecutionEnd(finalized, emit);
-			finalizedCalls.push(finalized);
+			finalizedCalls.push(Promise.resolve(finalized));
 			if (signal?.aborted) {
 				break;
 			}
 			continue;
 		}
 
-		finalizedCalls.push(async () => {
+		const running = (async () => {
 			const executed = await executePreparedToolCall(preparation, signal, emit);
 			const finalized = await finalizeExecutedToolCall(
 				currentContext,
@@ -531,15 +540,17 @@ async function executeToolCallsParallel(
 			);
 			await emitToolExecutionEnd(finalized, emit);
 			return finalized;
-		});
+		})();
+		// Promise.all below observes a failure; this only keeps it from being reported as
+		// unhandled while later calls are still being prepared.
+		running.catch(() => {});
+		finalizedCalls.push(running);
 		if (signal?.aborted) {
 			break;
 		}
 	}
 
-	const orderedFinalizedCalls = await Promise.all(
-		finalizedCalls.map((entry) => (typeof entry === "function" ? entry() : Promise.resolve(entry))),
-	);
+	const orderedFinalizedCalls = await Promise.all(finalizedCalls);
 	const messages: ToolResultMessage[] = [];
 	for (const finalized of orderedFinalizedCalls) {
 		const toolResultMessage = createToolResultMessage(finalized);
@@ -576,8 +587,6 @@ type FinalizedToolCallOutcome = {
 	result: AgentToolResult<any>;
 	isError: boolean;
 };
-
-type FinalizedToolCallEntry = FinalizedToolCallOutcome | (() => Promise<FinalizedToolCallOutcome>);
 
 function shouldTerminateToolBatch(finalizedCalls: FinalizedToolCallOutcome[]): boolean {
 	return finalizedCalls.length > 0 && finalizedCalls.every((finalized) => finalized.result.terminate === true);
@@ -668,6 +677,10 @@ async function executePreparedToolCall(
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 ): Promise<ExecutedToolCallOutcome> {
+	// Preparation yields to the event loop; cancellation may arrive after its last check.
+	if (signal?.aborted) {
+		return { result: createErrorToolResult("Operation aborted"), isError: true };
+	}
 	const updateEvents: Promise<void>[] = [];
 	let acceptingUpdates = true;
 

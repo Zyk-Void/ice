@@ -4198,3 +4198,27 @@ describe("Editor render decorations", () => {
 		assert.match(content, /\x1b\[7m\x1b\[1mD\x1b\[22m\x1b\[0m/);
 	});
 });
+
+describe("Editor prompt gutter", () => {
+	it("draws the prompt before the first line and indents wrapped and later lines", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme, { prompt: "❯ " });
+		editor.setText("abcdefghij klmnopqrst\nsecond");
+		const lines = editor.render(16).map((line) => stripVTControlCharacters(line));
+		const body = lines.slice(1, -1);
+		assert.ok(body[0]!.startsWith("❯ abcdefghij"));
+		for (const line of body.slice(1)) assert.ok(line.startsWith("  "), line);
+		assert.ok(body.some((line) => line.startsWith("  klmnopqrst")));
+		assert.ok(body.some((line) => line.startsWith("  second")));
+		for (const line of lines) assert.ok(visibleWidth(line) <= 16, line);
+	});
+
+	it("updates the prompt and drops it when the editor is too narrow", () => {
+		const editor = new Editor(createTestTUI(), defaultEditorTheme);
+		editor.setText("hi");
+		assert.ok(stripVTControlCharacters(editor.render(20)[1]!).startsWith("hi"));
+		editor.setPrompt("> ");
+		assert.strictEqual(editor.getPrompt(), "> ");
+		assert.ok(stripVTControlCharacters(editor.render(20)[1]!).startsWith("> hi"));
+		assert.ok(stripVTControlCharacters(editor.render(3)[1]!).startsWith("h"));
+	});
+});

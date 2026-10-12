@@ -1028,6 +1028,130 @@ describe("agentLoop with AgentMessage", () => {
 		expect(parallelObserved).toBe(true);
 	});
 
+	it("starts a prepared parallel tool while a later call still awaits beforeToolCall", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		const order: string[] = [];
+		let releaseApproval: (() => void) | undefined;
+		const approval = new Promise<void>((resolve) => {
+			releaseApproval = resolve;
+		});
+
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				order.push(`execute:${params.value}`);
+				if (params.value === "first") releaseApproval?.();
+				return { content: [{ type: "text", text: params.value }], details: { value: params.value } };
+			},
+		};
+
+		const context: AgentContext = { systemPrompt: "", messages: [], tools: [tool] };
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			toolExecution: "parallel",
+			beforeToolCall: async ({ toolCall }) => {
+				order.push(`before:${toolCall.id}`);
+				// The second call's approval resolves only after the first call has started executing.
+				if (toolCall.id === "tool-2") await approval;
+				return undefined;
+			},
+		};
+
+		let callIndex = 0;
+		const stream = agentLoop([createUserMessage("echo both")], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const message =
+					callIndex === 0
+						? createAssistantMessage(
+								[
+									{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "first" } },
+									{ type: "toolCall", id: "tool-2", name: "echo", arguments: { value: "second" } },
+								],
+								"toolUse",
+							)
+						: createAssistantMessage([{ type: "text", text: "done" }]);
+				mockStream.push({ type: "done", reason: callIndex === 0 ? "toolUse" : "stop", message });
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		const toolResultIds: string[] = [];
+		for await (const event of stream) {
+			if (event.type === "message_end" && event.message.role === "toolResult") {
+				toolResultIds.push(event.message.toolCallId);
+			}
+		}
+
+		expect(order).toEqual(["before:tool-1", "execute:first", "before:tool-2", "execute:second"]);
+		expect(toolResultIds).toEqual(["tool-1", "tool-2"]);
+	});
+
+	it.each(["parallel", "sequential"] as const)(
+		"does not dispatch a %s tool aborted after preparation resolves",
+		async (toolExecution) => {
+			const controller = new AbortController();
+			const toolSchema = Type.Object({ value: Type.String() });
+			const executed: string[] = [];
+			const tool: AgentTool<typeof toolSchema, { value: string }> = {
+				name: "echo",
+				label: "Echo",
+				description: "Echo tool",
+				parameters: toolSchema,
+				async execute(_id, params) {
+					executed.push(params.value);
+					return { content: [{ type: "text", text: params.value }], details: params };
+				},
+			};
+			const config: AgentLoopConfig = {
+				model: createModel(),
+				convertToLlm: identityConverter,
+				toolExecution,
+				beforeToolCall: async () => {
+					// The first microtask runs before preparation resumes; the second runs
+					// after its signal check but before the caller dispatches the tool.
+					queueMicrotask(() => queueMicrotask(() => controller.abort()));
+					return undefined;
+				},
+				shouldStopAfterTurn: () => true,
+			};
+			const stream = agentLoop(
+				[createUserMessage("echo")],
+				{ systemPrompt: "", messages: [], tools: [tool] },
+				config,
+				controller.signal,
+				() => {
+					const response = new MockAssistantStream();
+					queueMicrotask(() => {
+						response.push({
+							type: "done",
+							reason: "toolUse",
+							message: createAssistantMessage(
+								[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+								"toolUse",
+							),
+						});
+					});
+					return response;
+				},
+			);
+			const events: AgentEvent[] = [];
+			for await (const event of stream) events.push(event);
+			const messages = await stream.result();
+			const results = messages.filter((message) => message.role === "toolResult");
+			expect(executed).toEqual([]);
+			expect(results).toHaveLength(1);
+			expect(results[0].isError).toBe(true);
+			expect(results[0].content).toEqual([{ type: "text", text: "Operation aborted" }]);
+			expect(events.filter((event) => event.type === "tool_execution_end")).toHaveLength(1);
+		},
+	);
+
 	it("should use prepareNextTurn snapshot before continuing", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const tool: AgentTool<typeof toolSchema, { value: string }> = {
@@ -1485,5 +1609,51 @@ describe("agentLoopContinue with AgentMessage", () => {
 		const messages = await stream.result();
 		expect(messages.length).toBe(1);
 		expect(messages[0].role).toBe("assistant");
+	});
+});
+
+describe("abort classification", () => {
+	it("reclassifies an error response as aborted when the run signal is already aborted", async () => {
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [],
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		const controller = new AbortController();
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			// Emulate a provider that raced the abort: the request settles with an
+			// error stop reason even though the run signal is already aborted.
+			controller.abort();
+			queueMicrotask(() => {
+				const message = createAssistantMessage([]);
+				message.stopReason = "error";
+				message.errorMessage = "This operation was aborted";
+				stream.push({ type: "error", reason: "error", error: message });
+			});
+			return stream;
+		};
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([createUserMessage("Hello")], context, config, controller.signal, streamFn);
+
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		const messages = await stream.result();
+		const assistant = messages.find((message) => message.role === "assistant") as AssistantMessage;
+		expect(assistant.stopReason).toBe("aborted");
+
+		const messageEndEvents = events.filter((event) => event.type === "message_end");
+		const assistantEnd = messageEndEvents
+			.map((event) => (event as { message: AssistantMessage }).message)
+			.find((message) => message.role === "assistant");
+		expect(assistantEnd?.stopReason).toBe("aborted");
 	});
 });

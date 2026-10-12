@@ -171,7 +171,7 @@ export function isCxModel(id: string): boolean {
 }
 
 function isLocalCodexResponsesModel(id: string): boolean {
-	return /^cx\/gpt-5\.6(?:-|$)/i.test(id);
+	return /^cx\/(?:gpt-5\.6(?:-|$)|gpt-6-(?:luna|sol)(?:-|$))/i.test(id);
 }
 
 function mapOneEndpointModel(entry: EndpointModel, ids: Set<string>) {

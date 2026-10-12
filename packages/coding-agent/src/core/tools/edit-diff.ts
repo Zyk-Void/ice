@@ -31,13 +31,20 @@ export function restoreLineEndings(text: string, ending: "\r\n" | "\n"): string 
  * - Normalize special Unicode spaces to regular space
  */
 export function normalizeForFuzzyMatch(text: string): string {
-	return (
+	return normalizeFuzzyCharacters(
 		text
 			.normalize("NFKC")
 			// Strip trailing whitespace per line
 			.split("\n")
 			.map((line) => line.trimEnd())
-			.join("\n")
+			.join("\n"),
+	);
+}
+
+/** The character-level part of fuzzy normalization; it never adds or removes line breaks. */
+function normalizeFuzzyCharacters(text: string): string {
+	return (
+		text
 			// Smart single quotes → '
 			.replace(/[\u2018\u2019\u201A\u201B]/g, "'")
 			// Smart double quotes → "
@@ -248,10 +255,23 @@ export function stripBom(content: string): { bom: string; text: string } {
 	return content.startsWith("\uFEFF") ? { bom: "\uFEFF", text: content.slice(1) } : { bom: "", text: content };
 }
 
-function countOccurrences(content: string, oldText: string): number {
-	const fuzzyContent = normalizeForFuzzyMatch(content);
-	const fuzzyOldText = normalizeForFuzzyMatch(oldText);
-	return fuzzyContent.split(fuzzyOldText).length - 1;
+function countOccurrences(content: string, text: string): number {
+	return content.split(text).length - 1;
+}
+
+/**
+ * Map an offset in LF-normalized content to the same position in its fuzzy-normalized form.
+ * Fuzzy normalization keeps every line break, so the line is found by count and only the
+ * prefix within that line is normalized.
+ */
+function mapToFuzzyIndex(content: string, fuzzyContent: string, index: number): number {
+	const lineStart = content.lastIndexOf("\n", index - 1) + 1;
+	const lineNumber = countOccurrences(content.slice(0, lineStart), "\n");
+	let fuzzyLineStart = 0;
+	for (let line = 0; line < lineNumber; line++) {
+		fuzzyLineStart = fuzzyContent.indexOf("\n", fuzzyLineStart) + 1;
+	}
+	return fuzzyLineStart + normalizeFuzzyCharacters(content.slice(lineStart, index).normalize("NFKC")).length;
 }
 
 function getNotFoundError(path: string, editIndex: number, totalEdits: number): Error {
@@ -317,29 +337,43 @@ export function applyEditsToNormalizedContent(
 		}
 	}
 
-	const initialMatches = normalizedEdits.map((edit) => fuzzyFindText(normalizedContent, edit.oldText));
-	const usedFuzzyMatch = initialMatches.some((match) => match.usedFuzzyMatch);
-	const replacementBaseContent = usedFuzzyMatch ? normalizeForFuzzyMatch(normalizedContent) : normalizedContent;
+	// Uniqueness is judged in the mode that found the edit: a unique exact match wins even when
+	// fuzzy-equivalent text exists elsewhere. Fuzzy matching is only a fallback.
+	const fuzzyContent = normalizeForFuzzyMatch(normalizedContent);
+	const resolved = normalizedEdits.map((edit, i) => {
+		const exactCount = countOccurrences(normalizedContent, edit.oldText);
+		if (exactCount > 1) throw getDuplicateError(path, i, normalizedEdits.length, exactCount);
+		if (exactCount === 1) return { exact: true, index: normalizedContent.indexOf(edit.oldText) };
+		const fuzzyOldText = normalizeForFuzzyMatch(edit.oldText);
+		const fuzzyCount = countOccurrences(fuzzyContent, fuzzyOldText);
+		if (fuzzyCount === 0) throw getNotFoundError(path, i, normalizedEdits.length);
+		if (fuzzyCount > 1) throw getDuplicateError(path, i, normalizedEdits.length, fuzzyCount);
+		return { exact: false, index: fuzzyContent.indexOf(fuzzyOldText) };
+	});
+	const usedFuzzyMatch = resolved.some((match) => !match.exact);
+	const replacementBaseContent = usedFuzzyMatch ? fuzzyContent : normalizedContent;
 
 	const matchedEdits: MatchedEdit[] = [];
 	for (let i = 0; i < normalizedEdits.length; i++) {
 		const edit = normalizedEdits[i];
-		const matchResult = fuzzyFindText(replacementBaseContent, edit.oldText);
-		if (!matchResult.found) {
+		const match = resolved[i];
+		if (!usedFuzzyMatch) {
+			matchedEdits.push({
+				editIndex: i,
+				matchIndex: match.index,
+				matchLength: edit.oldText.length,
+				newText: edit.newText,
+			});
+			continue;
+		}
+		// Another edit needed fuzzy matching, so replacements run in fuzzy space. An exact match keeps
+		// its own position there instead of being re-searched among fuzzy-equivalent occurrences.
+		const fuzzyOldText = normalizeForFuzzyMatch(edit.oldText);
+		const matchIndex = match.exact ? mapToFuzzyIndex(normalizedContent, fuzzyContent, match.index) : match.index;
+		if (!fuzzyContent.startsWith(fuzzyOldText, matchIndex)) {
 			throw getNotFoundError(path, i, normalizedEdits.length);
 		}
-
-		const occurrences = countOccurrences(replacementBaseContent, edit.oldText);
-		if (occurrences > 1) {
-			throw getDuplicateError(path, i, normalizedEdits.length, occurrences);
-		}
-
-		matchedEdits.push({
-			editIndex: i,
-			matchIndex: matchResult.index,
-			matchLength: matchResult.matchLength,
-			newText: edit.newText,
-		});
+		matchedEdits.push({ editIndex: i, matchIndex, matchLength: fuzzyOldText.length, newText: edit.newText });
 	}
 
 	matchedEdits.sort((a, b) => a.matchIndex - b.matchIndex);

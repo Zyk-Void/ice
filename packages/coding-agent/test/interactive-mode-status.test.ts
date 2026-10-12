@@ -8,9 +8,14 @@ import { TuiMainScreen } from "../../tui/src/tui-main-screen.ts";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
+import { createDefaultAppearance } from "../src/modes/interactive/appearance/appearance-defaults.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
+import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
+import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { NoticeCenter } from "../src/modes/interactive/notice-center.ts";
+import { setSymbolPreset } from "../src/modes/interactive/theme/symbols.ts";
+import { getMarkdownTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 function renderLastLine(container: Container, width = 120): string {
 	const last = container.children[container.children.length - 1];
@@ -119,28 +124,189 @@ describe("InteractiveMode.showStatus", () => {
 	});
 });
 
-describe("InteractiveMode.setToolsExpanded", () => {
-	test("applies expansion state to the active header and chat entries", () => {
-		const header = { setExpanded: vi.fn() };
-		const loadedResourcesChild = { setExpanded: vi.fn() };
-		const chatChild = { setExpanded: vi.fn() };
-		const fakeThis: any = {
+describe("InteractiveMode preparing prompt", () => {
+	beforeAll(() => initTheme("dark"));
+
+	function mode(active?: { extensionPath: string; event: string; startedAt: number }, commands: string[] = []) {
+		const fake = Object.assign(Object.create(InteractiveMode.prototype), {
+			chatContainer: new Container(),
+			statusContainer: new Container(),
+			activeStatusIndicator: undefined,
+			preparingPrompt: undefined,
+			noticeCenter: new NoticeCenter(),
+			options: { uiMode: "fullscreen" },
+			ui: { requestRender: vi.fn(), getClearOnShrink: () => false },
+			outputPad: 1,
+			agentViewBridge: undefined,
+			getMarkdownThemeWithSettings: () => getMarkdownTheme(),
+			getMarkdownTransformers: () => [],
+			stampMessageAppearance: () => {},
+			getEffectiveWorkingIndicator: () => undefined,
+			effectiveAppearance: () => createDefaultAppearance(),
+			formatExtensionDisplayPath: (value: string) => value,
+			showStatus: vi.fn(),
+		});
+		// `session` is a getter on the prototype, so the fake defines its own value.
+		Object.defineProperty(fake, "session", {
+			value: {
+				extensionRunner: {
+					getActiveHandler: () => active,
+					getCommand: (name: string) => (commands.includes(name) ? { name } : undefined),
+				},
+			},
+		});
+		return fake as any;
+	}
+
+	test("echoes a submitted prompt and names the hook it waits on until the turn starts", () => {
+		const fake = mode({ extensionPath: "ice-cognee", event: "before_agent_start", startedAt: Date.now() });
+		fake.beginPreparingPrompt("explain the bug");
+		try {
+			const echo = fake.chatContainer.children[0];
+			expect(echo).toBeInstanceOf(UserMessageComponent);
+			expect(echo.getText()).toBe("explain the bug");
+			const status = normalizeRenderedOutput(fake.statusContainer);
+			expect(status).toContain("Preparing");
+			expect(status).toContain("Waiting on ice-cognee (before_agent_start)");
+			expect(status).not.toContain("to interrupt");
+		} finally {
+			fake.endPreparingPrompt();
+		}
+		expect(fake.chatContainer.children).toEqual([]);
+		expect(fake.statusContainer.children).toEqual([]);
+		expect(fake.activeStatusIndicator).toBeUndefined();
+	});
+
+	test("does not echo slash commands and keeps a newer indicator when the turn already started", () => {
+		const fake = mode();
+		fake.beginPreparingPrompt("/compact");
+		expect(fake.chatContainer.children).toEqual([]);
+		expect(normalizeRenderedOutput(fake.statusContainer)).toContain("Sending prompt");
+		const working = { kind: "working", dispose: vi.fn(), render: () => ["working"], invalidate: () => {} };
+		fake.showStatusIndicator(working);
+		fake.endPreparingPrompt();
+		expect(fake.activeStatusIndicator).toBe(working);
+	});
+
+	test("shows no preparing timer for extension commands, which run their own UI", () => {
+		const fake = mode(undefined, ["agents"]);
+		fake.beginPreparingPrompt("/agents");
+		fake.beginPreparingPrompt("/agents stop ag_1");
+		expect(fake.preparingPrompt).toBeUndefined();
+		expect(fake.statusContainer.children).toEqual([]);
+		// A slash command that is not an extension command (a skill or template) still becomes a prompt.
+		fake.beginPreparingPrompt("/review the diff");
+		expect(normalizeRenderedOutput(fake.statusContainer)).toContain("Sending prompt");
+		fake.endPreparingPrompt();
+	});
+
+	test("sends extension errors and slow hooks to notices instead of the chat", () => {
+		const fake = mode();
+		fake.showExtensionError("ext.ts", "before_agent_start", "boom", "Error: boom\n    at x");
+		fake.noteSlowExtensionHandler({ extensionPath: "ext.ts", event: "input", startedAt: 0, durationMs: 2400 });
+		expect(fake.chatContainer.children).toEqual([]);
+		expect(fake.showStatus).toHaveBeenCalledOnce();
+		expect(fake.noticeCenter.list().map((notice: any) => [notice.kind, notice.source, notice.title])).toEqual([
+			["error", "ext.ts", "before_agent_start handler failed: boom"],
+			["warning", "ext.ts", "input handler took 2.4s"],
+		]);
+	});
+});
+
+describe("InteractiveMode tool expansion", () => {
+	beforeAll(() => initTheme("dark"));
+
+	const cell = (id: string) =>
+		new ToolExecutionComponent(
+			"bash",
+			id,
+			{ command: `echo ${id}` },
+			{ compact: true },
+			undefined,
+			{
+				requestRender: vi.fn(),
+			} as never,
+			process.cwd(),
+		);
+
+	function mode(children: Component[]) {
+		const fakeThis = Object.assign(Object.create(InteractiveMode.prototype), {
 			toolOutputExpanded: false,
+			toolExpandFrom: undefined,
+			toolExpandOverrides: new Map<string, boolean>(),
 			customHeader: undefined,
-			builtInHeader: header,
-			loadedResourcesContainer: { children: [loadedResourcesChild] },
-			chatContainer: { children: [chatChild] },
+			builtInHeader: { setExpanded: vi.fn() },
+			loadedResourcesContainer: { children: [] },
+			chatContainer: { children },
 			ui: { requestRender: vi.fn() },
 			showStatus: vi.fn(),
-		};
+		});
+		return fakeThis as any;
+	}
 
-		(InteractiveMode as any).prototype.setToolsExpanded.call(fakeThis, true);
+	const expandedIds = (cells: ToolExecutionComponent[]) =>
+		cells.filter((item) => (item as any).expanded).map((item) => item.getToolCallId());
 
-		expect(fakeThis.toolOutputExpanded).toBe(true);
-		expect(header.setExpanded).toHaveBeenCalledWith(true);
-		expect(loadedResourcesChild.setExpanded).toHaveBeenCalledWith(true);
-		expect(chatChild.setExpanded).toHaveBeenCalledWith(true);
-		expect(fakeThis.showStatus).toHaveBeenCalledWith("Tool output: expanded");
+	test("setToolsExpanded applies to the header, non-tool entries, and every tool cell", () => {
+		const other = { setExpanded: vi.fn(), render: () => [], invalidate: () => {} };
+		const cells = [cell("a"), cell("b")];
+		const fake = mode([other, ...cells]);
+		fake.setToolsExpanded(true);
+		expect(fake.toolOutputExpanded).toBe(true);
+		expect(fake.builtInHeader.setExpanded).toHaveBeenCalledWith(true);
+		expect(other.setExpanded).toHaveBeenCalledWith(true);
+		expect(expandedIds(cells)).toEqual(["a", "b"]);
+		expect(fake.showStatus).toHaveBeenCalledWith("Tool output: expanded");
+	});
+
+	test("the expand key opens the newest cells in batches, then collapses all", () => {
+		const cells = ["a", "b", "c", "d", "e", "f", "g"].map(cell);
+		const fake = mode(cells);
+		fake.toggleToolOutputExpansion();
+		expect(expandedIds(cells)).toEqual(["e", "f", "g"]);
+		expect(fake.toolOutputExpanded).toBe(true);
+		fake.toggleToolOutputExpansion();
+		expect(expandedIds(cells)).toEqual(["b", "c", "d", "e", "f", "g"]);
+		fake.toggleToolOutputExpansion();
+		expect(expandedIds(cells)).toEqual(["a", "b", "c", "d", "e", "f", "g"]);
+		fake.toggleToolOutputExpansion();
+		expect(expandedIds(cells)).toEqual([]);
+		expect(fake.toolOutputExpanded).toBe(false);
+	});
+
+	test("new cells join an expanded tail without collapsing earlier ones", () => {
+		const cells = ["a", "b", "c", "d"].map(cell);
+		const fake = mode(cells);
+		fake.toggleToolOutputExpansion();
+		cells.push(cell("e"));
+		fake.applyToolCellExpansion();
+		expect(expandedIds(cells)).toEqual(["b", "c", "d", "e"]);
+	});
+
+	test("a click toggles one cell and leaves other links to the browser", () => {
+		const cells = ["a", "b", "c", "d"].map(cell);
+		const fake = mode(cells);
+		expect(fake.handleUiAction("ice-action:toggle-tool/a")).toBe(true);
+		expect(expandedIds(cells)).toEqual(["a"]);
+		fake.toggleToolOutputExpansion();
+		expect(expandedIds(cells)).toEqual(["b", "c", "d"]);
+		expect(fake.handleUiAction("ice-action:toggle-tool/c")).toBe(true);
+		expect(expandedIds(cells)).toEqual(["b", "d"]);
+		expect(fake.handleUiAction("https://example.com")).toBe(false);
+		expect(fake.handleUiAction("ice-action:toggle-tool/missing")).toBe(true);
+	});
+
+	test("the newest-call key toggles only the newest cell and keeps batch expansion", () => {
+		const cells = ["a", "b", "c", "d", "e"].map(cell);
+		const fake = mode(cells);
+		fake.toggleNewestToolCell();
+		expect(expandedIds(cells)).toEqual(["e"]);
+		fake.toggleToolOutputExpansion();
+		expect(expandedIds(cells)).toEqual(["c", "d", "e"]);
+		fake.toggleNewestToolCell();
+		expect(expandedIds(cells)).toEqual(["c", "d"]);
+		expect(fake.showStatus).toHaveBeenLastCalledWith("Newest tool call: collapsed");
+		expect(mode([]).toggleNewestToolCell()).toBeUndefined();
 	});
 });
 
@@ -583,6 +749,7 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 describe("InteractiveMode.showLoadedResources", () => {
 	beforeAll(() => {
 		initTheme("dark");
+		setSymbolPreset("unicode");
 	});
 
 	function createShowLoadedResourcesThis(options: {
@@ -657,6 +824,8 @@ describe("InteractiveMode.showLoadedResources", () => {
 				(InteractiveMode as any).prototype.getCompactExtensionLabels.call(fakeThis, extensions),
 			formatDiagnostics: () => "diagnostics",
 			getBuiltInCommandConflictDiagnostics: () => [],
+			noticeCenter: new NoticeCenter(),
+			syncResourceNotices: () => (InteractiveMode as any).prototype.syncResourceNotices.call(fakeThis),
 		};
 
 		if (options.useRealScopeGroups) {
@@ -775,20 +944,39 @@ describe("InteractiveMode.showLoadedResources", () => {
 		];
 	}
 
-	test("shows a compact resource listing by default", () => {
+	test("shows no resource listing below the header by default", () => {
 		const fakeThis = createShowLoadedResourcesThis({
 			quietStartup: false,
+			contextFiles: [{ path: "/tmp/project/AGENTS.md" }],
 			skills: [{ filePath: "/tmp/skill/SKILL.md", name: "commit" }],
+			extensions: [{ path: "/tmp/extensions/answer.ts" }, { path: "/tmp/extensions/btw.ts" }],
 		});
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
 			force: false,
 		});
 
-		const output = renderAll(fakeThis.loadedResourcesContainer);
+		// The collapsed summary is rendered by the session header card; nothing else shows until expanded.
+		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toBe("");
+		expect(fakeThis.chatContainer.children).toHaveLength(0);
+	});
+
+	test("shows compact per-section lists in the chat for /resources", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: true,
+			skills: [{ filePath: "/tmp/skill/SKILL.md", name: "commit" }],
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: true,
+			compact: true,
+		});
+
+		const output = renderAll(fakeThis.chatContainer);
 		expect(output).toContain("[Skills]");
 		expect(output).toContain("commit");
 		expect(output).not.toContain("resource-list");
+		expect(fakeThis.loadedResourcesContainer.children).toHaveLength(0);
 	});
 
 	test("shows full resource listing when expanded", () => {
@@ -834,9 +1022,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
 			force: false,
+			compact: true,
 		});
 
-		const output = renderAll(fakeThis.loadedResourcesContainer);
+		const output = renderAll(fakeThis.chatContainer);
 		expect(output).toContain("[Extensions]");
 		expect(output).toContain("answer.ts, btw.ts");
 		expect(output).not.toContain("extensions/answer.ts");
@@ -851,9 +1040,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
 			force: false,
+			compact: true,
 		});
 
-		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toMatchInlineSnapshot(`
 "[Extensions]
   @scope/ice-scoped, answer.ts, cli-extension.ts, HazAT/ice-interactive-subagents, HazAT/ice-interactive-subagents:subagents, ice-markdown-preview, local-index, user-index"`);
 	});
@@ -897,9 +1087,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
 			force: false,
+			compact: true,
 		});
 
-		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toMatchInlineSnapshot(`
 "[Extensions]
   alpha/one, beta/one, gamma/one"`);
 	});
@@ -925,9 +1116,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
 			force: false,
+			compact: true,
 		});
 
-		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toMatchInlineSnapshot(`
 "[Extensions]
   plan-mode"`);
 	});
@@ -953,9 +1145,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
 			force: false,
+			compact: true,
 		});
 
-		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toMatchInlineSnapshot(`
 "[Extensions]
   plan-mode"`);
 	});
@@ -990,9 +1183,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
 			force: false,
+			compact: true,
 		});
 
-		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toMatchInlineSnapshot(`
 "[Extensions]
   plan-mode, webfetch.ts"`);
 	});
@@ -1027,9 +1221,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
 			force: false,
+			compact: true,
 		});
 
-		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toMatchInlineSnapshot(`
 "[Extensions]
   bar, foo"`);
 	});
@@ -1064,9 +1259,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
 			force: false,
+			compact: true,
 		});
 
-		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toMatchInlineSnapshot(`
 "[Extensions]
   alpha/tools, beta/tools"`);
 	});
@@ -1092,9 +1288,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
 			force: false,
+			compact: true,
 		});
 
-		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toMatchInlineSnapshot(`
 "[Extensions]
   main.ts"`);
 	});
@@ -1123,9 +1320,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
 			force: false,
+			compact: true,
 		});
 
-		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toMatchInlineSnapshot(`
 "[Extensions]
   ice-markdown-preview"`);
 	});
@@ -1160,9 +1358,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
 			force: false,
+			compact: true,
 		});
 
-		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toMatchInlineSnapshot(`
 "[Extensions]
   primary-package, primary-package:../sibling-package"`);
 	});
@@ -1200,9 +1399,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
 			force: false,
+			compact: true,
 		});
 
-		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toMatchInlineSnapshot(`
 "[Extensions]
   primary-package, primary-package:../sibling-package"`);
 	});
@@ -1248,9 +1448,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
 			force: false,
+			compact: true,
 		});
 
-		const output = renderAll(fakeThis.loadedResourcesContainer).replace(/\\/g, "/");
+		const output = renderAll(fakeThis.chatContainer).replace(/\\/g, "/");
 		expect(output).toContain("[Context]");
 		expect(output).toContain("~/.ice/agent/AGENTS.md, AGENTS.md");
 		expect(output).not.toContain(`${cwd.replace(/\\/g, "/")}/AGENTS.md`);
@@ -1268,9 +1469,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
 			force: false,
+			compact: true,
 		});
 
-		const output = renderAll(fakeThis.loadedResourcesContainer).replace(/\\/g, "/");
+		const output = renderAll(fakeThis.chatContainer).replace(/\\/g, "/");
 		expect(output).toContain("[Context]");
 		expect(output).toContain(".ice/SYSTEM.md, .ice/APPEND_SYSTEM.md, AGENTS.md");
 	});
@@ -1309,6 +1511,18 @@ describe("InteractiveMode.showLoadedResources", () => {
 		});
 
 		expect(fakeThis.loadedResourcesContainer.children).toHaveLength(0);
+	});
+
+	test("records skill diagnostics as notices even when the startup listing is quiet", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: true,
+			skillDiagnostics: [{ type: "error", message: "SKILL.md has no frontmatter" }],
+		});
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis);
+		expect(fakeThis.loadedResourcesContainer.children).toEqual([]);
+		expect(fakeThis.noticeCenter.list()).toMatchObject([
+			{ kind: "error", category: "skills", title: "SKILL.md has no frontmatter", group: "resources" },
+		]);
 	});
 
 	test("still shows diagnostics on quiet startup when requested", () => {

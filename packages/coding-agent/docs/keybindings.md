@@ -133,6 +133,7 @@ This routing remains configurable through the ordinary action bindings. For exam
 | Keybinding id | Default | Description |
 |--------|---------|-------------|
 | `app.model.select` | `ctrl+l` | Open model selector |
+| `app.model.toggleFavorite` | `shift+f` | Toggle the highlighted model's favorite status inside the model selector |
 | `app.model.cycleForward` | `ctrl+p` | Cycle to next model |
 | `app.model.cycleBackward` | `shift+ctrl+p` | Cycle to previous model |
 | `app.thinking.cycle` | `shift+tab` | Cycle thinking level |
@@ -142,9 +143,32 @@ This routing remains configurable through the ordinary action bindings. For exam
 
 | Keybinding id | Default | Description |
 |--------|---------|-------------|
-| `app.tools.expand` | `ctrl+o` | Collapse or expand tool output |
+| `app.tools.expand` | `ctrl+o` | Expand the newest 3 collapsed tool calls per press, then collapse all after the oldest; in fullscreen mode, click a tool call's title or `+N lines` hint to toggle just that call |
+| `app.tools.collapse` | `alt+o` | Collapse all expanded tool calls at once |
+| `app.tools.expandLast` | `shift+alt+o` | Expand or collapse only the newest tool call |
+| `app.notices.show` | `f2` | Open the notices panel (also `/notices`): errors, warnings, and logged events from extensions, MCP, tools, skills, prompts, themes, compaction, subagents, the model, and updates |
+| `app.notices.dismiss` | `d` | Notices panel: dismiss the selected notice |
+| `app.notices.clear` | `x` | Notices panel: dismiss every notice in the selected filter |
+| `app.notices.copy` | `c` | Notices panel: copy the selected notice |
+| `app.shortcuts.show` | `?` | Show the keyboard shortcut overview; only when the editor is empty, otherwise `?` is typed |
+| `app.tasks.background` | `ctrl+b` | Move a running bash command or subagent wait to the background; falls through to the editor (cursor left) when nothing can be backgrounded |
+| `app.subagents.open` | `ctrl+shift+a` | Open the Agent Hub (same as `/agents`) |
+| `app.shells.open` | `down` | Open the Shells panel when the editor is empty and background shells are running. Otherwise moves the cursor |
+| `app.shells.stop` | `x` | Shells panel: stop the selected background shell |
+| `app.shells.follow` | `f` | Shells panel: follow the selected shell's live output |
+| `app.agents.hub` | `left` | Open the Agent Hub when the editor is empty and subagents exist; closes the Hub from inside it. Otherwise moves the cursor |
+| `app.subagents.previous` | `alt+left` | Show the previous agent view (main agent and live subagents) when the editor is empty and subagents are live; otherwise moves the cursor a word left |
+| `app.subagents.next` | `alt+right` | Show the next agent view under the same conditions; otherwise moves the cursor a word right |
+| `app.subagents.parent` | `shift+alt+left` | Return to the main agent view while subagents are live |
+| `app.agents.stop` | `s` | Agent Hub (`/agents`, subagents V2): stop the selected subagent's current turn |
+| `app.agents.delete` | `shift+d` | Agent Hub: delete the selected stopped subagent |
+| `app.agents.approve` | `y` | Agent Hub: approve the selected pending subagent request |
+| `app.agents.deny` | `n` | Agent Hub: deny the selected pending subagent request |
+| `app.agents.approveSession` | `a` | Agent Hub: always allow the selected request's rule (for example `ls` or `bash(git status*)`) for that subagent |
+| `app.agents.nextApproval` | `tab` | Agent Hub: select the next pending subagent request and the subagent that asked |
 | `app.message.copy` | `ctrl+x` | Copy the last assistant message, or the selected message in `/tree` |
 | `app.message.followUp` | `alt+enter` | Queue follow-up message |
+| `app.message.sendNow` | `ctrl+enter` | Send now: move running bash commands and subagent waits to the background, interrupt the current turn, and send the prompt (after any queued messages) at once. Needs a terminal that reports ctrl+enter (kitty keyboard protocol) |
 | `app.message.dequeue` | `alt+up` | Restore queued messages to editor |
 
 ### Tree Navigation

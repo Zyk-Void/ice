@@ -1,11 +1,13 @@
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import { type ImageContent, type Message, type TextContent, type Usage, uuidv7 } from "@zykairotis/ice-ai";
+import { execFile } from "child_process";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
 	closeSync,
 	createReadStream,
 	existsSync,
+	fstatSync,
 	fsyncSync,
 	mkdirSync,
 	openSync,
@@ -14,7 +16,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { readdir, stat } from "fs/promises";
+import { readdir, stat, unlink } from "fs/promises";
 import { join, resolve } from "path";
 import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
@@ -152,6 +154,11 @@ export type SessionEntry =
 	| CustomMessageEntry
 	| LabelEntry
 	| SessionInfoEntry;
+
+/** Local tree mutations; loading/replacing a session is a separate host lifecycle operation. */
+export type SessionManagerEvent =
+	| { type: "entry_appended"; entry: SessionEntry }
+	| { type: "leaf_changed"; leafId: string | null };
 
 /** Raw file entry (includes header) */
 export type FileEntry = SessionHeader | SessionEntry;
@@ -866,6 +873,7 @@ export class SessionManager {
 	private labelsById: Map<string, string> = new Map();
 	private labelTimestampsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
+	private readonly changeListeners = new Set<(event: SessionManagerEvent) => void>();
 
 	private constructor(
 		cwd: string,
@@ -1017,14 +1025,11 @@ export class SessionManager {
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 
-		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-		if (!hasAssistant) {
-			if (this.flushed) {
-				appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
-			} else {
-				// Mark as not flushed so when assistant arrives, all entries get written
-				this.flushed = false;
-			}
+		// Keep metadata-only startup lazy, but save the request before waiting for a provider response.
+		if (
+			!this.flushed &&
+			!(entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant"))
+		) {
 			return;
 		}
 
@@ -1039,15 +1044,37 @@ export class SessionManager {
 			}
 			this.flushed = true;
 		} else {
-			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+			// Keep recovered tails separate from the next record without erasing original bytes.
+			const fd = openSync(this.sessionFile, "a+");
+			try {
+				const size = fstatSync(fd).size;
+				const lastByte = Buffer.alloc(1);
+				const needsSeparator = size > 0 && readSync(fd, lastByte, 0, 1, size - 1) === 1 && lastByte[0] !== 10;
+				appendFileSync(fd, `${needsSeparator ? "\n" : ""}${JSON.stringify(entry)}\n`);
+			} finally {
+				closeSync(fd);
+			}
 		}
 	}
 
-	private _appendEntry(entry: SessionEntry): void {
+	/** Observe future local appends/leaf moves; existing entries are not replayed. */
+	subscribe(listener: (event: SessionManagerEvent) => void): () => void {
+		this.changeListeners.add(listener);
+		return () => {
+			this.changeListeners.delete(listener);
+		};
+	}
+
+	private _emitChange(event: SessionManagerEvent): void {
+		for (const listener of [...this.changeListeners]) listener(event);
+	}
+
+	private _appendEntry(entry: SessionEntry, notify = true): void {
 		this.fileEntries.push(entry);
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
 		this._persist(entry);
+		if (notify) this._emitChange({ type: "entry_appended", entry });
 	}
 
 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
@@ -1120,7 +1147,7 @@ export class SessionManager {
 		return entry.id;
 	}
 
-	/** Explicit opt-in persistence barrier; ordinary session writes retain their lazy behavior. */
+	/** Explicit opt-in fsync barrier; metadata-only startup remains lazy until a user/assistant message. */
 	flushDurably(): void {
 		if (!this.persist || !this.sessionFile) {
 			throw new Error("Durable session entries require a persistent session; --no-session is not supported.");
@@ -1260,7 +1287,8 @@ export class SessionManager {
 			targetId,
 			label,
 		};
-		this._appendEntry(entry);
+		// Publish only after label indexes agree with the appended entry.
+		this._appendEntry(entry, false);
 		if (label) {
 			this.labelsById.set(targetId, label);
 			this.labelTimestampsById.set(targetId, entry.timestamp);
@@ -1268,6 +1296,7 @@ export class SessionManager {
 			this.labelsById.delete(targetId);
 			this.labelTimestampsById.delete(targetId);
 		}
+		this._emitChange({ type: "entry_appended", entry });
 		return entry.id;
 	}
 
@@ -1380,7 +1409,9 @@ export class SessionManager {
 		if (!this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
+		if (this.leafId === branchFromId) return;
 		this.leafId = branchFromId;
+		this._emitChange({ type: "leaf_changed", leafId: this.leafId });
 	}
 
 	/**
@@ -1389,7 +1420,9 @@ export class SessionManager {
 	 * Use this when navigating to re-edit the first user message.
 	 */
 	resetLeaf(): void {
+		if (this.leafId === null) return;
 		this.leafId = null;
+		this._emitChange({ type: "leaf_changed", leafId: null });
 	}
 
 	/**
@@ -1407,13 +1440,14 @@ export class SessionManager {
 		if (branchFromId !== null && !this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
+		const fromId = this.leafId ?? "root";
 		this.leafId = branchFromId;
 		const entry: BranchSummaryEntry = {
 			type: "branch_summary",
 			id: generateId(this.byId),
 			parentId: branchFromId,
 			timestamp: new Date().toISOString(),
-			fromId: branchFromId ?? "root",
+			fromId,
 			summary,
 			details,
 			usage,
@@ -1438,11 +1472,29 @@ export class SessionManager {
 		// Filter out LabelEntry from path - we'll recreate them from the resolved map.
 		// Because labels are real tree entries, later entries can be children of labels;
 		// removing labels requires re-chaining the retained path to avoid orphaned subtrees.
+		const nextRetainedByLabel = new Map<string, string>();
+		let nextRetainedId: string | undefined;
+		for (let i = path.length - 1; i >= 0; i--) {
+			const entry = path[i];
+			if (entry.type === "label") {
+				if (nextRetainedId) nextRetainedByLabel.set(entry.id, nextRetainedId);
+			} else {
+				nextRetainedId = entry.id;
+			}
+		}
 		const pathWithoutLabels: SessionEntry[] = [];
 		let pathParentId: string | null = null;
 		for (const entry of path) {
 			if (entry.type === "label") continue;
-			pathWithoutLabels.push({ ...entry, parentId: pathParentId });
+			pathWithoutLabels.push(
+				entry.type === "compaction"
+					? {
+							...entry,
+							parentId: pathParentId,
+							firstKeptEntryId: nextRetainedByLabel.get(entry.firstKeptEntryId) ?? entry.firstKeptEntryId,
+						}
+					: { ...entry, parentId: pathParentId },
+			);
 			pathParentId = entry.id;
 		}
 
@@ -1493,13 +1545,12 @@ export class SessionManager {
 			this.sessionFile = newSessionFile;
 			this._buildIndex();
 
-			// Only write the file now if it contains an assistant message.
-			// Otherwise defer to _persist(), which creates the file on the
-			// first assistant response, matching the newSession() contract
-			// and avoiding the duplicate-header bug when _persist()'s
-			// no-assistant guard later resets flushed to false.
-			const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-			if (hasAssistant) {
+			// User-only forks must survive interruption before their first assistant response.
+			// Metadata-only branches retain the same lazy startup boundary as new sessions.
+			const hasConversation = this.fileEntries.some(
+				(e) => e.type === "message" && (e.message.role === "user" || e.message.role === "assistant"),
+			);
+			if (hasConversation) {
 				this._rewriteFile();
 				this.flushed = true;
 			} else {
@@ -1729,5 +1780,60 @@ export class SessionManager {
 		} catch {
 			return [];
 		}
+	}
+}
+
+const TRASH_TIMEOUT_MS = 10_000;
+
+/**
+ * Delete a session file, trying the `trash` CLI first, then falling back to unlink
+ */
+export async function deleteSessionFile(
+	sessionPath: string,
+): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string }> {
+	// Try `trash` first (if installed)
+	const trashArgs = sessionPath.startsWith("-") ? ["--", sessionPath] : [sessionPath];
+	// Async with a timeout and output cap: a hung or chatty `trash` must not freeze the event loop.
+	const trashResult = await new Promise<{ status: number | null; error?: Error; stderr: string }>((resolve) => {
+		execFile(
+			"trash",
+			trashArgs,
+			{ encoding: "utf-8", timeout: TRASH_TIMEOUT_MS, maxBuffer: 64 * 1024 },
+			(error, _stdout, stderr) => {
+				if (!error) return resolve({ status: 0, stderr });
+				// A numeric code is the exit status; anything else (ENOENT, timeout kill) is a launch failure.
+				if (typeof error.code === "number" && !error.killed) return resolve({ status: error.code, stderr });
+				resolve({ status: null, error, stderr });
+			},
+		);
+	});
+
+	const getTrashErrorHint = (): string | null => {
+		const parts: string[] = [];
+		if (trashResult.error) {
+			parts.push(trashResult.error.message);
+		}
+		const stderr = trashResult.stderr?.trim();
+		if (stderr) {
+			parts.push(stderr.split("\n")[0] ?? stderr);
+		}
+		if (parts.length === 0) return null;
+		return `trash: ${parts.join(" · ").slice(0, 200)}`;
+	};
+
+	// Trust the filesystem over the exit status: a `trash` that exits 0 but leaves the file falls back to unlink.
+	if (!existsSync(sessionPath)) {
+		return { ok: true, method: "trash" };
+	}
+
+	// Fallback to permanent deletion
+	try {
+		await unlink(sessionPath);
+		return { ok: true, method: "unlink" };
+	} catch (err) {
+		const unlinkError = err instanceof Error ? err.message : String(err);
+		const trashErrorHint = getTrashErrorHint();
+		const error = trashErrorHint ? `${unlinkError} (${trashErrorHint})` : unlinkError;
+		return { ok: false, method: "unlink", error };
 	}
 }

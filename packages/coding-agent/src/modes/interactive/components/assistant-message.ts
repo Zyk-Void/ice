@@ -1,5 +1,6 @@
 import type { AssistantMessage } from "@zykairotis/ice-ai";
 import {
+	type Component,
 	Container,
 	Markdown,
 	type MarkdownTheme,
@@ -12,12 +13,10 @@ import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { resolveAppearanceColorFn } from "../appearance/appearance-resolve.ts";
 import type { AppearanceSettingsV2 } from "../appearance/appearance-types.ts";
 import { styleThinkingBlockText } from "../appearance/thinking-presentation.ts";
+import { sym } from "../theme/symbols.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
-
-const OSC133_ZONE_START = "\x1b]133;A\x07";
-const OSC133_ZONE_END = "\x1b]133;B\x07";
-const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
+import { markOsc133Zone } from "./osc133-zone.ts";
 
 /**
  * Component that renders a complete assistant message
@@ -34,6 +33,7 @@ export class AssistantMessageComponent extends Container {
 	private lastMessage?: AssistantMessage;
 	private hasToolCalls = false;
 	private isStreaming = false;
+	private bulletText = false;
 
 	constructor(
 		message?: AssistantMessage,
@@ -92,6 +92,15 @@ export class AssistantMessageComponent extends Container {
 		this.assistantAppearance = appearance ? structuredClone(appearance) : null;
 	}
 
+	/** Prefix each assistant text block with a bullet and hang-indent its continuation lines. */
+	setBulletText(enabled: boolean): void {
+		if (this.bulletText === enabled) return;
+		this.bulletText = enabled;
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
+	}
+
 	setOutputPad(padding: number): void {
 		this.outputPad = padding;
 		if (this.lastMessage) {
@@ -148,10 +157,8 @@ export class AssistantMessageComponent extends Container {
 			}
 		}
 
-		if (this.hasToolCalls || lines.length === 0) return lines;
-		lines[0] = OSC133_ZONE_START + lines[0];
-		lines[lines.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[lines.length - 1];
-		return lines;
+		if (this.hasToolCalls) return lines;
+		return markOsc133Zone(lines);
 	}
 
 	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {
@@ -175,11 +182,15 @@ export class AssistantMessageComponent extends Container {
 			if (content.type === "text" && content.text.trim()) {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
-				this.contentContainer.addChild(
-					new Markdown(content.text.trim(), this.outputPad, 0, this.markdownTheme, undefined, {
-						transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers),
-					}),
+				const markdown = new Markdown(
+					content.text.trim(),
+					this.bulletText ? 0 : this.outputPad,
+					0,
+					this.markdownTheme,
+					undefined,
+					{ transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers) },
 				);
+				this.contentContainer.addChild(this.bulletText ? new BulletBlock(markdown) : markdown);
 			} else if (content.type === "thinking") {
 				const thinkingBlocks: string[] = [];
 				for (; i < message.content.length; i++) {
@@ -209,6 +220,7 @@ export class AssistantMessageComponent extends Container {
 					// showByDefault:false means newly created components start hidden unless
 					// the mode passes an explicit visibility flag.
 					const hiddenLabel = this.thinkingAppearance?.hiddenLabel ?? this.hiddenThinkingLabel;
+					if (!hiddenLabel.trim()) continue;
 					const hiddenForeground = this.thinkingAppearance
 						? resolveAppearanceColorFn(this.thinkingAppearance.foreground, "fg")
 						: (content: string) => theme.fg("thinkingText", content);
@@ -274,6 +286,29 @@ export class AssistantMessageComponent extends Container {
 				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), this.outputPad, 0));
 			}
 		}
+
+		// Hidden thinking with an empty label leaves only spacing; render nothing instead of a blank line.
+		if (this.contentContainer.children.every((child) => child instanceof Spacer)) {
+			this.contentContainer.clear();
+		}
+	}
+}
+
+/** Renders a child with a leading bullet on its first line and a two-column hanging indent. */
+class BulletBlock implements Component {
+	private readonly child: Component;
+
+	constructor(child: Component) {
+		this.child = child;
+	}
+
+	invalidate(): void {
+		this.child.invalidate();
+	}
+
+	render(width: number): string[] {
+		const lines = this.child.render(Math.max(1, width - 2));
+		return lines.map((line, index) => (index === 0 ? `${theme.fg("text", sym("bullet"))} ${line}` : `  ${line}`));
 	}
 }
 

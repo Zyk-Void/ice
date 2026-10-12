@@ -1,0 +1,149 @@
+{
+  "ice_head": "db8dd8eebfebe4a2e65d93e9693e6892744517e2",
+  "upstream_head": "200387122ca450d6387f033949423114a270b96c",
+  "merge_base": "588915ec71714688cee8b7153339e8bdebb3e82e",
+  "branch": "integration/all-worktrees-experimental",
+  "dirty_status": " M AGENTS.md\n M idea.md\n M package.json\n M packages/coding-agent/CHANGELOG.md\n M packages/coding-agent/docs/models.md\n M packages/coding-agent/docs/rpc.md\n M packages/coding-agent/src/core/provider-composer.ts\n M packages/coding-agent/src/ice-safe-verify.ts\n M packages/coding-agent/test/ice-safe-verify.test.ts\n M packages/coding-agent/test/model-registry.test.ts\n M scripts/local-release.mjs\n?? scripts/build-curax-snapshot.mjs\n?? scripts/build-curax-snapshot.test.mjs\n?? scripts/curax-snapshot.mjs\n?? scripts/ice-runtime-packaging.mjs\n",
+  "upstream_commits_since_base": 1294,
+  "ice_commits_since_base": 128,
+  "upstream_changed_paths": 1491,
+  "comparison_counts": {
+    "local_matches_shared_base_candidate": 376,
+    "divergent_requires_semantic_review": 263,
+    "missing_upstream_file": 712,
+    "upstream_deleted_local_present": 137,
+    "absent_both": 3
+  },
+  "packages": {
+    ".gitattributes": {
+      "local_matches_shared_base_candidate": 1
+    },
+    ".github": {
+      "local_matches_shared_base_candidate": 2,
+      "divergent_requires_semantic_review": 4,
+      "missing_upstream_file": 1
+    },
+    ".gitignore": {
+      "divergent_requires_semantic_review": 1
+    },
+    ".pi": {
+      "missing_upstream_file": 5
+    },
+    "AGENTS.md": {
+      "divergent_requires_semantic_review": 1
+    },
+    "README.md": {
+      "divergent_requires_semantic_review": 1
+    },
+    "SECURITY.md": {
+      "divergent_requires_semantic_review": 1
+    },
+    "biome.json": {
+      "divergent_requires_semantic_review": 1
+    },
+    "flake.lock": {
+      "missing_upstream_file": 1
+    },
+    "flake.nix": {
+      "missing_upstream_file": 1
+    },
+    "nix": {
+      "missing_upstream_file": 2
+    },
+    "package-lock.json": {
+      "divergent_requires_semantic_review": 1
+    },
+    "package.json": {
+      "divergent_requires_semantic_review": 1
+    },
+    "packages/agent": {
+      "divergent_requires_semantic_review": 10,
+      "upstream_deleted_local_present": 48,
+      "missing_upstream_file": 4,
+      "local_matches_shared_base_candidate": 2
+    },
+    "packages/ai": {
+      "divergent_requires_semantic_review": 49,
+      "upstream_deleted_local_present": 7,
+      "missing_upstream_file": 71,
+      "local_matches_shared_base_candidate": 150
+    },
+    "packages/chord": {
+      "missing_upstream_file": 64
+    },
+    "packages/client": {
+      "divergent_requires_semantic_review": 11,
+      "upstream_deleted_local_present": 7,
+      "missing_upstream_file": 3,
+      "local_matches_shared_base_candidate": 2
+    },
+    "packages/codemode": {
+      "missing_upstream_file": 18
+    },
+    "packages/coding-agent": {
+      "divergent_requires_semantic_review": 131,
+      "missing_upstream_file": 251,
+      "upstream_deleted_local_present": 17,
+      "local_matches_shared_base_candidate": 174,
+      "absent_both": 1
+    },
+    "packages/durable": {
+      "missing_upstream_file": 155
+    },
+    "packages/evals": {
+      "divergent_requires_semantic_review": 1,
+      "missing_upstream_file": 25,
+      "local_matches_shared_base_candidate": 2,
+      "upstream_deleted_local_present": 12,
+      "absent_both": 2
+    },
+    "packages/mcp": {
+      "missing_upstream_file": 32
+    },
+    "packages/protocol": {
+      "divergent_requires_semantic_review": 2,
+      "local_matches_shared_base_candidate": 7,
+      "missing_upstream_file": 1,
+      "upstream_deleted_local_present": 1
+    },
+    "packages/server": {
+      "divergent_requires_semantic_review": 16,
+      "local_matches_shared_base_candidate": 6,
+      "upstream_deleted_local_present": 5,
+      "missing_upstream_file": 3
+    },
+    "packages/storage": {
+      "upstream_deleted_local_present": 32
+    },
+    "packages/telemetry": {
+      "missing_upstream_file": 12
+    },
+    "packages/tui": {
+      "divergent_requires_semantic_review": 20,
+      "missing_upstream_file": 42,
+      "local_matches_shared_base_candidate": 26,
+      "upstream_deleted_local_present": 7
+    },
+    "pi-test.ps1": {
+      "missing_upstream_file": 1
+    },
+    "pi-test.sh": {
+      "missing_upstream_file": 1
+    },
+    "scripts": {
+      "missing_upstream_file": 19,
+      "divergent_requires_semantic_review": 11,
+      "local_matches_shared_base_candidate": 2,
+      "upstream_deleted_local_present": 1
+    },
+    "tsconfig.base.json": {
+      "local_matches_shared_base_candidate": 1
+    },
+    "tsconfig.json": {
+      "local_matches_shared_base_candidate": 1
+    },
+    "vitest.base.ts": {
+      "divergent_requires_semantic_review": 1
+    }
+  }
+}

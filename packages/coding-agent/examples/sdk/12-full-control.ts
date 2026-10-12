@@ -45,6 +45,7 @@ Available: read, bash. Be concise.`,
 	getAppendSystemPrompt: () => [],
 	getAppendSystemPromptSources: () => [],
 	extendResources: () => {},
+	refreshSkillsIfChanged: () => false,
 	reload: async () => {},
 };
 

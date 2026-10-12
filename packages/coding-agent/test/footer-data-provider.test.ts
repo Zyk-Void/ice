@@ -5,6 +5,7 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let resolvedBranch = "main";
+let statusResult: { error: Error | null; stdout: string } = { error: new Error("unsupported"), stdout: "" };
 
 vi.mock("child_process", () => ({
 	execFile: vi.fn(
@@ -26,6 +27,10 @@ vi.mock("child_process", () => ({
 				);
 				return;
 			}
+			if (args.includes("status")) {
+				setTimeout(() => callback(statusResult.error, statusResult.stdout, ""), 0);
+				return;
+			}
 			setTimeout(() => callback(new Error("unsupported"), "", ""), 0);
 		},
 	),
@@ -37,7 +42,7 @@ vi.mock("child_process", () => ({
 	}),
 }));
 
-import { FooterDataProvider } from "../src/core/footer-data-provider.ts";
+import { FooterDataProvider, parseGitStatusPorcelainV2 } from "../src/core/footer-data-provider.ts";
 
 type WorktreeFixture = {
 	worktreeDir: string;
@@ -261,5 +266,56 @@ describe("FooterDataProvider reftable branch detection", () => {
 			provider.dispose();
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe("FooterDataProvider git status", () => {
+	it("keeps the last known counts when a later git status run fails", async () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "footer-data-provider-"));
+		const now = vi.spyOn(Date, "now");
+		let clock = 1_000_000;
+		now.mockImplementation(() => clock);
+		const provider = new FooterDataProvider(createPlainRepo(tempDir));
+		try {
+			statusResult = { error: null, stdout: "# branch.head main\n# branch.ab +2 -0\n? a.ts\n" };
+			provider.getGitStatus();
+			await waitFor(() => provider.getGitStatus() !== undefined);
+			expect(provider.getGitStatus()).toEqual({ ahead: 2, behind: 0, dirty: 1 });
+
+			statusResult = { error: new Error("timed out"), stdout: "" };
+			const calls = vi.mocked(execFile).mock.calls.length;
+			clock += 5_000;
+			provider.getGitStatus();
+			await waitFor(() => vi.mocked(execFile).mock.calls.length > calls);
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(provider.getGitStatus()).toEqual({ ahead: 2, behind: 0, dirty: 1 });
+		} finally {
+			provider.dispose();
+			now.mockRestore();
+			statusResult = { error: new Error("unsupported"), stdout: "" };
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("parseGitStatusPorcelainV2", () => {
+	it("reads ahead/behind and counts changed, untracked, and conflicted paths", () => {
+		const stdout = [
+			"# branch.oid 0123",
+			"# branch.head main",
+			"# branch.upstream origin/main",
+			"# branch.ab +3 -1",
+			"1 .M N... 100644 100644 100644 a b src/a.ts",
+			"2 R. N... 100644 100644 100644 a b R100 src/new.ts\tsrc/old.ts",
+			"u UU N... 100644 100644 100644 100644 a b c src/c.ts",
+			"? notes.md",
+			"! ignored.log",
+			"",
+		].join("\n");
+		expect(parseGitStatusPorcelainV2(stdout)).toEqual({ ahead: 3, behind: 1, dirty: 4 });
+	});
+
+	it("reports zero ahead/behind without an upstream", () => {
+		expect(parseGitStatusPorcelainV2("# branch.head main\n")).toEqual({ ahead: 0, behind: 0, dirty: 0 });
 	});
 });

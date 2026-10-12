@@ -325,6 +325,39 @@ describe("AgentSession queue characterization", () => {
 		).toBe(true);
 	});
 
+	it("correlates a custom follow-up's consumption with parent settlement", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		const events: string[] = [];
+		const noticeId = "checkin-test-1";
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("original turn complete"),
+			fauxAssistantMessage("check-in reviewed"),
+		]);
+		harness.session.subscribe((event) => {
+			if (event.type === "message_start" && event.message.role === "custom") {
+				const details: unknown = event.message.details;
+				if (details && typeof details === "object" && "noticeId" in details && details.noticeId === noticeId) {
+					events.push("consumed");
+				}
+			} else if (event.type === "agent_settled") {
+				events.push("settled");
+			}
+		});
+		await waitForToolStart;
+		await harness.session.sendCustomMessage(
+			{ customType: "subagent_checkin", content: "progress", display: false, details: { noticeId } },
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+		expect(events).toEqual([]);
+		releaseToolExecution();
+		await promptPromise;
+		expect(events).toEqual(["consumed", "settled"]);
+		expect(getAssistantTexts(harness)).toContain("check-in reviewed");
+	});
+
 	it("injects nextTurn custom messages into the next prompt", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);

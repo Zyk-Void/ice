@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ICE uncommitted changes: terminal UI and explicit overrides</title>
+  <style data-hc="css"></style>
+  <style>
+    h1 { max-width: 23ch; }
+    .tok-cm { color: var(--muted); }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+    .theme-links { display: flex; flex-wrap: wrap; gap: .45rem; margin: 1.3rem 0 2rem; }
+    .theme-links a { text-decoration: none; }
+    .scope-line { padding: .8rem 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); color: var(--ink-2); font-size: .9rem; }
+    .scope-line strong { color: var(--ink); }
+    .explorer-panels .evidence { margin-top: .55rem; font-size: .78rem; color: var(--muted); }
+    .change-map text { font-family: var(--font-body); fill: var(--ink); }
+    .change-map .map-note { fill: var(--muted); font-size: 12px; }
+    .change-map .map-node { fill: var(--surface-2); stroke: var(--rule-strong); }
+    .change-map [data-part]:focus-visible { outline: none; }
+    .change-map [data-part]:focus-visible .map-node { stroke: var(--accent); stroke-width: 2; }
+    .terminal-sample { min-height: 10.4rem; font-size: .72rem; line-height: 1.7; padding: 1rem .85rem; }
+    .terminal-art { color: var(--accent); }
+    .terminal-muted { color: var(--muted); }
+    .terminal-sample .capability { color: var(--risk); }
+    .comparison > figcaption { margin-bottom: .8rem; }
+    .comparison .panel { padding: 1rem; }
+    .comparison h4 { margin-bottom: .7rem; }
+    .comparison .terminal-sample { margin-bottom: .75rem; }
+    .comparison .panel > p { font-size: .88rem; color: var(--ink-2); }
+    .narrow-header { max-width: 28rem; margin-top: .85rem; }
+    .dock-stack { list-style: none; padding: 0; display: grid; gap: .35rem; margin: 0; }
+    .dock-stack li { max-width: none; margin: 0; padding: .55rem .7rem; background: var(--surface-2); border: 1px solid var(--rule); border-radius: 5px; font-size: .84rem; color: var(--ink-2); }
+    .dock-stack .jump { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 650; }
+    .dock-stack .prompt { padding: .8rem .7rem; background: var(--surface); border-color: var(--rule-strong); color: var(--ink); font-family: var(--font-mono); }
+    .dock-stack .tail { padding: .45rem .7rem; color: var(--muted); font-size: .78rem; }
+    .dock-stack .prompt small { display: block; font-family: var(--font-body); color: var(--muted); font-size: .76rem; margin-top: .3rem; }
+    .file-list td:first-child code { white-space: normal; overflow-wrap: anywhere; }
+    .file-list td:first-child { width: 53%; }
+    .file-list td:last-child { min-width: 8.5rem; }
+    .limit-note { font-size: .87rem; color: var(--ink-2); }
+    footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--rule); color: var(--muted); font-size: .82rem; }
+    .mini-flow { display: grid; gap: .65rem; margin: 1rem 0 .5rem; }
+    .flow-row { display: grid; grid-template-columns: 1fr auto 1fr; gap: .7rem; align-items: center; }
+    .flow-box { padding: .9rem; border: 1px solid var(--rule-strong); border-radius: var(--radius-sm); background: var(--surface-2); }
+    .flow-box strong { display: block; font-size: .92rem; }
+    .flow-box span { display: block; font-size: .83rem; color: var(--ink-2); margin-top: .3rem; }
+    .flow-arrow { width: 30px; color: var(--muted); }
+    .flow-arrow svg { width: 30px; height: 22px; }
+    @media (max-width: 640px) {
+      .terminal-sample { font-size: .7rem; min-height: 0; }
+      .flow-row { grid-template-columns: 1fr; }
+      .flow-arrow { transform: rotate(90deg); justify-self: center; }
+      .file-list td:first-child { width: auto; }
+      .change-map { min-width: 0; }
+    }
+    @media print { .theme-links { display: none; } .terminal-art { color: var(--ink); } }
+  </style>
+</head>
+<body>
+  <nav class="toc" data-hc="toc"></nav>
+  <main>
+    <h1>The remaining diff refines the UI and explicit overrides.</h1>
+    <p class="meta">10 October 2026 · Visual change report · Snapshot at 05:11:15 UTC</p>
+    <p class="lead">Startup gets a taller mascot, while fullscreen moves “Jump to bottom” directly above the editor. A separate imported extension adds force flags only to its explicit human-override path.</p>
+    <div class="callout warn"><strong>Recommendation: keep the two Git scopes separate.</strong>The source changes are small and explainable, but their runtime behavior has not been verified in this report. Treat the UI patch and the imported extension patch as separate review units.</div>
+    <p class="scope-line"><strong>5 tracked files</strong> in ICE · <span class="add">+114</span> / <span class="del">−17</span> lines · <strong>no staged files</strong> · nested repository counted separately</p>
+    <div class="theme-links" role="group" aria-label="Report appearance">
+      <a class="chip" href="?theme=light">Light appearance</a>
+      <a class="chip" href="?theme=dark">Dark appearance</a>
+      <a class="chip" href="#evidence-and-next-actions">Evidence &amp; limits</a>
+    </div>
+
+    <h2 id="change-map">Two UI changes, one separate extension patch</h2>
+    <p>Choose an area to see its intent. The map shows scope, not a runtime dependency between the changes.</p>
+    <h3 class="sr-only" data-toc="skip">Change area details</h3>
+    <section class="explorer" data-hc-ui="explorer" data-label="Change areas">
+      <svg class="change-map" viewBox="0 0 440 298" role="group" aria-label="Two uncommitted areas in the ICE checkout, startup header and fullscreen dock, plus an explicit-override fix in a separate nested Git repository">
+        <rect x="8" y="8" width="424" height="174" rx="10" fill="none" stroke="var(--rule-strong)"/>
+        <text x="24" y="33" class="map-note">ICE checkout · tracked changes</text>
+        <g data-part="header" role="button" tabindex="0" aria-label="Explore the startup header change">
+          <rect class="map-node" x="24" y="49" width="392" height="50" rx="7"/>
+          <text x="40" y="80" font-size="15">Startup header</text>
+          <text x="398" y="80" text-anchor="end" font-size="12">3 → 5 mascot rows</text>
+        </g>
+        <g data-part="dock" role="button" tabindex="0" aria-label="Explore the fullscreen dock change">
+          <rect class="map-node" x="24" y="112" width="392" height="50" rx="7"/>
+          <text x="40" y="143" font-size="15">Fullscreen dock</text>
+          <text x="398" y="143" text-anchor="end" font-size="12">pill → editor</text>
+        </g>
+        <rect x="8" y="198" width="424" height="92" rx="10" fill="none" stroke="var(--rule-strong)" stroke-dasharray="5 4"/>
+        <text x="24" y="221" class="map-note">Imported extension · its own Git repository</text>
+        <g data-part="override" role="button" tabindex="0" aria-label="Explore the workgraph override change">
+          <rect class="map-node" x="24" y="236" width="392" height="38" rx="7"/>
+          <text x="40" y="260" font-size="15">Explicit human override</text>
+          <text x="398" y="260" text-anchor="end" font-size="12">optional --force</text>
+        </g>
+      </svg>
+      <div class="explorer-panels">
+        <article data-part="header" data-label="Startup header"><h4>A larger mascot, the same metadata</h4><p>The pixel art grows from three rows to five. The existing three-line text block is vertically centered; the ASCII fallback stays unchanged.</p><p class="evidence">Source-derived: <code>packages/coding-agent/src/modes/interactive/components/session-header.ts:26, 75–88</code>.</p></article>
+        <article data-part="dock" data-label="Fullscreen dock"><h4>Navigation belongs next to the prompt</h4><p>The jump pill moves below queued messages, status, and above-editor widgets. It now directly precedes the editor in the dock stack.</p><p class="evidence">Source-derived: <code>packages/coding-agent/src/modes/interactive/interactive-mode.ts:1055–1061</code>.</p></article>
+        <article data-part="override" data-label="Workgraph override"><h4>Force is explicit, not the default</h4><p>The close and release wrappers accept an optional force argument, defaulting to false. The explicit override tool supplies true; the ordinary call shape does not.</p><p class="evidence">Source-derived: <code>imported_extensions/pi-workgraph/src/bd.ts:260–303</code>, <code>src/tools.ts:527–536</code> within that repository.</p></article>
+      </div>
+    </section>
+
+    <h2 id="startup-header">The mascot grows; session metadata stays compact</h2>
+    <p>The unicode banner adds two mascot rows and aligns the title, model, and location through the middle. These are reconstructions from source and test fixtures, not screenshots of a running ICE session.</p>
+    <h3 class="sr-only" data-toc="skip">Startup header comparison</h3>
+    <figure class="comparison">
+      <figcaption class="label">The three metadata lines shift down one row inside a five-row mascot</figcaption>
+      <div class="grid cols-2">
+        <div class="panel">
+          <h4>Before · HEAD</h4>
+          <pre class="terminal-sample" tabindex="0"><span class="terminal-art"> ▄███▄ </span>  ICE v1.2.3
+<span class="terminal-art">█▀█▀█▀█</span>  gpt-test · high · build · <span class="capability">bash · external</span>
+<span class="terminal-art"> ▀▄▄▄▀ </span>  ~/work/project · 2 skills
+<span class="terminal-muted">ctrl+o details</span></pre>
+          <p>Three mascot rows sit alongside three text rows. The help hint follows immediately.</p>
+        </div>
+        <div class="panel">
+          <h4>After · worktree</h4>
+          <pre class="terminal-sample" tabindex="0"><span class="terminal-art">█▄  ▄▄▄  ▄█</span>
+<span class="terminal-art">▀██▀███▀██▀</span>  ICE v1.2.3
+<span class="terminal-art"> ██▄▀█▀▄██ </span>  gpt-test · high · build · <span class="capability">bash · external</span>
+<span class="terminal-art">  ▀█████▀  </span>  ~/work/project · 2 skills
+<span class="terminal-art">   █▄▀▄█</span>
+<span class="terminal-muted">ctrl+o details</span></pre>
+          <p>The same text is centered against the taller art. The unicode compact banner uses six rows including its hint.</p>
+        </div>
+      </div>
+    </figure>
+    <p class="evidence">Exact fixture strings: <code>packages/coding-agent/test/session-header.test.ts:35–46</code>. Baseline: <code>git show 23777df40:packages/coding-agent/src/modes/interactive/components/session-header.ts</code>.</p>
+    <h3 id="narrow-terminal">Narrow terminals still drop the mascot</h3>
+    <p>The art is shown only when at least 24 columns remain for text after the mascot and its two-column gap. The wider unicode art changes its minimum banner width from 33 to 37 columns; the ASCII art remains three rows.</p>
+    <pre class="narrow-header" tabindex="0">ICE v1.2.3
+gpt-test · high
+~/work/project
+ctrl+o details</pre>
+    <p class="evidence">Source-derived width calculation: <code>packages/coding-agent/src/modes/interactive/components/session-header.ts:28–32, 67–70</code>. Narrow fixture: <code>packages/coding-agent/test/session-header.test.ts:68–73</code>.</p>
+
+    <h2 id="fullscreen-dock">The jump control moves next to the editor</h2>
+    <p>This is a composition-order fix, not a new navigation feature. The existing pill moves past the activity containers; its shrink settings and the editor’s three-row minimum are unchanged.</p>
+    <h3 class="sr-only" data-toc="skip">Fullscreen dock comparison</h3>
+    <figure class="comparison">
+      <figcaption class="label">Activity no longer separates “Jump to bottom” from the prompt editor</figcaption>
+      <div class="grid cols-2">
+        <div class="panel">
+          <h4>Before · detached from the prompt</h4>
+          <ol class="dock-stack" aria-label="Previous dock order">
+            <li class="jump">Jump to bottom</li>
+            <li>Queued messages</li>
+            <li>Status / activity</li>
+            <li>Above-editor widgets</li>
+            <li class="prompt">&gt; prompt editor<small>minimum 3 terminal rows</small></li>
+            <li class="tail">Below-editor widgets</li>
+            <li class="tail">Agent switcher</li>
+            <li class="tail">Footer</li>
+          </ol>
+        </div>
+        <div class="panel">
+          <h4>After · adjacent to the prompt</h4>
+          <ol class="dock-stack" aria-label="New dock order">
+            <li>Queued messages</li>
+            <li>Status / activity</li>
+            <li>Above-editor widgets</li>
+            <li class="jump">Jump to bottom</li>
+            <li class="prompt">&gt; prompt editor<small>minimum 3 terminal rows</small></li>
+            <li class="tail">Below-editor widgets</li>
+            <li class="tail">Agent switcher</li>
+            <li class="tail">Footer</li>
+          </ol>
+        </div>
+      </div>
+    </figure>
+    <p class="evidence">Observed move: <code>packages/coding-agent/src/modes/interactive/interactive-mode.ts:1055–1065</code>. Schematics show ordering only, not exact rendered terminal heights.</p>
+    <h3 id="regression-intent">New coverage exercises the production composition path</h3>
+    <p>A parameterized virtual-terminal regression calls <code>InteractiveMode.init()</code>, stops before unrelated startup handlers, and checks adjacency with both populated and empty activity containers.</p>
+    <div class="table-wrap" tabindex="0" role="region" aria-label="Viewport regression coverage"><table>
+      <thead><tr><th>Fixture size</th><th>With activity visible</th><th>After activity clears</th><th>Run status</th></tr></thead>
+      <tbody>
+        <tr><td>80 × 24 columns/rows</td><td>Pill follows the activity and widget rows</td><td>Prompt top border immediately follows pill</td><td>Not run here</td></tr>
+        <tr><td>40 × 12 columns/rows</td><td>Same ordering in a smaller viewport</td><td>Same editor adjacency assertion</td><td>Not run here</td></tr>
+      </tbody>
+    </table></div>
+    <p class="evidence">Added <code>it.each</code> cases and assertions: <code>packages/coding-agent/test/new-messages-pill.test.ts:110–189</code>. Tests present do not mean tests passing.</p>
+    <pre data-lang="diff" tabindex="0">- { component: newMessagesPill, shrink: 1, minSize: 0 },
+  { component: this.pendingMessagesContainer, shrink: 1, minSize: 0 },
+  { component: this.statusContainer, shrink: 1, minSize: 0 },
+  { component: this.widgetContainerAbove, shrink: 1, minSize: 0 },
++ { component: newMessagesPill, shrink: 1, minSize: 0 },
+  { component: this.editorContainer, shrink: 1, minSize: 3 },</pre>
+    <p class="evidence">Excerpt of the observed diff; surrounding composition entries omitted.</p>
+
+    <h2 id="extension-override">The imported extension changes explicit overrides</h2>
+    <p><code>imported_extensions/pi-workgraph/</code> is untracked by the parent checkout but is a separate Git repository at <code>16c4f74</code>. Its two modified source files and new guide are not included in ICE’s +114 / −17 total.</p>
+    <figure class="diagram">
+      <figcaption class="label">The patch supplies force only through the explicit override caller</figcaption>
+      <div class="mini-flow">
+        <div class="flow-row">
+          <div class="flow-box"><strong>Ordinary close / release caller</strong><span>Uses the existing arguments</span></div>
+          <span class="flow-arrow" aria-hidden="true"><svg viewBox="0 0 30 22" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 11h24m-7-7 7 7-7 7"/></svg></span>
+          <div class="flow-box"><strong>force defaults to false</strong><span>No <code>--force</code> flag added</span></div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-box"><strong>Explicit human override tool</strong><span>Passes true to the wrapper</span></div>
+          <span class="flow-arrow" aria-hidden="true"><svg viewBox="0 0 30 22" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 11h24m-7-7 7 7-7 7"/></svg></span>
+          <div class="flow-box"><strong>force is true</strong><span>Adds <code>--force</code> to the bd arguments</span></div>
+        </div>
+      </div>
+    </figure>
+    <p class="evidence">Source-derived: <code>imported_extensions/pi-workgraph/src/bd.ts:260–303</code>, <code>imported_extensions/pi-workgraph/src/tools.ts:527–536</code>. No override was invoked for this report.</p>
+    <h3 class="sr-only" data-toc="skip">Override caller comparison</h3>
+    <div class="grid cols-2">
+      <div class="panel"><h4>Before</h4><pre data-lang="ts" tabindex="0">close(cwd, id, reason, actor);
+release(cwd, id, actor);</pre><p class="limit-note">The wrappers could not explicitly request force.</p></div>
+      <div class="panel"><h4>After · override caller only</h4><pre data-lang="ts" tabindex="0">close(cwd, id, reason, actor, true);
+release(cwd, id, actor, true);</pre><p class="limit-note">The new optional parameter defaults to false.</p></div>
+    </div>
+    <p class="limit-note">The patch’s comments describe newer bd refusing cross-assignee operations without force. That compatibility claim was not independently tested here. The override remains an exceptional authority path, not a normal agent completion mechanism.</p>
+    <h3 id="untracked-guide">The new guide explains setup and recovery</h3>
+    <p>The untracked <code>docs/workgraph-user-guide.md</code> covers initialization, extension loading, trusted build mode, manual tools-only work, opt-in dispatch, lease recovery, and audited overrides. Its compatibility and verification statements are documentation claims, not checks performed for this visual report.</p>
+    <p class="evidence">Source document: <code>imported_extensions/pi-workgraph/docs/workgraph-user-guide.md</code>. Loading or delivery of this local patch into a running extension was not verified.</p>
+
+    <h2 id="file-inventory">What changed, file by file</h2>
+    <p>Parent checkout paths below are relative to <code>packages/coding-agent/</code>. Counts are the observed tracked diff, not performance, test results, or a measure of implementation quality.</p>
+    <div class="table-wrap" tabindex="0" role="region" aria-label="Parent checkout file inventory"><table class="file-list">
+      <thead><tr><th>Parent checkout file</th><th class="num">Added</th><th class="num">Deleted</th><th>Role</th></tr></thead>
+      <tbody>
+        <tr><td><code>src/modes/interactive/components/session-header.ts</code></td><td class="num add">17</td><td class="num del">8</td><td>Art and vertical alignment</td></tr>
+        <tr><td><code>src/modes/interactive/interactive-mode.ts</code></td><td class="num add">1</td><td class="num del">1</td><td>Pill placement</td></tr>
+        <tr><td><code>test/new-messages-pill.test.ts</code></td><td class="num add">86</td><td class="num del">1</td><td>Two viewport regression cases</td></tr>
+        <tr><td><code>test/session-header.test.ts</code></td><td class="num add">9</td><td class="num del">7</td><td>Updated expectations</td></tr>
+        <tr><td><code>CHANGELOG.md</code></td><td class="num add">1</td><td class="num">0</td><td>Unreleased pill-placement entry</td></tr>
+        <tr><td><strong>Total · five tracked files</strong></td><td class="num"><strong>114</strong></td><td class="num"><strong>17</strong></td><td>No staged changes</td></tr>
+      </tbody>
+    </table></div>
+    <p class="evidence">Observed: <code>git diff --numstat</code> and <code>git diff --cached --name-only</code> at the snapshot. Generated report files excluded.</p>
+    <div class="table-wrap" tabindex="0" role="region" aria-label="Nested repository file inventory"><table class="file-list">
+      <thead><tr><th>Nested repository file</th><th class="num">Added</th><th class="num">Deleted</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td><code>imported_extensions/pi-workgraph/src/bd.ts</code></td><td class="num add">11</td><td class="num del">1</td><td>Modified</td></tr>
+        <tr><td><code>imported_extensions/pi-workgraph/src/tools.ts</code></td><td class="num add">2</td><td class="num del">2</td><td>Modified</td></tr>
+        <tr><td><code>imported_extensions/pi-workgraph/docs/workgraph-user-guide.md</code></td><td class="num">n/a</td><td class="num">n/a</td><td>Untracked</td></tr>
+      </tbody>
+    </table></div>
+    <p class="evidence">Observed: the nested repository’s <code>git status --short</code> and <code>git diff --numstat</code>. Untracked additions are not counted by plain <code>git diff</code>.</p>
+    <p><code>random-story.md</code> is also untracked in the parent checkout: a 120-line fictional story, separate from the runtime patch. It is inventoried here but not reproduced.</p>
+
+    <h2 id="evidence-and-next-actions">Evidence and next actions</h2>
+    <dl class="kv">
+      <dt>Frozen snapshot</dt><dd><code>2026-10-10T05:11:15.397Z</code></dd>
+      <dt>Parent branch</dt><dd><code>integration/all-worktrees-experimental</code></dd>
+      <dt>Parent HEAD</dt><dd><code>23777df40</code> · unchanged during capture</dd>
+      <dt>Diff fingerprint</dt><dd><code>a70fb3cf223a679d…</code> · SHA-256 recorded in the local snapshot file</dd>
+      <dt>Boundary</dt><dd>Uncommitted source at capture time. Not a live Git dashboard or a release audit.</dd>
+    </dl>
+    <div class="callout"><strong>The workspace changed during inspection.</strong>Exact-edit matching, relative <code>find</code> paths, and Cognee atomic-write and retention changes were committed by another session before this snapshot. They are excluded from the uncommitted file counts and diagrams above.</div>
+    <ul class="readiness">
+      <li><strong>Source inspection</strong><span>Git diffs, current source, and regression fixtures inspected.</span></li>
+      <li><strong>Repository verification</strong><span>Tests, repository check, and builds not run for this report.</span></li>
+      <li><strong>Live ICE behavior</strong><span>Not exercised. Terminal visuals are source-derived reconstructions.</span></li>
+    </ul>
+    <h3 id="recommended-verification">Suggested verification, not executed</h3>
+    <pre data-lang="bash" tabindex="0"># From packages/coding-agent/: targeted UI regression files
+node ../../node_modules/vitest/dist/cli.js --run \
+  test/session-header.test.ts test/new-messages-pill.test.ts
+
+# From the repository root: required repository check
+corepack npm@12.0.2 run check</pre>
+    <ul class="checklist">
+      <li>Run the affected UI tests and inspect real terminal behavior before claiming the runtime fix is verified.</li>
+      <li>Review the extension’s force flag separately, including normal holder operations and explicit cross-assignee overrides.</li>
+      <li>Decide independently whether the imported repository, new guide, and story belong in the intended change set.</li>
+      <li>Refresh the snapshot if other sessions change HEAD or the worktree after the recorded timestamp.</li>
+    </ul>
+    <p id="report-qa" class="evidence">Report QA: assembled and validated as a standalone file. Browser checks at 1400 px and 390 px, in light and dark, found no page-level horizontal overflow and zero automated accessibility violations; automated SVG contrast checks remained incomplete. Keyboard filtering, JavaScript-disabled content, and print fallback were verified. No browser page errors were observed. These checks validate the report, not the ICE runtime.</p>
+    <footer>Local-only visual report. No external publication, runtime-source modifications, Git staging, or commits were performed by this report session. All behavior claims are source-derived unless marked observed.</footer>
+  </main>
+  <script data-hc="js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('.change-map [data-part]').forEach(function (part) {
+        part.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            part.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+          }
+        });
+      });
+    });
+  </script>
+</body>
+</html>

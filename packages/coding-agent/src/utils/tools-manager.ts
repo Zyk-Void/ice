@@ -81,6 +81,9 @@ function commandExists(cmd: string): boolean {
 	}
 }
 
+// System PATH hits are probed once per process; a probe spawns a blocking child on every grep/find call otherwise.
+const systemToolNames = new Map<string, string>();
+
 // Get the path to a tool (system-wide or in our tools dir)
 export function getToolPath(tool: "fd" | "rg"): string | null {
 	const config = TOOLS[tool];
@@ -92,10 +95,14 @@ export function getToolPath(tool: "fd" | "rg"): string | null {
 		return localPath;
 	}
 
+	const cached = systemToolNames.get(tool);
+	if (cached) return cached;
+
 	// Check system PATH - if found, just return the command name (it's in PATH)
 	const systemBinaryNames = config.systemBinaryNames ?? [config.binaryName];
 	for (const systemBinaryName of systemBinaryNames) {
 		if (commandExists(systemBinaryName)) {
+			systemToolNames.set(tool, systemBinaryName);
 			return systemBinaryName;
 		}
 	}

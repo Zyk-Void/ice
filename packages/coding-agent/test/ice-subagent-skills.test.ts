@@ -11,10 +11,10 @@ describe("ICE subagent project skills", () => {
 		for (const name of names) {
 			expect(result.skills.some((skill) => skill.name === name)).toBe(true);
 			const body = readFileSync(resolve(dir, name, "SKILL.md"), "utf8");
-			expect(body).toContain("../../../packages/coding-agent/docs/subagent-user-guide.md");
+			expect(body).toContain("../../../packages/coding-agent/docs/subagents-v2.md");
 			expect(
-				readFileSync(resolve(dir, name, "../../../packages/coding-agent/docs/subagent-user-guide.md"), "utf8"),
-			).toContain("# ICE subagent user guide");
+				readFileSync(resolve(dir, name, "../../../packages/coding-agent/docs/subagents-v2.md"), "utf8"),
+			).toContain("# Subagents V2");
 		}
 		expect(result.diagnostics.filter((diagnostic) => names.some((name) => diagnostic.path?.includes(name)))).toEqual(
 			[],

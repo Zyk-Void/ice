@@ -5,6 +5,7 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@zykairotis/ice-ai";
 import chalk from "chalk";
@@ -18,7 +19,7 @@ import {
 	resolveCredentialForPrint,
 	validateCredentialPrintArgs,
 } from "./cli/credential-print.ts";
-import { processFileArguments } from "./cli/file-processor.ts";
+import { FileArgumentError, processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { readPipedStdin } from "./cli/piped-stdin.ts";
@@ -34,6 +35,7 @@ import {
 } from "./core/agent-session-services.ts";
 import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
+import { disableExtensionConsoleCapture, enableExtensionConsoleCapture } from "./core/extensions/loader.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
@@ -56,6 +58,9 @@ import type { IceAgentViewBridge } from "./ice-agent-view-bridge.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
+import { type ObserveRecorder, startObserveRecorder } from "./observe/observe-recorder.ts";
+import { loadObserveToken, type ObserveServer, startObserveServer } from "./observe/observe-server.ts";
+import { type ObserveRunStore, openObserveRunStore } from "./observe/observe-store.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
@@ -164,7 +169,15 @@ async function prepareInitialMessage(
 		return buildInitialMessage({ parsed, stdinContent });
 	}
 
-	const { text, images } = await processFileArguments(parsed.fileArgs, { autoResizeImages });
+	let processed: Awaited<ReturnType<typeof processFileArguments>>;
+	try {
+		processed = await processFileArguments(parsed.fileArgs, { autoResizeImages });
+	} catch (error) {
+		if (!(error instanceof FileArgumentError)) throw error;
+		console.error(chalk.red(`Error: ${error.message}`));
+		process.exit(1);
+	}
+	const { text, images } = processed;
 	return buildInitialMessage({
 		parsed,
 		fileText: text,
@@ -590,6 +603,10 @@ export async function main(args: string[], options?: MainOptions) {
 	if (shouldTakeOverStdout) {
 		takeOverStdout();
 	}
+	// Keep extension load-time console output out of the TUI; interactive mode shows it as notices.
+	if (appMode === "interactive" && !parsed.help && parsed.listModels === undefined) {
+		enableExtensionConsoleCapture();
+	}
 
 	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {
 		console.error(chalk.red("Error: @file arguments are not supported in RPC mode"));
@@ -801,6 +818,9 @@ export async function main(args: string[], options?: MainOptions) {
 	});
 	time("createAgentSessionRuntime");
 	const { services, session, modelFallbackMessage } = runtime;
+	// The same authoritative parent session is available to ICE supervisory notices
+	// in interactive, print, JSON, and RPC transports; it is never a second loop.
+	options?.agentViewBridge?.setParentSession(session);
 	const { settingsManager, modelRuntime, resourceLoader } = services;
 	applyHttpProxySettings(settingsManager.getGlobalSettings().httpProxy);
 	configureHttpDispatcher(settingsManager.getHttpIdleTimeoutMs());
@@ -825,6 +845,7 @@ export async function main(args: string[], options?: MainOptions) {
 		stdinContent = await readPipedStdin();
 		if (stdinContent !== undefined && appMode === "interactive") {
 			appMode = "print";
+			for (const entry of disableExtensionConsoleCapture()) process.stderr.write(`${entry.text}\n`);
 		}
 	}
 	time("readPipedStdin");
@@ -874,54 +895,95 @@ export async function main(args: string[], options?: MainOptions) {
 			.finally(() => clearTimeout(timeout));
 	}
 
-	if (appMode === "rpc") {
-		printTimings();
-		await runRpcMode(runtime);
-	} else if (appMode === "interactive") {
-		const interactiveMode = new InteractiveMode(runtime, {
-			agentViewBridge: options?.agentViewBridge,
-			migratedProviders,
-			modelFallbackMessage,
-			autoTrustOnReloadCwd,
-			initialMessage,
-			initialImages,
-			initialMessages: parsed.messages,
-			verbose: parsed.verbose,
-			uiMode: parsed.uiMode,
-		});
-		if (startupBenchmark) {
-			await interactiveMode.init();
-			time("interactiveMode.init");
-			// Give the TUI's stdin handler a brief chance to consume terminal query replies
-			// (Kitty keyboard protocol, device attributes, cell size) before restoring the terminal.
-			await new Promise((resolve) => setTimeout(resolve, 150));
-			interactiveMode.stop();
-			stopThemeWatcher();
+	// Durable observability history is always-on for agent runs. The dashboard remains
+	// opt-in, but reuses this recorder so it cannot create a second event stream.
+	let observeStore: ObserveRunStore | undefined;
+	let observeRecorder: ObserveRecorder | undefined;
+	try {
+		observeStore = await openObserveRunStore(join(agentDir, "observability.sqlite"));
+		observeRecorder = startObserveRecorder(runtime.session, { persistence: observeStore });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(chalk.yellow(`Warning: observability history unavailable: ${message}`));
+	}
+
+	// Live observability dashboard (opt-in via --observe, loopback-only, read-only).
+	let observeServer: ObserveServer | undefined;
+	if (parsed.observe) {
+		try {
+			observeServer = await startObserveServer(runtime.session, {
+				port: parsed.observe === true ? undefined : parsed.observe,
+				recorder: observeRecorder,
+				replayStore: observeStore,
+				token: loadObserveToken(join(agentDir, "observe.token")),
+			});
+			console.error(
+				chalk.dim(
+					`Observability dashboard${observeServer.shared ? " (shared existing port)" : ""}: ${observeServer.dashboardUrl}`,
+				),
+			);
+		} catch (error) {
+			observeRecorder?.stop();
+			throw error;
+		}
+	}
+
+	try {
+		if (appMode === "rpc") {
 			printTimings();
-			if (process.stdout.writableLength > 0) {
-				await new Promise<void>((resolve) => process.stdout.once("drain", resolve));
+			await runRpcMode(runtime, { agentViewBridge: options?.agentViewBridge });
+		} else if (appMode === "interactive") {
+			const interactiveMode = new InteractiveMode(runtime, {
+				agentViewBridge: options?.agentViewBridge,
+				migratedProviders,
+				modelFallbackMessage,
+				autoTrustOnReloadCwd,
+				initialMessage,
+				initialImages,
+				initialMessages: parsed.messages,
+				verbose: parsed.verbose,
+				uiMode: parsed.uiMode,
+			});
+			if (startupBenchmark) {
+				await interactiveMode.init();
+				time("interactiveMode.init");
+				// Give the TUI's stdin handler a brief chance to consume terminal query replies
+				// (Kitty keyboard protocol, device attributes, cell size) before restoring the terminal.
+				await new Promise((resolve) => setTimeout(resolve, 150));
+				interactiveMode.stop();
+				stopThemeWatcher();
+				printTimings();
+				if (process.stdout.writableLength > 0) {
+					await new Promise<void>((resolve) => process.stdout.once("drain", resolve));
+				}
+				if (process.stderr.writableLength > 0) {
+					await new Promise<void>((resolve) => process.stderr.once("drain", resolve));
+				}
+				return;
 			}
-			if (process.stderr.writableLength > 0) {
-				await new Promise<void>((resolve) => process.stderr.once("drain", resolve));
+
+			printTimings();
+			await interactiveMode.run();
+		} else {
+			printTimings();
+			const exitCode = await runPrintMode(runtime, {
+				mode: toPrintOutputMode(appMode),
+				messages: parsed.messages,
+				initialMessage,
+				initialImages,
+			});
+			stopThemeWatcher();
+			restoreStdout();
+			if (exitCode !== 0) {
+				process.exitCode = exitCode;
 			}
 			return;
 		}
-
-		printTimings();
-		await interactiveMode.run();
-	} else {
-		printTimings();
-		const exitCode = await runPrintMode(runtime, {
-			mode: toPrintOutputMode(appMode),
-			messages: parsed.messages,
-			initialMessage,
-			initialImages,
-		});
-		stopThemeWatcher();
-		restoreStdout();
-		if (exitCode !== 0) {
-			process.exitCode = exitCode;
+	} finally {
+		if (observeServer) {
+			await observeServer.close();
+		} else {
+			observeRecorder?.stop();
 		}
-		return;
 	}
 }

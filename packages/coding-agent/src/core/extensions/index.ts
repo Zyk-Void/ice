@@ -11,6 +11,7 @@ export {
 	loadExtensions,
 } from "./loader.ts";
 export type {
+	ActiveExtensionHandler,
 	ExtensionErrorListener,
 	ForkHandler,
 	NavigateTreeHandler,
@@ -61,6 +62,7 @@ export type {
 	ExtensionActions,
 	// API
 	ExtensionAPI,
+	ExtensionChromeOptions,
 	ExtensionCommandContext,
 	ExtensionCommandContextActions,
 	ExtensionContext,
@@ -72,6 +74,7 @@ export type {
 	ExtensionFlag,
 	ExtensionHandler,
 	ExtensionMode,
+	ExtensionNotifyOptions,
 	// Runtime
 	ExtensionRuntime,
 	ExtensionShortcut,

@@ -1,8 +1,15 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { appendCogneeObservation, type CogneeObservation, startCogneeObserver } from "../src/ice-cognee-observer.ts";
+import {
+	appendCogneeObservation,
+	COGNEE_OBSERVATION_FILE,
+	type CogneeObservation,
+	MAX_OBSERVATION_FILE_BYTES,
+	readCogneeObservations,
+	startCogneeObserver,
+} from "../src/ice-cognee-observer.ts";
 
 const tempDirs: string[] = [];
 
@@ -11,6 +18,28 @@ afterEach(() => {
 });
 
 describe("ice-cognee observer", () => {
+	it("keeps every concurrent observation across a size rotation", async () => {
+		const storageDir = mkdtempSync(join(tmpdir(), "ice-cognee-observer-"));
+		tempDirs.push(storageDir);
+		writeFileSync(join(storageDir, COGNEE_OBSERVATION_FILE), `${"x".repeat(MAX_OBSERVATION_FILE_BYTES - 10)}\n`);
+		const ids = Array.from({ length: 20 }, (_, index) => `rot-${index}`);
+		await Promise.all(
+			ids.map((id) =>
+				appendCogneeObservation(storageDir, {
+					id,
+					at: "2026-08-07T00:00:00.000Z",
+					agentId: "a",
+					sessionId: "s",
+					dataset: "ice",
+					operation: "remember_entry",
+					phase: "succeeded",
+				}),
+			),
+		);
+		const seen = (await readCogneeObservations(storageDir)).map((observation) => observation.id);
+		expect(ids.filter((id) => !seen.includes(id))).toEqual([]);
+	});
+
 	it("serves a live dashboard state without exposing secrets", async () => {
 		const storageDir = mkdtempSync(join(tmpdir(), "ice-cognee-observer-"));
 		tempDirs.push(storageDir);

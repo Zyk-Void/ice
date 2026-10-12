@@ -20,6 +20,11 @@ import {
 } from "./ice-cognee-observer.ts";
 import { redactCredentialText } from "./utils/redact.ts";
 
+/** Failed session-cache writes kept for a later drain while Cognee is unreachable. */
+const MAX_WARMUP_ENTRIES = 256;
+/** Tool traces captured per agent turn; long exploratory turns otherwise flood the session cache. */
+export const MAX_TRACES_PER_TURN = 24;
+
 /** Claude PostToolUse matcher analog: primary coding tools only. */
 export const CAPTURE_TOOL_ALLOWLIST = new Set([
 	"bash",
@@ -177,10 +182,14 @@ export function buildLocalPrecompactAnchor(
 
 /** Claude-compatible Cognee session id: ice_<hostSessionId>. */
 export function cogneeSessionId(hostSessionId: string): string {
-	const cleaned = hostSessionId
-		.trim()
-		.replace(/[^A-Za-z0-9._-]+/g, "_")
-		.slice(0, 120);
+	const trimmed = hostSessionId.trim();
+	const sanitized = trimmed.replace(/[^A-Za-z0-9._-]+/g, "_");
+	let cleaned = sanitized.slice(0, 120);
+	// Sanitizing or truncating can map distinct host ids to one Cognee session; a short hash of
+	// the original keeps them apart. Ordinary ids (UUIDs) are unchanged, so existing sessions keep their id.
+	if (cleaned !== trimmed) {
+		cleaned = `${sanitized.slice(0, 111)}_${createHash("sha256").update(trimmed).digest("hex").slice(0, 8)}`;
+	}
 	if (cleaned.startsWith("ice_")) return cleaned;
 	return `ice_${cleaned || "session"}`;
 }
@@ -439,6 +448,19 @@ export function createPendingRemember(
 	};
 }
 
+/** Write a private (0600) file through a temporary sibling; the temporary file never outlives a failure. */
+export async function writePrivateFileAtomic(target: string, content: string): Promise<void> {
+	const temporary = `${target}.${randomUUID()}.tmp`;
+	try {
+		await writeFile(temporary, content, { mode: 0o600 });
+		await chmod(temporary, 0o600);
+		await rename(temporary, target);
+	} catch (error) {
+		await unlink(temporary).catch(() => undefined);
+		throw error;
+	}
+}
+
 export async function enqueuePendingRemember(
 	directory: string,
 	record: PendingRemember,
@@ -450,11 +472,7 @@ export async function enqueuePendingRemember(
 	const filename = `${record.operationId}.json`;
 	if (files.includes(filename)) return true;
 	if (files.filter((file) => file.endsWith(".json")).length >= limit) return false;
-	const target = join(directory, filename);
-	const temporary = `${target}.${randomUUID()}.tmp`;
-	await writeFile(temporary, `${JSON.stringify(record)}\n`, { mode: 0o600 });
-	await chmod(temporary, 0o600);
-	await rename(temporary, target);
+	await writePrivateFileAtomic(join(directory, filename), `${JSON.stringify(record)}\n`);
 	return true;
 }
 
@@ -494,11 +512,7 @@ export async function updatePendingRememberState(
 	const records = await readPendingRemember(directory);
 	const record = records.find((item) => item.operationId === operationId);
 	if (!record) return;
-	const target = join(directory, `${operationId}.json`);
-	const temporary = `${target}.${randomUUID()}.tmp`;
-	await writeFile(temporary, `${JSON.stringify({ ...record, state })}\n`, { mode: 0o600 });
-	await chmod(temporary, 0o600);
-	await rename(temporary, target);
+	await writePrivateFileAtomic(join(directory, `${operationId}.json`), `${JSON.stringify({ ...record, state })}\n`);
 }
 
 export async function removePendingRemember(directory: string, operationId: string): Promise<void> {
@@ -543,10 +557,7 @@ export async function saveIceCogneeConfig(configPath: string, config: IceCogneeC
 		captureMaxChars: config.captureMaxChars,
 		queueLimit: config.queueLimit,
 	};
-	const temporary = `${configPath}.${randomUUID()}.tmp`;
-	await writeFile(temporary, `${JSON.stringify(persisted, null, 2)}\n`, { mode: 0o600 });
-	await chmod(temporary, 0o600);
-	await rename(temporary, configPath);
+	await writePrivateFileAtomic(configPath, `${JSON.stringify(persisted, null, 2)}\n`);
 }
 
 export function createCircuitState(): CircuitState {
@@ -591,7 +602,9 @@ interface CogneeRuntime {
 	client: CogneeClient | undefined;
 	loaded: boolean;
 	loading: Promise<void> | undefined;
-	circuit: CircuitState;
+	/** Recall and remember fail independently, so a slow recall never pauses queued remembers. */
+	recallCircuit: CircuitState;
+	rememberCircuit: CircuitState;
 	lastError: string | undefined;
 	lastRecallKey: string | undefined;
 	lastRecallAt: number;
@@ -612,6 +625,8 @@ interface CogneeRuntime {
 	lastImproveAt: number;
 	keySource: DoctorReport["apiKeySource"];
 	shuttingDown: boolean;
+	/** Tool traces captured since the current prompt started. */
+	turnTraces: number;
 	/** In-flight capture/improve promises drained on shutdown. */
 	background: Set<Promise<void>>;
 	activity: string | undefined;
@@ -635,7 +650,8 @@ export interface DoctorReport {
 	compactionSummaryMode: CompactionSummaryMode;
 	blackholeActive: boolean;
 	ownCompactionSummary: boolean;
-	circuit: "closed" | "open";
+	recallCircuit: "closed" | "open";
+	rememberCircuit: "closed" | "open";
 	lastError?: string;
 	saves: { prompt: number; trace: number; answer: number };
 	lastRecallHits: number;
@@ -737,7 +753,6 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 	const storageDir = options.storageDir ?? compatibleCogneeStorageDir(getAgentDir());
 	const configPath = join(storageDir, "config.json");
 	const pendingDir = join(storageDir, "pending");
-	const sessionsDir = join(storageDir, "sessions");
 	const warmupDir = join(storageDir, "warmup");
 	const skillsDir = join(dirname(fileURLToPath(import.meta.url)), "ice-cognee-skills");
 	let environment = normalizeLegacyEnvironment(options.env ?? process.env);
@@ -747,7 +762,8 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 		client: undefined,
 		loaded: false,
 		loading: undefined,
-		circuit: createCircuitState(),
+		recallCircuit: createCircuitState(),
+		rememberCircuit: createCircuitState(),
 		lastError: undefined,
 		lastRecallKey: undefined,
 		lastRecallAt: 0,
@@ -764,6 +780,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 		lastImproveAt: 0,
 		keySource: "none",
 		shuttingDown: false,
+		turnTraces: 0,
 		background: new Set(),
 		activity: undefined,
 		activityTimer: undefined,
@@ -847,24 +864,6 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 		const id = cogneeSessionId(hostId);
 		runtime.sessionId = id;
 		runtime.hostSessionId = hostId;
-		try {
-			await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
-			await chmod(sessionsDir, 0o700);
-			const path = join(sessionsDir, `${hostId.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 80)}.json`);
-			const temporary = `${path}.${randomUUID()}.tmp`;
-			const body = {
-				host_key: hostId,
-				session_id: id,
-				dataset: activeDataset(),
-				base_url: runtime.config.baseUrl,
-				updated_at: new Date().toISOString(),
-			};
-			await writeFile(temporary, `${JSON.stringify(body)}\n`, { mode: 0o600 });
-			await chmod(temporary, 0o600);
-			await rename(temporary, path);
-		} catch {
-			// session map is best-effort
-		}
 		return id;
 	};
 
@@ -872,6 +871,9 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 		if (!runtime.sessionId) return;
 		try {
 			await mkdir(warmupDir, { recursive: true, mode: 0o700 });
+			// Bounded like the pending queue: while Cognee stays down, newer entries are dropped.
+			const buffered = (await readdir(warmupDir)).filter((name) => name.endsWith(".json")).length;
+			if (buffered >= MAX_WARMUP_ENTRIES) return;
 			const name = `${Date.now()}-${randomUUID().slice(0, 8)}.json`;
 			const path = join(warmupDir, name);
 			await writeFile(
@@ -936,6 +938,8 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			.rememberEntry({ entry, sessionId, dataset: activeDataset() })
 			.then(() => {
 				runtime.saves[kind] += 1;
+				// A QA entry is what stores the captured prompt, so prompts count only once it is saved.
+				if (kind === "answer") runtime.saves.prompt += 1;
 				observe(operation, "succeeded", { requestId, latencyMs: Date.now() - startedAt, meta: { kind } });
 			})
 			.catch(async (error: unknown) => {
@@ -1146,7 +1150,8 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			compactionSummaryMode: runtime.config.compactionSummaryMode,
 			blackholeActive,
 			ownCompactionSummary,
-			circuit: canAttemptCircuit(runtime.circuit) ? "closed" : "open",
+			recallCircuit: canAttemptCircuit(runtime.recallCircuit) ? "closed" : "open",
+			rememberCircuit: canAttemptCircuit(runtime.rememberCircuit) ? "closed" : "open",
 			lastError: runtime.lastError,
 			saves: { ...runtime.saves },
 			lastRecallHits: runtime.lastRecallHits,
@@ -1186,7 +1191,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 				.filter((record) => record.state === "pending" || (allowUncertain && record.state === "uncertain"))
 				.slice(0, 4);
 			for (const record of records) {
-				if (!canAttemptCircuit(runtime.circuit)) return;
+				if (!canAttemptCircuit(runtime.rememberCircuit)) return;
 				const requestId = randomUUID();
 				const startedAt = Date.now();
 				observe("remember", "started", {
@@ -1197,7 +1202,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 				try {
 					await runtime.client.remember({ dataset: record.dataset, nodeSet: record.nodeSet, text: record.text });
 					await removePendingRemember(pendingDir, record.operationId);
-					runtime.circuit = resetCircuitState();
+					runtime.rememberCircuit = resetCircuitState();
 					observe("remember", "succeeded", {
 						requestId,
 						latencyMs: Date.now() - startedAt,
@@ -1220,7 +1225,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 						meta: { operationId: record.operationId, state: record.state },
 					});
 					runtime.lastError = kind;
-					runtime.circuit = noteCircuitFailure(runtime.circuit, kind);
+					runtime.rememberCircuit = noteCircuitFailure(runtime.rememberCircuit, kind);
 					if (kind === "timeout" || kind === "aborted")
 						await updatePendingRememberState(pendingDir, record.operationId, "uncertain");
 					appendOperation(ice, {
@@ -1232,7 +1237,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 						state: kind === "timeout" || kind === "aborted" ? "uncertain" : "pending",
 						error: kind,
 					});
-					if (!canAttemptCircuit(runtime.circuit))
+					if (!canAttemptCircuit(runtime.rememberCircuit))
 						notify(ctx, "Cognee remember paused after repeated failures", "warning");
 				}
 			}
@@ -1273,7 +1278,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			}
 			try {
 				const results = await runtime.client.recall(query, { topK: runtime.config.topK });
-				runtime.circuit = resetCircuitState();
+				runtime.recallCircuit = resetCircuitState();
 				runtime.lastError = undefined;
 				notify(
 					ctx,
@@ -1283,7 +1288,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			} catch (error) {
 				const kind = errorKind(error);
 				runtime.lastError = kind;
-				runtime.circuit = noteCircuitFailure(runtime.circuit, kind);
+				runtime.recallCircuit = noteCircuitFailure(runtime.recallCircuit, kind);
 				notify(ctx, `Cognee search failed: ${kind}`, "error");
 			}
 		};
@@ -1305,13 +1310,13 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			}
 			try {
 				await runtime.client.remember({ dataset: activeDataset(), nodeSet, text: safeText });
-				runtime.circuit = resetCircuitState();
+				runtime.rememberCircuit = resetCircuitState();
 				runtime.lastError = undefined;
 				notify(ctx, "Cognee memory stored", "info");
 			} catch (error) {
 				const kind = errorKind(error);
 				runtime.lastError = kind;
-				runtime.circuit = noteCircuitFailure(runtime.circuit, kind);
+				runtime.rememberCircuit = noteCircuitFailure(runtime.rememberCircuit, kind);
 				const record = createPendingRemember(safeText, activeDataset(), nodeSet, options.now?.() ?? Date.now());
 				const queued = await enqueuePendingRemember(pendingDir, record, runtime.config.queueLimit);
 				notify(
@@ -1341,7 +1346,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 						topK: runtime.config.topK,
 						signal,
 					});
-					runtime.circuit = resetCircuitState();
+					runtime.recallCircuit = resetCircuitState();
 					return {
 						content: [
 							{
@@ -1357,7 +1362,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 				} catch (error) {
 					const kind = errorKind(error);
 					runtime.lastError = kind;
-					runtime.circuit = noteCircuitFailure(runtime.circuit, kind);
+					runtime.recallCircuit = noteCircuitFailure(runtime.recallCircuit, kind);
 					return {
 						content: [{ type: "text", text: `Cognee search failed: ${kind}` }],
 						details: { enabled: true, count: 0, dataset: activeDataset(), error: kind },
@@ -1394,7 +1399,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 					const report = await collectDoctor();
 					notify(
 						ctx,
-						`Cognee ${report.enabled ? "on" : "off"}; health ${report.health}; recall ${report.autoRecall ? "on" : "off"}; remember ${report.autoRemember}; capture ${report.captureSession ? "on" : "off"}; tools ${report.captureTools ? "on" : "off"}; improve ${report.autoImprove ? "on" : "off"}; compact=${report.compactionSummaryMode}${report.blackholeActive ? "+blackhole" : ""}${report.ownCompactionSummary ? "(own-summary)" : "(defer-summary)"}; endpoint ${report.baseUrl}; dataset ${report.dataset}; session ${report.sessionId ?? "none"}; key ${report.apiKeySource}; saves p/t/a=${report.saves.prompt}/${report.saves.trace}/${report.saves.answer}; lastRecall=${report.lastRecallHits}; queue pending=${report.queuePending} uncertain=${report.queueUncertain}; breaker ${report.circuit}; lastError=${report.lastError ?? "none"}`,
+						`Cognee ${report.enabled ? "on" : "off"}; health ${report.health}; recall ${report.autoRecall ? "on" : "off"}; remember ${report.autoRemember}; capture ${report.captureSession ? "on" : "off"}; tools ${report.captureTools ? "on" : "off"}; improve ${report.autoImprove ? "on" : "off"}; compact=${report.compactionSummaryMode}${report.blackholeActive ? "+blackhole" : ""}${report.ownCompactionSummary ? "(own-summary)" : "(defer-summary)"}; endpoint ${report.baseUrl}; dataset ${report.dataset}; session ${report.sessionId ?? "none"}; key ${report.apiKeySource}; saves p/t/a=${report.saves.prompt}/${report.saves.trace}/${report.saves.answer}; lastRecall=${report.lastRecallHits}; queue pending=${report.queuePending} uncertain=${report.queueUncertain}; breaker recall=${report.recallCircuit} remember=${report.rememberCircuit}; lastError=${report.lastError ?? "none"}`,
 						"info",
 					);
 					updateStatusLine(ctx);
@@ -1417,7 +1422,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 							`compactMode=${report.compactionSummaryMode}`,
 							`blackhole=${report.blackholeActive}`,
 							`ownSummary=${report.ownCompactionSummary}`,
-							`breaker=${report.circuit}`,
+							`breaker=recall:${report.recallCircuit},remember:${report.rememberCircuit}`,
 							`saves=${JSON.stringify(report.saves)}`,
 							`queue=${report.queuePending}/${report.queueUncertain}`,
 							`detail=${report.healthDetail ?? ""}`,
@@ -1639,6 +1644,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 
 		// ── Claude UserPromptSubmit: recall + pending prompt capture ───
 		ice.on("before_agent_start", async (event, ctx) => {
+			runtime.turnTraces = 0;
 			const requestId = randomUUID();
 			const startedAt = Date.now();
 			startActivity(ctx, "recall");
@@ -1663,10 +1669,9 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 						truncateForCapture(event.prompt, runtime.config.captureMaxChars),
 						runtime.config.captureMaxChars,
 					);
-					runtime.saves.prompt += 1;
 				}
 
-				if (!runtime.config.autoRecall || !canAttemptCircuit(runtime.circuit)) {
+				if (!runtime.config.autoRecall || !canAttemptCircuit(runtime.recallCircuit)) {
 					observe("recall", "succeeded", {
 						requestId,
 						latencyMs: Date.now() - startedAt,
@@ -1690,7 +1695,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 					scope: ["session", "trace", "graph"],
 					signal: ctx.signal,
 				});
-				runtime.circuit = resetCircuitState();
+				runtime.recallCircuit = resetCircuitState();
 				runtime.lastRecallHits = results.length;
 				runtime.lastRecallKey = recallKey;
 				runtime.lastRecallAt = now;
@@ -1707,7 +1712,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			} catch (error) {
 				const kind = errorKind(error);
 				runtime.lastError = kind;
-				runtime.circuit = noteCircuitFailure(runtime.circuit, kind);
+				runtime.recallCircuit = noteCircuitFailure(runtime.recallCircuit, kind);
 				observe("recall", "failed", { requestId, latencyMs: Date.now() - startedAt, error: kind });
 				return turnScopedMemory(event.systemPrompt);
 			} finally {
@@ -1727,6 +1732,8 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			) {
 				return;
 			}
+			if (runtime.turnTraces >= MAX_TRACES_PER_TURN) return;
+			runtime.turnTraces += 1;
 
 			const input = event.input ?? {};
 			const max = runtime.config.captureMaxChars;
@@ -1831,7 +1838,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 			await clearCheckpointRecallForSession(hostSessionId);
 			if (!runtime.config.checkpointRecall) return;
 			try {
-				if (!runtime.client || !canAttemptCircuit(runtime.circuit)) return;
+				if (!runtime.client || !canAttemptCircuit(runtime.recallCircuit)) return;
 				const query = checkpointRecallQuery(event.preparation);
 				if (!query) return;
 				const client = runtime.client;
@@ -1841,7 +1848,7 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 					scope: ["session", "trace", "graph"],
 					signal: event.signal,
 				});
-				runtime.circuit = resetCircuitState();
+				runtime.recallCircuit = resetCircuitState();
 				if (results.length === 0) return;
 				let remainingChars = runtime.config.recallMaxChars;
 				const boundedResults: Array<{ text: string; score?: number }> = [];
@@ -1863,19 +1870,11 @@ export function createIceCogneeExtension(options: IceCogneeExtensionOptions = {}
 					results: boundedResults,
 				};
 				await mkdir(storageDir, { recursive: true });
-				const temporaryPath = `${checkpointRecallPath}.${randomUUID()}.tmp`;
-				try {
-					await writeFile(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
-					await rename(temporaryPath, checkpointRecallPath);
-				} finally {
-					await unlink(temporaryPath).catch((error: NodeJS.ErrnoException) => {
-						if (error.code !== "ENOENT") throw error;
-					});
-				}
+				await writePrivateFileAtomic(checkpointRecallPath, `${JSON.stringify(payload, null, 2)}\n`);
 			} catch (error) {
 				const kind = errorKind(error);
 				runtime.lastError = kind;
-				runtime.circuit = noteCircuitFailure(runtime.circuit, kind);
+				runtime.recallCircuit = noteCircuitFailure(runtime.recallCircuit, kind);
 			}
 		};
 

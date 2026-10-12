@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { type Dirent, existsSync, readdirSync, readFileSync, type Stats, statSync } from "fs";
 import ignore from "ignore";
 import { basename, dirname, join, relative, resolve, sep } from "path";
 import { getAgentDir, getProjectConfigDir } from "../config.ts";
@@ -322,6 +322,67 @@ function loadSkillFromFile(
 		diagnostics.push({ type: "warning", message, path: filePath });
 		return { skill: null, diagnostics };
 	}
+}
+
+function collectSignatureEntries(dir: string, parts: string[], visitedDirs: Set<string>): void {
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(dir, { withFileTypes: true });
+	} catch {
+		parts.push(`${dir}|unreadable`);
+		return;
+	}
+	entries.sort((a, b) => a.name.localeCompare(b.name));
+	for (const entry of entries) {
+		if ((entry.name.startsWith(".") && !IGNORE_FILE_NAMES.includes(entry.name)) || entry.name === "node_modules")
+			continue;
+		const fullPath = join(dir, entry.name);
+		let stats: Stats;
+		try {
+			stats = statSync(fullPath);
+		} catch {
+			parts.push(`${fullPath}|missing`);
+			continue;
+		}
+		if (stats.isDirectory()) {
+			parts.push(`${fullPath}|dir|${stats.mtimeMs}`);
+			const realPath = canonicalizePath(fullPath);
+			if (!visitedDirs.has(realPath)) {
+				visitedDirs.add(realPath);
+				collectSignatureEntries(fullPath, parts, visitedDirs);
+			}
+		} else {
+			parts.push(`${fullPath}|${stats.mtimeMs}|${stats.size}`);
+		}
+	}
+}
+
+/**
+ * Compute a change-detection signature over skill source paths.
+ *
+ * Walks each path (directories recursively, skipping dot entries and node_modules) and records
+ * every file's mtime and size, including ignore files. The signature changes when a skill file,
+ * skill directory, or ignore file is added, updated, or deleted, without reading file contents.
+ */
+export function computeSkillsSignature(paths: string[]): string {
+	const parts: string[] = [];
+	for (const root of paths) {
+		let stats: Stats;
+		try {
+			stats = statSync(root);
+		} catch {
+			parts.push(`${root}|missing`);
+			continue;
+		}
+		if (!stats.isDirectory()) {
+			parts.push(`${root}|${stats.mtimeMs}|${stats.size}`);
+			continue;
+		}
+		parts.push(`${root}|dir|${stats.mtimeMs}`);
+		const visitedDirs = new Set([canonicalizePath(root)]);
+		collectSignatureEntries(root, parts, visitedDirs);
+	}
+	return parts.join("\n");
 }
 
 /**

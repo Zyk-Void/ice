@@ -7,6 +7,8 @@ import type { AppKeybinding, KeybindingsManager } from "../../../core/keybinding
 export class CustomEditor extends Editor {
 	private keybindings: KeybindingsManager;
 	public actionHandlers: Map<AppKeybinding, () => void> = new Map();
+	/** Actions that only claim their key while `canHandle` is true; otherwise the key reaches the editor. */
+	private readonly conditionalActions = new Map<AppKeybinding, { canHandle: () => boolean; handler: () => void }>();
 
 	// Special handlers that can be dynamically replaced
 	public onEscape?: () => void;
@@ -27,10 +29,21 @@ export class CustomEditor extends Editor {
 		this.actionHandlers.set(action, handler);
 	}
 
+	onConditionalAction(action: AppKeybinding, canHandle: () => boolean, handler: () => void): void {
+		this.conditionalActions.set(action, { canHandle, handler });
+	}
+
 	handleInput(data: string): void {
 		// Check extension-registered shortcuts first
 		if (this.onExtensionShortcut?.(data)) {
 			return;
+		}
+
+		for (const [action, { canHandle, handler }] of this.conditionalActions) {
+			if (this.keybindings.matches(data, action) && canHandle()) {
+				handler();
+				return;
+			}
 		}
 
 		// Check for clipboard paste keybinding

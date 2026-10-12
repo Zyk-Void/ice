@@ -852,6 +852,8 @@ ice.on("tool_result", async (event, ctx) => {
 
 Fired when user executes `!` or `!!` commands. **Can intercept.**
 
+Return `undefined` to let the next handler run (or use local Bash if no handler intercepts). A routing response must contain custom `operations` with an `exec` function, or a complete `result` (`output`, `exitCode`, `cancelled`, `truncated`, and optional `fullOutputPath`). Handler exceptions and malformed responses fail closed: remaining handlers and local Bash are not executed. Interactive mode displays the failure and exits Bash input mode; RPC returns a command error. Returning an empty object, `null`, or `false` is not a pass-through. This does not undo effects already performed inside a handler.
+
 ```typescript
 import { createLocalBashOperations } from "@zykairotis/ice-coding-agent";
 
@@ -1403,7 +1405,8 @@ ice.sendMessage({
 
 **Options:**
 - `deliverAs` - Delivery mode:
-  - `"steer"` (default) - Queues the message while streaming. Delivered after the current assistant turn finishes executing its tool calls, before the next LLM call.
+  - Omitted, or `"steer"`/`"followUp"` with `triggerTurn: false` - While streaming, the message is recorded at the next turn boundary (after the current tool results) and included in the next LLM call without starting an extra turn. Otherwise behaves like `"steer"`.
+  - `"steer"` - Queues the message while streaming. Delivered after the current assistant turn finishes executing its tool calls, before the next LLM call.
   - `"followUp"` - Waits for agent to finish. Delivered only when agent has no more tool calls.
   - `"nextTurn"` - Queued for next user prompt. Does not interrupt or trigger anything.
 - `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`).
@@ -2966,7 +2969,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `interactive-shell.ts` | Persistent shell session | `on("user_bash")` |
 | `sandbox/` | Sandboxed tool execution | Tool operations |
 | `gondolin/` | Route built-in tools and `!` commands into a Gondolin micro-VM | Tool operations, built-in tool overrides, `on("user_bash")` |
-| `subagent/` | Spawn sub-agents | `registerTool`, `exec` |
+| `subagent/` | Legacy separate-process subagent example (distinct from ICE Subagents V2) | `registerTool`, `exec` |
 | **Games** |||
 | `snake.ts` | Snake game | `registerCommand`, `ui.custom`, keyboard handling |
 | `space-invaders.ts` | Space Invaders game | `registerCommand`, `ui.custom` |

@@ -33,6 +33,21 @@ function createAssistantMessage(
 }
 
 describe("AssistantMessageComponent", () => {
+	test("renders no placeholder for hidden thinking when the hidden label is empty", () => {
+		initTheme("dark");
+		const message = createAssistantMessage([
+			{ type: "thinking", thinking: "private reasoning" },
+			{ type: "text", text: "answer" },
+		]);
+		const labelled = stripAnsi(new AssistantMessageComponent(message, true).render(60).join("\n"));
+		expect(labelled).toContain("Thinking...");
+
+		const silent = stripAnsi(new AssistantMessageComponent(message, true, undefined, "").render(60).join("\n"));
+		expect(silent).not.toContain("Thinking...");
+		expect(silent).not.toContain("private reasoning");
+		expect(silent).toContain("answer");
+	});
+
 	test("adds OSC 133 zone markers to assistant messages without tool calls", () => {
 		initTheme("dark");
 

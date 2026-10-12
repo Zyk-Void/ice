@@ -22,7 +22,7 @@ import type { PromptTemplate } from "./prompt-templates.ts";
 import { loadPromptTemplates } from "./prompt-templates.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import type { Skill } from "./skills.ts";
-import { loadSkills } from "./skills.ts";
+import { computeSkillsSignature, loadSkills } from "./skills.ts";
 import { createSourceInfo, type SourceInfo } from "./source-info.ts";
 import { resetTimings } from "./timings.ts";
 
@@ -47,6 +47,11 @@ export interface ResourceLoader {
 	getAppendSystemPrompt(): string[];
 	getAppendSystemPromptSources(): Array<{ path: string }>;
 	extendResources(paths: ResourceExtensionPaths): void;
+	/**
+	 * Re-scan the current skill source paths and reload skills when any skill file or directory was added, updated, or
+	 * deleted since the last load. Returns true when skills were reloaded, false when nothing changed.
+	 */
+	refreshSkillsIfChanged(): boolean;
 	reload(options?: ResourceLoaderReloadOptions): Promise<void>;
 }
 
@@ -245,6 +250,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private appendSystemPrompt: string[];
 	private appendSystemPromptSourcePaths: string[];
 	private lastSkillPaths: string[];
+	private lastSkillSignature?: string;
 	private extensionSkillSourceInfos: Map<string, SourceInfo>;
 	private extensionPromptSourceInfos: Map<string, SourceInfo>;
 	private extensionThemeSourceInfos: Map<string, SourceInfo>;
@@ -719,6 +725,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 				this.getDefaultSourceInfoForPath(skill.filePath),
 		}));
 		this.skillDiagnostics = resolvedSkills.diagnostics;
+		this.lastSkillSignature = computeSkillsSignature(skillPaths);
+	}
+
+	refreshSkillsIfChanged(): boolean {
+		if (!this.loaded) return false;
+		if (computeSkillsSignature(this.lastSkillPaths) === this.lastSkillSignature) return false;
+		this.updateSkillsFromPaths(this.lastSkillPaths, this.resourceMetadataByPath);
+		return true;
 	}
 
 	private updatePromptsFromPaths(promptPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {

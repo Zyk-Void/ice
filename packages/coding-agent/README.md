@@ -14,7 +14,7 @@
 
 Ice is a minimal terminal coding harness. Adapt ice to your workflows, not the other way around, without having to fork and modify ice internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Ice Packages](#ice-packages) and share them with others via npm or git.
 
-Ice ships with powerful defaults but skips features like sub agents and plan mode. Instead, you can ask ice to build what you want or install a third party ice package that matches your workflow.
+This ICE distribution keeps Ice's extensible agent core and adds ICE-specific Subagents V2 and guarded plan/build modes through the `ice` launcher. See [Subagents V2](docs/subagents-v2.md) for the current agent tools, definitions, permissions, and lifecycle. These in-process policy controls are not an operating-system sandbox.
 
 Ice runs in four modes: interactive, print or JSON, RPC for process integration, and an SDK for embedding in your own apps.
 
@@ -47,6 +47,7 @@ I regularly publish my own `ice-mono` work sessions here:
   - [Branching](#branching)
   - [Compaction](#compaction)
 - [Settings](#settings)
+- [Subagents V2](#subagents-v2)
 - [Context Files](#context-files)
 - [Customization](#customization)
   - [Prompt Templates](#prompt-templates)
@@ -91,6 +92,10 @@ ice
 Then just talk to ice. By default, ice gives the model four tools: `read`, `write`, `edit`, and `bash`. The model uses these to fulfill your requests. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [ice packages](#ice-packages).
 
 **Platform notes:** [Windows](docs/windows.md) | [Termux (Android)](docs/termux.md) | [tmux](docs/tmux.md) | [Terminal setup](docs/terminal-setup.md) | [Shell aliases](docs/shell-aliases.md)
+
+## Subagents V2
+
+The ICE `ice` launcher includes V2 subagents: named agent definitions, bounded child sessions, deny-first permissions, and optional worktree patch review. Start with [`docs/subagents-v2.md`](docs/subagents-v2.md); use the [reference](docs/subagents-v2-reference.md) for settings and schemas, the [migration guide](docs/subagents-v2-migration.md) for removed legacy tools, and the [architecture guide](docs/subagents-v2-architecture.md) for implementation details.
 
 ---
 
@@ -382,7 +387,7 @@ The default export can also be `async`. ice waits for async extension factories 
 
 **What's possible:**
 - Custom tools (or replace built-in tools entirely)
-- Sub-agents and plan mode
+- ICE Subagents V2 and guarded plan/build modes
 - Custom compaction and summarization
 - Permission gates and path protection
 - Custom editors and UI components
@@ -493,13 +498,11 @@ See [docs/rpc.md](docs/rpc.md) for the protocol.
 
 Ice is aggressively extensible so it doesn't have to dictate your workflow. Features that other tools bake in can be built with [extensions](#extensions), [skills](#skills), or installed from third-party [ice packages](#ice-packages). This keeps the core minimal while letting you shape ice to fit how you work.
 
-**No MCP.** Build CLI tools with READMEs (see [Skills](#skills)), or build an extension that adds MCP support. [Why?](https://mariozechner.at/posts/2025-11-02-what-if-you-dont-need-mcp/)
+**MCP is optional.** ICE can pass explicitly selected MCP tools through the parent's authorized adapter to a subagent; it does not grant a child an independent server or wider authority. See [Subagents V2](docs/subagents-v2.md).
 
-**No sub-agents.** There's many ways to do this. Spawn ice instances via tmux, or build your own with [extensions](#extensions), or install a package that does it your way.
+**Subagents and guarded planning are ICE additions.** The `ice` launcher includes Subagents V2 and plan/build controls while keeping the parent Ice session as the authoritative loop. See [Subagents V2](docs/subagents-v2.md) and the ICE-specific [security boundaries](docs/security.md).
 
-**No permission popups.** Run in a container, or build your own confirmation flow with [extensions](#extensions) inline with your environment and security requirements.
-
-**No plan mode.** Write plans to files, or build it with [extensions](#extensions), or install a package.
+**Approval is not isolation.** ICE can ask before a child mutation, but an approved shell command still runs as the host user. Use a container or VM when you need an independent execution boundary.
 
 **No built-in to-dos.** They confuse models. Use a TODO.md file, or build your own with [extensions](#extensions).
 
@@ -583,6 +586,12 @@ cat README.md | ice -p "Summarize this text"
 | `--no-tools`, `-nt` | Disable all tools by default |
 
 Available built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`
+
+#### Background shells
+
+`bash` accepts `run_in_background: true` for commands that keep running (dev servers, watchers, long test runs), and an optional `description` that labels the shell when it finishes; pressing `ctrl+b` moves a running bash call to the background too. Whenever `bash` is active, the model also gets `bash_output`, which reports a background shell's status and the output written since its last check and can wait for the shell to finish (`wait_seconds`, up to 300 at a time; a prompt you send ends the wait early), and `bash_kill`, which stops one. A shell's final output arrives as a message when it exits; while shells run, the model is reminded of them with each prompt whose set of running shells changed. `--tools bash` enables all three, and `--exclude-tools` can still remove `bash_output` or `bash_kill` individually.
+
+In interactive mode the footer shows `N shell(s)`. Press `down` in an empty editor, click the count in fullscreen mode, or run `/shells` to open the Shells panel in place of the editor, with the transcript still in view. It lists running shells; a shell that exits while you view it stays open until you go back to the list. `enter` shows a shell's status, runtime, command, and live output; `f` follows its output in a taller live view; `x` stops it; `left` goes back; `escape` closes. A shell you stop is recorded for the model's next turn without waking it, so it does not restart the command on its own. Each shell keeps the newest 256 KB of output, and the model can still read the 20 most recent finished shells with `bash_output`.
 
 ### Resource Options
 

@@ -45,7 +45,8 @@ describe("user message appearance", () => {
 		const component = new UserMessageComponent("hello");
 		component.setAppearance({ ...createDefaultAppearance().userMessage, borderStyle: "single" });
 		const lines = component.render(30).map(stripAnsi);
-		expect(lines.length).toBeGreaterThan(3);
+		// Top border, the compact content row, bottom border.
+		expect(lines).toHaveLength(3);
 		expect(lines.some((line) => line.includes("┌"))).toBe(true);
 		expect(lines.some((line) => line.includes("└"))).toBe(true);
 	});

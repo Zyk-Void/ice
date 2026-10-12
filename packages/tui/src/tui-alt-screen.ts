@@ -37,13 +37,17 @@ import {
 	getGraphemeCellRange,
 	getOsc8LinkAtColumn,
 	sliceByColumn,
+	stripOsc8Links,
 	stripTerminalSequences,
+	styleOsc8Link,
 	visibleWidth,
 } from "./utils.ts";
 
 const ENTER_ALT_SCREEN = "\x1b[?1049h";
 const EXIT_ALT_SCREEN = "\x1b[?1049l";
 const DISABLE_AUTOWRAP = "\x1b[?7l";
+const ACTION_HOVER_START = "\x1b[7m";
+const ACTION_HOVER_END = "\x1b[27m";
 const ENABLE_AUTOWRAP = "\x1b[?7h";
 const ENABLE_MOUSE = "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1004h\x1b[?1006h";
 const DISABLE_MOUSE = "\x1b[?1006l\x1b[?1004l\x1b[?1003l\x1b[?1002l\x1b[?1000l";
@@ -100,6 +104,11 @@ export interface TuiAltScreenOptions {
 	mouse?: boolean;
 	/** Open an OSC 8 hyperlink activated with a primary-button click. */
 	openUrl?: (url: string) => void;
+	/**
+	 * Links the application handles itself. They are kept out of terminal output, so the terminal neither
+	 * underlines nor opens them, and are highlighted in reverse video while the pointer is over them.
+	 */
+	isActionUrl?: (url: string) => boolean;
 }
 
 /** Alternate-screen TUI with a scrollable, application-owned viewport. */
@@ -132,6 +141,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 	private readonly wheelScrollLines: number;
 	private readonly mouseEnabled: boolean;
 	private readonly openUrl?: (url: string) => void;
+	private readonly isActionUrl?: (url: string) => boolean;
+	private hoverPointer?: { x: number; y: number };
+	private hoveredActionUrl?: string;
 
 	constructor(
 		terminal: Terminal,
@@ -151,6 +163,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.wheelScrollLines = Math.max(1, Math.floor(options.wheelScrollLines ?? 1));
 		this.mouseEnabled = options.mouse ?? true;
 		this.openUrl = options.openUrl;
+		this.isActionUrl = options.isActionUrl;
 		this.addInputListener((data) => this.handleViewportInput(data));
 	}
 
@@ -231,7 +244,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				normalizeCursorMarkers(line).replace(OSC133_ZONE_PREFIX, ""),
 			);
 			this.lastDocument = this.applyLineResets(documentLines.map((line) => line.replaceAll(CURSOR_MARKER, ""))).map(
-				(line) => (isImageLine(line) || visibleWidth(line) <= width ? line : sliceByColumn(line, 0, width, true)),
+				(line) =>
+					this.toTerminalLine(
+						isImageLine(line) || visibleWidth(line) <= width ? line : sliceByColumn(line, 0, width, true),
+					),
 			);
 			let buffer = `${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}${DISABLE_AUTOWRAP}`;
 			for (let row = 0; row < this.lastDocument.length; row++) {
@@ -351,6 +367,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			this.stopScrollbarDrag();
 			this.pressedUrl = undefined;
 			this.selectionDragged = false;
+			this.hoverPointer = undefined;
 			if (hadActiveSelection) {
 				this.selectionAnchor = undefined;
 				this.selectionFocus = undefined;
@@ -369,6 +386,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		if (mouseEvent) {
 			const handled = this.handleScrollbarMouseEvent(mouseEvent);
 			if (!this.scrollbarDrag) this.updateScrollbarHover(mouseEvent.x, mouseEvent.y);
+			this.updateActionHover(mouseEvent.x, mouseEvent.y);
 			if (!handled) this.handleSelectionMouseEvent(mouseEvent);
 			return { consume: true };
 		}
@@ -405,6 +423,24 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			return { consume: true };
 		}
 		return undefined;
+	}
+
+	private actionUrlAt(screen: readonly string[], pointer: { x: number; y: number } | undefined): string | undefined {
+		if (!pointer || !this.isActionUrl || this.hasOverlay()) return undefined;
+		const url = getOsc8LinkAtColumn(screen[pointer.y] ?? "", pointer.x);
+		return url !== undefined && this.isActionUrl(url) ? url : undefined;
+	}
+
+	/** Repaints only when the pointer enters or leaves an action link; the highlight itself is applied per frame. */
+	private updateActionHover(x: number, y: number): void {
+		if (!this.isActionUrl) return;
+		this.hoverPointer = { x, y };
+		if (this.actionUrlAt(this.previousScreen, this.hoverPointer) !== this.hoveredActionUrl) this.requestRender();
+	}
+
+	/** Terminal bytes for a screen line: action links stay internal so the terminal does not style or open them. */
+	private toTerminalLine(line: string): string {
+		return this.isActionUrl ? stripOsc8Links(line, this.isActionUrl) : line;
 	}
 
 	private parseWheelEvent(data: string): WheelEvent | undefined {
@@ -836,6 +872,11 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		screen = this.compositeOverlays(screen, width, height);
 		if (screen.length > height) screen = screen.slice(screen.length - height);
 		screen = this.applySelection(screen, nextLayout);
+		const hoveredActionUrl = this.actionUrlAt(screen, this.hoverPointer);
+		this.hoveredActionUrl = hoveredActionUrl;
+		if (hoveredActionUrl) {
+			screen = screen.map((line) => styleOsc8Link(line, hoveredActionUrl, ACTION_HOVER_START, ACTION_HOVER_END));
+		}
 		screen = this.compositeFlashes(screen, width, height);
 
 		const cursorPos = this.extractCursorPosition(screen, height);
@@ -873,7 +914,7 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 		for (let row = 0; row < height; row++) {
 			if (!fullRedraw && !imagesNeedRedraw && screen[row] === this.previousScreen[row]) continue;
-			buffer += `\x1b[${row + 1};1H\x1b[2K${preparedKittyScreen.lines[row] ?? ""}`;
+			buffer += `\x1b[${row + 1};1H\x1b[2K${this.toTerminalLine(preparedKittyScreen.lines[row] ?? "")}`;
 		}
 
 		if (cursorPos) {

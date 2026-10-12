@@ -19,8 +19,9 @@ describe("appearance baseline (W0)", () => {
 		initTheme("dark");
 		const component = new UserMessageComponent("hello");
 		const lines = component.render(20);
-		expect(lines).toHaveLength(3);
-		expect(stripAnsi(lines[1])).toContain("hello");
+		// Default user messages are compact: no vertical padding (paddingY 0).
+		expect(lines).toHaveLength(1);
+		expect(stripAnsi(lines[0]!)).toContain("hello");
 	});
 
 	test("default assistant appearance preserves stock rendering", () => {

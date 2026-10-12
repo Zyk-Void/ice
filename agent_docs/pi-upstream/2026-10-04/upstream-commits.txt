@@ -1,0 +1,1294 @@
+35074a30b77efc462d743c8753423446cac65bce 2026-08-05T07:04:54Z chore: approve contributors from issue #7631
+73dd066ee5384883477d1e9fbebec48976e5a810 2026-08-05T09:05:20+02:00 fix(tui): detect Windows Shift+Enter
+464804e1561191585f208e730d8373a1b21d4e56 2026-08-05T09:12:18+02:00 fix(tui): merge upstream main
+0df5a69e5e119f8421f4f572d9a3c2ba4c0f5a39 2026-08-05T09:14:57+02:00 docs(agent): harness-v2: count forked messages in session stats
+a80008b96c933dd13346f8504e425279c5b6a68f 2026-08-05T09:28:44+02:00 chore: rename storage package to session-backends
+46b53b995b4c1e4fa2a29318cba4163cc63f86c4 2026-08-05T09:38:28+02:00 fix: retry transient management HTTP requests (#7632)
+66534fbdc7bb09492b40142471bbbb87b4a4d5bc 2026-08-05T04:43:24-03:00 feat(coding-agent): render Mermaid diagrams (#7624)
+bb6a1cddc72de48b12257df83fd04495303dbd22 2026-08-05T10:50:10+03:00 refactor(server): rename backend contract to service (#7643)
+2c233a5c04f12ada58e3908c376c5e28bfdb38ef 2026-08-05T09:50:58+02:00 fix(tui): add iterm payload size for xterm.js image addon (#7612)
+845bb970f315918f5505e9a51d209b359109f820 2026-08-05T09:56:43+02:00 fix: build error on request info (#7645)
+7bdeeb8f9358624dc76652cd701acd5ece65e64c 2026-08-05T09:57:30+02:00 fix(agent): count copied messages in fork stats
+dab70b2cd47c39d6c42365683f9fbf26fa2c8b0b 2026-08-05T11:06:39+03:00 fix(server): sanitize service failures (#7644)
+f909da2bf0e39ebeca9b2608f511d4167435360e 2026-08-05T08:52:35+02:00 docs(agent): reserve harness R0 work package
+591f22a618639ae65c5e29fb7cd7fbc4a6260dbc 2026-08-05T10:41:44+02:00 feat(agent): add indexed harness recovery queries (#7646)
+1e95e16b61f4a561b932df83d58df52589e58635 2026-08-05T10:51:46+02:00 fix(agent): remove redundant SQLite read clones
+7cf90c1d183bd6de8b113677f05f5daffcd80fdf 2026-08-05T11:29:32+02:00 fix(coding-agent): avoid model store read lock contention
+651d5d6a53690b3ec87b72fca0b3f993ac5ec748 2026-08-05T11:42:47+02:00 partial harness v2/json backend (#7611)
+e77e2b751cbd28313073ed2de43d4b3294c73dcd 2026-08-05T12:00:36+02:00 fix(agent): correct JSONL fork entry semantics
+afdf73661b980e8ced8d40aaa5cc9c6ae52df4ae 2026-08-05T12:12:31+02:00 docs(agent): reserve harness R1 work package
+1022a9e8244df5c35e2288196069c7cec3b4dd70 2026-08-05T13:25:37+03:00 fix(agent): list SQLite sessions without writer claims (#7655)
+a5953d2e1530e44d905b836ebad32dfd8d4145a8 2026-08-05T12:49:20+02:00 feat(agent): validate harness recovery record logs
+c38319ea10ea98e5caedaad2ea1750f4baedd111 2026-08-05T13:00:30+02:00 fix(agent): share state between memory and JSONL sessions
+6bfd50261dfa103a761c2638965248381251827c 2026-08-05T11:25:20Z chore: approve contributors from issue #7657
+b780d20aa17c4144ace7bff728150993236b88ee 2026-08-05T07:50:37-04:00 fix(tui): close truncated OSC 8 links (#7657)
+ea7bfdc08bc2859cde8292655f075b37ae1da1a9 2026-08-05T14:03:24+02:00 docs(agent): unreserve R2 work package
+162b1883bd806e02cf4db2dbfc15f900c23f1494 2026-08-05T14:37:03+02:00 feat(agent): add JSONL metadata contracts
+ac27947f7bb7df3182f189be8bc4f099986b3191 2026-08-05T14:48:39+02:00 feat(agent): split JSONL session backend modules
+2901362533b848cfe3a3269070280e8caa033b1f 2026-08-05T15:08:04+02:00 docs(agent): reserve harness I0 and L1-L3 work packages
+c518004666033ade0de072dbf4ceb6b94dcd0882 2026-08-05T15:16:20+02:00 docs(agent): clarify lane reduction contract (#7662)
+abac29f671f320f497502628592a6882d2c166f6 2026-08-05T15:28:37+02:00 docs(agent): reserve harness R2 work package
+14c89ad9992ce19857f59555ec1342594b9fc0fa 2026-08-05T15:37:05+02:00 chore: UnavailableRegistry
+ed303b9bd61cb2c5d2870590074b044ad9ed98ec 2026-08-05T15:41:14+02:00 chore: scaffold test
+7a103289d9e45b0f9c9bf08e0046829900af8224 2026-08-05T15:54:48+02:00 docs: f0 done
+a79b22622a4def33465a7a16b6c7040c394b76f0 2026-08-05T16:06:12+02:00 fix(agent): match coding-agent JSONL session layout
+2c79ce45321626d76857415c4670442e7be769eb 2026-08-05T15:53:19+02:00 fix(coding-agent): avoid custom store lock convoys
+4d68d9355131361a831b361b58d89b028bf5d247 2026-08-05T16:15:42+02:00 fix(coding-agent): shorten file lock retry delays
+ce5d98cc001ee4a7ddea5e287aca7ed7088f6f3b 2026-08-05T16:23:31+02:00 fix(coding-agent): keep unit model stores in memory
+b3ec7c00688480737146b58114fc05420f5cc09e 2026-08-05T16:50:01+02:00 fix(agent): stop JSONL repositories from retaining sessions
+2f550d827d468a00d91626ab54118f5802387a46 2026-08-05T16:57:41+02:00 fix: project open operation id to lanes (#7654)
+c7fc779408f7b36742608f03d047b45f470594a3 2026-08-05T17:17:33+02:00 feat(agent): complete JSONL codec contract coverage
+48b8b547c8b3ccc53ac819416a92b0e918809e70 2026-08-05T17:51:28+02:00 fix(agent): require JSONL session cwd at creation
+d3d2c2ec7c10a69e4290553e3e625b96d5536d11 2026-08-05T16:09:39Z chore: approve contributors from issue #7642
+acb2fd984997448b53a60e1034d045a4bfe56f51 2026-08-05T18:13:51+02:00 fix(agent): complete JSONL storage round-trip coverage
+e61d8f4f4447cdaf0dd76d79a95c512fec900623 2026-08-05T18:15:36+02:00 docs(agent): mark JSONL J1 complete
+104364f4c5d48b8136461227e9be0a490c1f72bc 2026-08-05T18:23:22+02:00 docs(agent): mark JSONL J2 complete
+17f720489fab02413c549c73bb407b8d6ef500c4 2026-08-05T19:01:36+02:00 fix(agent): validate required JSONL mutation fields
+9524d3a580ec508e7c82788446ab9692799d53be 2026-08-05T20:23:38+02:00 fix(coding-agent): normalize Windows shell drive paths
+29d9f087cc7b9064998f91e97ab5e89e5b67dff7 2026-08-05T20:41:32+02:00 fix(tui): avoid throttling keyboard input
+4254e0d93a9fe32d1d9592e747d8ec4b871ab4c7 2026-08-05T20:54:32+02:00 fix(tui): include Windows native rebuild sources
+459eb5eba8582fcedd713e0c160903ce3e972a51 2026-08-05T21:06:13+02:00 docs(agent): finalize harness telemetry design
+3852cb2b813243f3c81a873ed97827798aa7dbeb 2026-08-05T21:20:26+02:00 fix(coding-agent): send prompts queued during compaction
+8ecf8a9883d1cb7c78d07c0fd64d32d6a1fd2c4c 2026-08-05T15:24:31-04:00 feat(coding-agent): support AGENTS.override.md (#7681)
+229afb825cfc880714a6f38044531e8d4bcc6ef8 2026-08-05T15:28:59-04:00 fix(tui): skip OSC 8 scan for plain prefixes (#7665)
+16ad96ae89c028f9058c8de2fad0ab45c20ce233 2026-08-05T21:33:57+02:00 feat(tui): add configurable prompt history actions
+05e89b4188d1b0b4631d470300ce5960baf85a62 2026-08-05T21:41:19+02:00 feat(tui): render LaTeX math in Markdown
+d4eaf052b25ee6fd28985e0b8a408eab16e3afba 2026-08-05T21:56:27+02:00 fix(coding-agent): support path globs on Windows
+04d6447f7c492aafac97e2d2450b532650a85556 2026-08-05T22:03:14+02:00 feat: add typed telemetry contracts
+14cc26e86dfbb68d54e8bab0f955940bcf61b130 2026-08-06T04:15:51+08:00 fix(ai): restore Copilot models from account policy (#7672)
+2f7f75a20ec0ef3537883e847ff8e44cafb8cf84 2026-08-06T04:16:20+08:00 fix(ai): replace qwen3.8-max-preview with qwen3.8-max on token plan (#7670)
+2bb7ba49661e88e0c692facb537972287792af69 2026-08-05T22:18:08+02:00 feat: harness v2 r2 (#7669)
+7e45ddc422c1808063985f98c32ab43a81011a36 2026-08-05T22:18:25+02:00 fix: recognize comma after lgtm in approval comments (fixes #7399) (#7663)
+6ca423447f55719f24815b34f29ffbb4596c80bd 2026-08-05T22:23:44+02:00 event bus leak fix (#7656)
+d07889da0e818627708e667874a1cdbd7dea47bf 2026-08-05T23:27:51+03:00 feat(ai): support thinking_token_budget on openai-completions (#7638)
+2c819a41ff1065f81e498d52d40597a7c20ecdc1 2026-08-05T22:43:16+02:00 docs(agent): align telemetry design with implementation
+5446cd7545a07c9b6be00dcfba516b3d82e5a8d1 2026-08-05T22:56:58+02:00 feat(coding-agent): rename UI mode to TUI mode
+639a4664a5bf5267e003b847d92a9ea79a6fe6e3 2026-08-05T23:03:00+02:00 fix(ai): update Anthropic abort test model
+db48124e9d4ae9648eff90599472a00cd9dbac56 2026-08-05T23:10:19+02:00 docs: audit unreleased changelogs
+6b461b75b39b5a19b378dc42fbfbd1655bc446a6 2026-08-05T23:22:51+02:00 feat: extract telemetry package
+b0bd0ff9d5d9e2e41d0b23583bc5c1bd880e0ba7 2026-08-06T07:46:53+02:00 fix(coding-agent): only label known subscriptions in footer
+c0947e6448e2003771faee2fdf2b4de866a8c423 2026-08-06T08:16:28+02:00 fix(ai): remove stale adaptive thinking model expectation
+69bab864d5d1ec1442887a176b9f3d1a21d017db 2026-08-06T09:14:56+02:00 docs(agent): reserve harness v2 R3
+6282221b6ab7fe8825b4b25b647f9e8cec253d83 2026-08-06T09:31:17+02:00 fix(agent): scope JSONL session IDs to working directories
+fb92f1348f3da2e50e1e059fdcd220635a7e47f9 2026-08-06T07:34:55Z chore: approve contributors from issue #7668
+ffa40c32d886dc178d14de9074c73a97ae36a7f8 2026-08-06T07:41:25Z chore: approve contributors from issue #7683
+bbbc73b6864de34d94d3fee87da79a307b63b52e 2026-08-06T07:44:27Z chore: approve contributors from issue #7687
+8ed232548e366b594e2b9db122e98e73422153b9 2026-08-06T09:45:18+02:00 docs: reserve QA1
+22db569a79fbd739349c0a8ad0d99fdbcb407357 2026-08-06T09:49:44+02:00 docs: harness v2 test matrix
+95bfbdc910c24da6b5364ec10e93f0dee369d7f4 2026-08-06T09:52:56+02:00 docs: mark QA1 done
+2920265ea72686faa76f960d10d3fb63c69af749 2026-08-06T10:07:21+02:00 docs: update harness v2 md on how to use test matrix
+9859eaa2690b4ffb92f32128826d76979a684709 2026-08-06T10:09:01+02:00 docs: reserve QA2
+77f4840320f28b8796af33bef58f6cb488b67e24 2026-08-06T11:24:09+02:00 chore: qa2 tests (#7706)
+7f63f3783284a5e08f56cd431446d3aa331d7625 2026-08-06T11:28:31+02:00 docs: add missed JSONL matrix rows
+b9497c8c1f2bfd922856c09d3f19117fea90ac74 2026-08-06T11:30:04+02:00 fix(ai): correct Fireworks GLM prompt caching, closes #7676
+35f5c265d3d0af7eea3889dbfde03e77e23b8f11 2026-08-06T11:44:41+02:00 feat: add telemetry reference adapter and span composition
+fadb74f684aaa7755463593e0564b58f9ed081e2 2026-08-06T11:44:50+02:00 docs(agent): separate harness design from implementation status
+a838c069e6318edee8317eff759b74c3934745f0 2026-08-06T11:46:58+02:00 harness-v2 jsonl session atomic writes for forks & torn-tail truncation (#7707)
+29ad292f77400dfde14e30556859a0b1345465b7 2026-08-06T11:49:54+02:00 fix(agent): simplify jsonl append failure test
+6189e53b3372519bd8dac65b53410676e15940e4 2026-08-06T13:09:02+03:00 fix: replace session summaries with durable metadata (#7708)
+5cd46ee118e0f51d859843797857674c61cbd213 2026-08-06T12:26:13+02:00 docs(agent): simplify harness work package workflow
+6d0455ff64ffc7a9b1b35b4207cf795c1899fe8e 2026-08-06T12:23:55+02:00 docs: audit unreleased changelogs
+d6442dd4863ee55380dde1f75006ba585196a70f 2026-08-06T12:31:40+02:00 fix: avoid registry resolution during version bumps
+a5f43bf8aff3c55752432655f7334e3dafd1e256 2026-08-06T12:32:57+02:00 Release v0.84.0
+38e8f2811369c78e165a573df65f61d095645d02 2026-08-06T12:33:01+02:00 Add [Unreleased] section for next cycle
+95a6aa7bd02f37b19a4b19db7e134b07413b0bf3 2026-08-06T12:38:51+02:00 fix: isolate cross-platform native dependency install
+8199aca40c9cf27aff3de7ba852e420985a54bf5 2026-08-06T12:59:45+02:00 fix: publish server package
+aa601d7ba0e64e063d2b16d850d7bf32787b49ab 2026-08-06T13:22:48+02:00 fix(tui): correct LaTeX whitespace and matrix layouts
+d406aa3946ce5c6da4e67afc94693dcf3f6ff084 2026-08-06T13:26:38+02:00 docs: reserve L1
+bde81c84405514c8b0f57c34405c152fb129c0ce 2026-08-06T11:50:54Z chore: approve contributors from issue #7703
+1532c99943b894fe1d12e15ac388c7b1887ca403 2026-08-06T23:12:25+08:00 fix(agent): reject reset during active runs (#7717)
+1eb988cfe88fb0ff740ff62583d2f16359f7b6b0 2026-08-06T23:14:48+08:00 feat(agent): allow blocked tool calls to terminate (#7715)
+beeca6ab740b166a6bbcf5627a3844985215f1ef 2026-08-06T18:16:12+03:00 fix(coding-agent): disable bunfig autoload in compiled binaries (#7685)
+9ab91fb93e6bb755051de8d000a347a903dd32ec 2026-08-06T18:17:13+03:00 feat(coding-agent): expose tool prompt contributions (#7671)
+c03d78bdce7b154672084dcf286f4fbe2de466ac 2026-08-06T18:18:02+03:00 feat(ai): add Qwen Token Plan Individual provider (#7659)
+055ecce080ab38a4ecf4e6f61e9773b3f0469b1b 2026-08-06T18:10:42+02:00 feat(agent): add SQLite SQL template queries
+9b4f6a9e1f8f1db0d9d324456db108e2adc9253d 2026-08-06T18:14:26+02:00 doc(changelog): Fix link
+9b17fd5bb3fe9be26e1e6099cbce3c6b5e1a6f5b 2026-08-06T18:16:01+02:00 fix: verify npm package registration before release
+fc3554e16defffcf76553b1bd12f676adf26d0a4 2026-08-06T18:20:48+02:00 fix(tui): reduce mouse tracking in terminal multiplexers
+58fc0431a7e3bb573b5943aa8e3af7a4ce6109ad 2026-08-06T18:49:42+02:00 feat(tui): select words and lines with multi-click (closes #7725)
+a261366bde90c24826eb77bfc600f1bb62ad36e2 2026-08-06T19:43:52+02:00 feat(coding-agent): add auth preflight
+6fb2d766aee340bed96fe81d55603c1670b3af2a 2026-08-06T21:05:46+03:00 feat(coding-agent): add configurable Harness factory (#7686)
+171c6b520bee23bed76fd34b730332f43067dddd 2026-08-06T22:25:00+02:00 fix(tui): correct multi-click text selection (#7733)
+a3e93ec85ea90ce94a305ab6c5ca96fba74baf24 2026-08-06T22:30:13+02:00 feat(tui): add half-page transcript scrolling
+7d046bcf21cb934bc46cd374e531801454e558fc 2026-08-06T22:36:26+02:00 fix(coding-agent): announce only verified npm releases
+c96bfaccd00d85e946493bc009b9613e5890ca7a 2026-08-06T22:39:09+02:00 fix(coding-agent): support Windows fullscreen right-click paste
+4e64de6950a16bebf40f067a5e735576fb8a33dd 2026-08-06T22:49:47+02:00 fix(coding-agent): soften PI environment guideline
+4688e4f92f38c9b82523454d8ba9eba7c8753700 2026-08-06T15:11:39-07:00 docs(coding-agent): reconcile keybinding behavior (#7729)
+7cb2a51c0512097900bb9bfdd5eec3249eebb843 2026-08-07T00:21:32+02:00 fix(coding-agent): reduce automatic theme detection delay
+666d8972ff0b6da5067e05973249760964194769 2026-08-07T00:40:44+02:00 fix(coding-agent): preserve TUI wrapper routing (closes #7731)
+79f72fccecd1465930516fffbb53bfbd5b430da3 2026-08-07T06:23:06+01:00 docs(tui): Clarify TUI test runner and remove stale Vitest  config (#7732)
+ae1e410e37ce335fd14b50c0a590349bd9cfc848 2026-08-07T07:24:00+02:00 fix: sqlite queries optimizations (#7727)
+6ba4d23e7c953f601fca4bd3c8488e1e99d96fc8 2026-08-07T07:42:43+02:00 docs: audit changelogs since v0.84.0
+53fa77ccd8a279eb87e92294ef3687b03ff80112 2026-08-07T07:46:28+02:00 Release v0.84.1
+310411ba4666e207e1ce840ebadc8a5429f35398 2026-08-07T07:46:31+02:00 Add [Unreleased] section for next cycle
+102667952585134e99b5d86c9ff07dd28c86962c 2026-08-07T08:56:05+02:00 docs(agent): unreserve R3
+9d090bc5dcecf8f35354e09fe57413e57dea8e5b 2026-08-07T09:10:14+02:00 fix(agent): reject conflicting JSONL session creation
+f27941774e2bf0ba94e1651dcbd7115c5172a690 2026-08-07T09:20:02+02:00 fix(agent): read JSONL headers when listing sessions
+80ef7ff0f493c87e870e1bb73f0fdf0666c6a8a4 2026-08-07T09:47:29+02:00 fix(agent): populate session types with doc comments from design doc
+f562a1a44f32fa52c345738c0079d12eb2c5cfba 2026-08-07T09:55:13+02:00 docs(agent): clarify branch query helpers
+87644c7b5749c255ac7ea96103c6531ebd7d0a46 2026-08-07T10:18:48+02:00 docs(agent): clarify branch query start requirement
+10474bd697b2270defa200998f16baf2166775a8 2026-08-07T10:03:39+02:00 fix(agent): refactor jsonl codec
+e0900a6eaf6fb56312a868d9c06891129c4a5cbe 2026-08-07T11:01:18+02:00 docs(agent): clarify record query semantics
+709aa03194301afd008a07d64ff1bf12e4f7ece6 2026-08-07T11:27:41+02:00 docs(agent): add j6 typebox validation (#7768)
+f0feecd75250827b936b89664b6eab454c63528d 2026-08-07T11:56:44+02:00 fix(ai): update OpenCode completions fixture
+958c13f25080b59d4b736193f972a8502a7a2f8b 2026-08-07T11:56:52+02:00 docs(agent): restart checkpoint after auto-compaction
+4bf1bba203c699a0b79da669b084052c72b7a35a 2026-08-07T12:32:20+02:00 docs(agent): reserve I2
+14ad9801be29948516cf55c65bcd864d5cf8ff9a 2026-08-07T13:20:40+02:00 feat(agent): add harness events subscription interface
+4a0e2f115ad46d34c19d200c6a71fa79d264092d 2026-08-07T13:47:01+02:00 fix(agent): complete JSONL crash and corruption handling
+fe10558eb3fa6d8fc3f6211bf1532e1659b9093d 2026-08-07T14:16:50+02:00 fix(ai): retry upstream request buffer failures
+7aca0d7b3e041a9e2b635e8370b2549f032932d6 2026-08-07T14:27:35+02:00 fix(agent): make JSONL decode errors explicit
+1dd2354052f7dd9fcdcc3097b87cf4b377853a74 2026-08-07T13:41:14+02:00 feat(agent): add buffered harness event watches
+d1a305613ea6f9e5d5ddc9e08f27393f9b73b33c 2026-08-07T14:14:22+02:00 feat(agent): add direct harness event listeners
+e7fb8eb2aca8a1126cc6f91b73ee38fd49ab7c59 2026-08-07T16:13:16+02:00 fix: no ctes in sqlite, delete indexes
+541ed488d89dbe11395e4c108f448e1e253ae4c1 2026-08-07T17:07:01+02:00 docs(agent): remove legacy leaf entry requirements
+c3e7bc60a13b0a6fb80f7e8a867112ee4d10c92a 2026-08-07T18:03:12+02:00 feat(ai): preserve Codex end_turn for debugging (#7766)
+ac4ac9eaf69f2b01ca3af984a5c48f3b99b84278 2026-08-07T18:29:56+02:00 feat(coding-agent): configure fullscreen exit output
+5cfa30cc2c9efe107e322302f612c7cae56eaec2 2026-08-07T21:58:51+02:00 docs(agent): add required fromHook to v4 summary entries
+4fbdc63ca364844c0166d3d4eabafb5cf8e7c2f3 2026-08-07T22:55:48+02:00 docs: require clear concrete explanations
+02bd2d1c628d0e01c71b7088443d3cb117495d2d 2026-08-07T22:59:56+02:00 fix(ai): preserve Responses tool-call namespaces
+e47b8e37a6211ebd0b2942fa87059d64f81eec02 2026-08-07T23:03:46+02:00 feat(ai): use additional_tools for deferred tools
+9dd90a49711d088b86fdd9b4aea575913a8328a8 2026-08-08T09:31:50+02:00 fix(ai): replace Mistral SDK with native transport
+18dee5f0a89f41466e876cbbbfe77635cd250882 2026-08-08T12:06:16+02:00 fix(tui): stop recompositing full-width rows in the alt-screen painter
+f8746767bc4627372e4c560ba7e28546a759f5ce 2026-08-08T12:06:19+02:00 fix: handle npm 12 pack --json object output in local release script
+5ac9133655c78b600862eb22fc9a0e8be0cd66cc 2026-08-08T12:10:13+02:00 fix: refresh nanoid to 3.3.17 in root lockfile
+6809fabbb4c7e17c256e850b3ea38ebf82613a54 2026-08-08T12:10:09+02:00 docs(agent): allow clearing session names
+368e013dec766724d892cfa5cc247d2f2bee8795 2026-08-08T12:22:15+02:00 chore(docs): fix ascii alignment in compaction docs
+c185d412382581860a489b4959737bad1d119492 2026-08-08T18:42:07+02:00 fix(ai): send max_tokens to DeepSeek APIs
+7bdb16c28d794a5ff8e7485479c8e37eccd9a8d8 2026-08-08T19:19:17+02:00 feat(agent): support clearing session names
+025957c258fea91653ee73ecffdc4a659ed60945 2026-08-08T19:21:22+02:00 docs(agent): reconcile durable harness design
+4181f66e6b3ccbef760c2966ecd8b596b926fec6 2026-08-08T20:44:59+02:00 docs(agent): tighten durable harness design
+45fac5bd517c371993b1781291d3a7971633a651 2026-08-09T01:36:21+02:00 docs(agent): add explicit-state harness redesign
+157aa19c8cfa3acdddfccc4dcfaff672ddf165c3 2026-08-09T01:45:19+02:00 docs(agent): clarify explicit operation records
+936aff00918de1187f085f123c2812d8f2d67745 2026-08-09T02:11:00+02:00 docs(agent): complete explicit-state harness design
+47610217098d9ba8f22d223fa7c1413f9f5fd759 2026-08-10T08:03:46+02:00 chore(docs): change 'reloads' phrasing in compaction docs
+31b513e316ab2b5ec736268350635511297fa3c1 2026-08-10T08:27:35+02:00 chore(docs): change a bullet point in compaction docs
+3059b813161b9408144ce394283d95b198e6df44 2026-08-10T13:44:36+02:00 docs(agent): add durable harness implementation spec
+afae6a1a998dbdfacc1004cbd26c6c6a99395bb2 2026-08-10T15:22:18+02:00 fix(ai): update stale Gemini test model
+6a214fab9577b16db06c00967c245caa0651b0f0 2026-08-10T14:45:31Z chore: approve contributors from issue #7748
+3709bef75e4f89508fe66f0e9d124c639de0695c 2026-08-10T17:11:28+02:00 docs(agent): clarify durable storage terminology
+caf8fa6b521698d4bbd375f0716580b17af44fb5 2026-08-10T16:48:17Z chore: approve contributors from issue #7828
+0db3d3879a0affcf2e9f55b8c317150e31b34fb8 2026-08-10T16:58:07Z chore: approve contributors from issue #7830
+c1a4e86c01931e5f636485cf5d63bf1b76c2eb34 2026-08-10T17:00:55Z chore: approve contributors from issue #7838
+85b1efa147c67a6c656649178f702844eddb27fe 2026-08-10T17:04:49Z chore: approve contributors from issue #7847
+f858ae3e822489d6ef0fd9f72342b8fc214e9b95 2026-08-10T17:09:47Z chore: approve contributors from issue #7867
+52771a07b09609a2e4b153bd8d11ab62b3c7e0b7 2026-08-10T17:13:46Z chore: approve contributors from issue #7876
+c2b06f0934a937b3cf1e888931e22c144a1977c1 2026-08-10T17:17:39Z chore: approve contributors from issue #7886
+3dd4623eee136edb2a7a470aa8d4744519a84246 2026-08-10T13:18:05-04:00 Fix prompt formatting for current working directory (#7887)
+24c3b5e4c04e892b006a904016e4c92de64a221c 2026-08-10T20:46:58+02:00 docs(agent): add storage and retention redesign proposal
+98145a6c063f00303405ef91ad4a5314670702e9 2026-08-11T03:46:42+08:00 fix(ai): sanitize empty Bedrock tool argument keys (#7882)
+7a6a1c2dbb5ef07040bac7a2b1c6a589a4f41e56 2026-08-10T23:55:13+02:00 docs(agent): add harness-v3 skeleton merging spec and storage redesign
+87142a8d50640e93d43fcb35123439d642bc0304 2026-08-11T00:26:38+02:00 docs(agent): write harness-v3 parts 0-2
+dea1b248f6e9ab5536ed46420b1755f4db4d4813 2026-08-11T01:01:03+02:00 docs(agent): write harness-v3 part 3
+28657a2ffa6dbeccba74c166682e7a7ee547f5b4 2026-08-11T01:16:18+02:00 docs(agent): write harness-v3 parts 4-5
+ec317e4ede466cf98617a4e664a834c5eb5f47e2 2026-08-11T01:28:09+02:00 docs(agent): write harness-v3 parts 6-7
+cd6852a123f2c0cc646a41a2a52f3711a603b822 2026-08-11T01:39:13+02:00 docs(agent): complete harness-v3 parts 8-9 and appendices
+2f9e9298a50f0fdec09e00f9b81b9e5b001a3405 2026-08-11T08:38:04+02:00 docs(agent): remove superseded harness design documents
+8431bfbead9a9a901ecea860e989e27799cb1d0d 2026-08-11T08:45:04+02:00 docs(agent): fix harness-v3 cold-read audit findings
+cf5f35216bc8e13087f16163f5f868b52872e8a5 2026-08-11T09:00:17+02:00 docs(agent): record open harness-v3 audit findings
+9cb7f493e7b4a444ed66fbcb681d9e66c454eb3d 2026-08-11T09:03:42+02:00 docs(coding-agent): document AI_AGENT process marker
+75c7fd6623f19a1331d27d6ac0060d8bce890c84 2026-08-11T15:07:12+08:00 fix(ai): declare Cloudflare Responses strict tools (#7934)
+a4453b79bb8d66b5f385b28ae0e33843c947504a 2026-08-11T10:07:53+02:00 fix: sqlite time to number
+b647d187932c76d4003728010daeed9c1b496a6a 2026-08-11T16:49:19+08:00 fix(ai): detect DeepSeek base URLs case-insensitively (#7933)
+00121ed99939ba614ddda4c5739e49bc027d02d4 2026-08-11T10:59:28+02:00 feat(tui): add fullscreen transcript search (#7913)
+24047f5dfb222ef7d26b554a0e576e5efa844024 2026-08-11T11:01:05+02:00 docs(agent): strip partitioning to informative section, finish audit fixes
+1279952de4a22f021bff7ee714e3aa18010a5378 2026-08-11T17:06:55+08:00 feat(tui): add unbound single-line transcript scrolling actions (#7903)
+230029078d99d647ef7f9935c5ef87039d6aa0a4 2026-08-11T04:09:30-05:00 feat(ai): AI Gateway transport over the Cloudflare AI binding (#7901)
+06ed871679a39019d924ac8a0b80b7902a2db398 2026-08-11T17:12:01+08:00 fix(tui): prevent split Alt+Enter from interrupting (#7899)
+e3798ca91f23a69c6833443005ec8a252f292efc 2026-08-11T05:12:34-04:00 fix(coding-agent): inherit subagent session config (#7897)
+4a879dd759936870ae4f6d424d5be465e7df55c6 2026-08-11T11:13:37+02:00 fix(tui): avoid repainting idle fullscreen sessions on focus loss (#7892)
+b987ead3583d2d2d796868f062b811abfa9ccb52 2026-08-11T11:14:28+02:00 feat(agent): expose `expandPromptTemplates` in `sendUserMessage` (#7857)
+2f8b4b42fecf2388f0f3326eab16c72eca3f62b0 2026-08-11T17:15:11+08:00 fix(ai): expose low reasoning effort for native DeepSeek V4 Flash (#7807)
+c0468b922c2e300eee1f136ce4f987e3e05ac898 2026-08-11T09:20:47Z chore: approve contributors from issue #7908
+536eb71794c99e409c2292641b22ede64886fed7 2026-08-11T09:23:49Z chore: approve contributors from issue #7912
+00eb2d1515e18e00940139f5e6568230a071f33c 2026-08-11T09:28:46Z chore: approve contributors from issue #7919
+f8c71c6a0693bc7f71f84e92783315d6a725a721 2026-08-11T11:35:03+02:00 docs: fix security policy typos
+9c53c47f8086190d0b433216fcfffae69d3e255f 2026-08-11T09:49:08Z fix indent
+7915cdac64abdb5fe8674d017e69f8c4f3bf6ff9 2026-08-11T11:32:32+02:00 feat(ai): add strict tool schema conversion
+452923b54a6c8b2f95b80157a8f6c7963f183101 2026-08-11T12:37:45+02:00 fix(tui): parse multiline LaTeX arguments
+2a95ef70db83a19cf5500f31dc4ff8247e04043e 2026-08-11T12:52:39+02:00 fix(tui): apply PI_TUI_ESC_TIMEOUT only to lone ESC
+43b4e057ac816f0c1da7a48f560344ad23a5c1a3 2026-08-11T13:16:36+02:00 docs(agent): fix implementation-readiness review findings
+9c75cd2f3a4a1f172b0a2f3cd99f40d8854b927c 2026-08-11T13:21:12+02:00 docs(agent): add transaction traces to orientation examples
+f132845654d07fcd83e51bce7f04a0feb499485e 2026-08-11T13:21:55+02:00 docs(agent): introduce the three stores before the worked examples
+b75be04d92fa1919eeb92fecc3d6051e745922cf 2026-08-11T13:27:48+02:00 refactor: search (#7797)
+f98629b3991aa1c7938f21249f9d9f0f320fd432 2026-08-11T13:35:45+02:00 docs(agent): fix broken code fence in crash example
+638ac112398e4934182138247776809ac81085d9 2026-08-11T13:49:37+02:00 docs(agent): resolve providers and tools at dispatch, drop lease machinery
+bcd056a8cdbd980a793d271d3ecbc4d05e679695 2026-08-11T13:50:06+02:00 docs(agent): drop historical placement-payload rationale
+01701fd372f4e73aa1275f93a809f48fb529df94 2026-08-11T13:51:13+02:00 docs(agent): clarify register references vs immutable snapshots
+b8349db8543242b33d5d0f5051e0aec667afba59 2026-08-11T13:53:33+02:00 docs(agent): re-mint legacy ids at import, drop redundant register paragraph
+e1b444ba626a46c3fae0a7510e451871a9fbd551 2026-08-11T13:55:39+02:00 docs(agent): tighten identity section
+2862eb4ed1463421d1d532041b7848d307508da7 2026-08-11T14:01:40+02:00 docs(agent): reword cancellation triage note
+a348560b1582540ff525926bd1036b1d8ac2f650 2026-08-11T14:03:00+02:00 docs(agent): drop historical changes appendix
+e33e74450aa34d758c3f5bbac396f628142947bb 2026-08-11T14:11:14+02:00 docs(agent): replace historical rationale with direct statements
+b3edf017021f802af9b76ab4d95cb555c5427352 2026-08-11T14:25:53+02:00 fix(ai): bound Copilot policy update concurrency
+2545585395aa02b48b3fb2fb406757893904cb5d 2026-08-11T14:32:09+02:00 docs(agent): one sqlite file per session, search becomes external
+47b021a6596e7d0b5d3338ff9679d8e90474114e 2026-08-11T14:43:47+02:00 docs(agent): add seq-ranged usage ledger scan
+8d8c60da709b83f434f529c7b54ed224b2089cc1 2026-08-11T14:53:28+02:00 docs(agent): specify optional pull-based search service
+b6557f43ec3cc93b5808a073e44a7c2ded75978d 2026-08-11T14:58:58+02:00 docs(agent): make search a standalone service, open metadata-filter question
+51b45bc5bcecc37a3538af5b0eb3710cc1e2c3f7 2026-08-11T15:27:21+02:00 docs(agent): restructure build order into parallel storage and runtime tracks
+85a2060811a23f1580c13ab59a210b1409092837 2026-08-11T15:29:18+02:00 docs(agent): consolidate harness spec into harness.md
+40a3d8556ab7fb4a6b4da20ffe1f5dfc08ec121d 2026-08-11T15:31:27+02:00 docs(agent): add table of contents
+2a9b4ebc680053c64e31f635b0b22d5e22564001 2026-08-11T16:57:05+02:00 docs: document terminal-specific fullscreen mouse behavior (#7965)
+5aeb06bb11f9f825f15ed401029f0eb861091c7a 2026-08-11T17:43:26+02:00 feat(agent): establish durable harness type contracts
+0eb6abd5477930f93e9fec942403c38ed99c9501 2026-08-11T18:00:47+02:00 fix(agent): address harness type audit findings
+69130ae34e91207249b262008eea3fb0ac3adf44 2026-08-11T18:01:17+02:00 docs(agent): mark harness types slice complete
+fd9a45aaf1eb51a654124976f7e8ac9d108c1c10 2026-08-11T23:58:31+03:00 feat(agent): add in-memory harness storage
+9177ed175dc58d95f197445dbdb627169db88dec 2026-08-11T23:59:01+03:00 feat(agent): add session UUIDv7 generator
+534bcbffb7e1e7551d9ee3572dfeb278e203e493 2026-08-11T23:19:24+02:00 fix(tui): handle LaTeX control spaces across line endings
+b3bf0a2a8199ed6dcbd6a45e61952e4f6633e0f3 2026-08-12T00:22:30+03:00 feat(agent): add storage backend conformance suite
+e783429da2ea15c5de9cda6babc8f5b592d3e9da 2026-08-12T00:41:06+03:00 fix(agent): deepen storage immutability conformance
+085ce3c9a52b13ce8719c77853d906285bdfae26 2026-08-12T01:12:23+03:00 feat(agent): add instrumented storage decorator
+1a77b84126a690f989ebd89452f20eadd4d3d922 2026-08-12T01:13:02+03:00 feat(agent): add session codec
+535ceef0c1b97758701e235e780061a3e3020662 2026-08-12T10:14:11+03:00 fix(agent): keep session codec internal
+eff82b1405a851d5d462d840d7b381540663fdd5 2026-08-12T10:26:30+03:00 fix(agent): keep session implementations internal
+2e4d23959485279aa2da1a45103de2ea22d46395 2026-08-12T10:02:32+02:00 fix(tui): give focused fullscreen overlays wheel and viewport keys
+6fd734b4c6aa09d83f3a6d41b39ac0ffedb4009b 2026-08-12T10:10:34+02:00 docs: update search
+ef3786544556f8852443ef9c8b4981160fb956bc 2026-08-12T11:09:49+03:00 feat(ai): support UUIDv7 follower timestamps
+c0396ccd8c8897d2ac4e10dbf4b4a0781cac5ab1 2026-08-12T12:24:59+03:00 fix(agent): simplify memory storage commit
+f45aea041d18db3a2577898bd3319f730b3ed912 2026-08-12T12:49:19+03:00 fix(agent): enforce durable session identities
+8d281e236d3a4b780f646b3bc72908ea405523ce 2026-08-12T12:49:22+03:00 feat(agent): add storage-backed session boundary
+f97b2416897f06bbfcf90bee83f294e19633aa86 2026-08-12T12:51:10+02:00 docs: update S3 to new search shape
+e39ddef983758f710acea2f80e135a59e2d7e4ad 2026-08-12T15:08:44+03:00 feat(agent): add storage-backed session tree
+da8091ec75b032cbce6a0af836407e5f4f7e1fcc 2026-08-12T14:36:30+02:00 Remove SessionContext, return AgentMessage[] instead
+6d520c58d0b92cf420ab3b95d05ea75c59235cca 2026-08-12T14:56:26+02:00 chore(docs): fix ascii alignment in compaction docs
+78743ab6b4ce7f8d3e42f93fae56cc84cd6ba674 2026-08-12T16:04:55+03:00 Be less defensive
+47b5119d09f00cb785409d53d74c4950acc7d803 2026-08-12T15:16:05+02:00 fix: trigger turn false should not start turn (#8022)
+ee0ac2869615258199cce795d7a46b3b7fac7a50 2026-08-12T16:25:15+03:00 feat(agent): add session lane creation
+4d9aa837c2ec6e0ebc7599f7e724c7c19c06441e 2026-08-12T15:26:42+02:00 feat(coding-agent): add configurable default tools
+541045ae0e30ac0375fde429f8a8baa057c009db 2026-08-12T15:42:55+02:00 fix(coding-agent): preserve extension tools with defaults
+c6d394a4e456d86d959452697bdf3ae805be698a 2026-08-12T15:46:09+02:00 refactor(agent): trust typed session storage values
+67763e0adaad45e76abd171b54a3d040a0beb562 2026-08-12T15:47:21+02:00 Merge remote-tracking branch 'origin/dev/agent-harness-types' into dev/agent-harness-types
+f6e396d142540345aa52effa50ba71ca9c69e5d4 2026-08-12T15:49:18+02:00 refactor(agent): remove obsolete session context type
+697cbff215c2b6063ffd278c62681d8c59e660af 2026-08-12T16:12:12+02:00 Merge remote-tracking branch 'origin/main' into dev
+9795d602306ef68a97585909e8e79f92a389057b 2026-08-12T16:25:38+02:00 feat(coding-agent): add per-run theme selection (#7722)
+bec2ecec9d34633f1977f751e7177208a7ba316d 2026-08-12T16:59:53+03:00 feat(agent): add storage testing decorator
+025c4fb16d8a3694f7b41a524c1c0ed6b4b51a7d 2026-08-12T17:38:18+03:00 feat(agent): add memory session repository
+55214fada5bdbb55a0560f385d2be4bbc85f3355 2026-08-12T17:44:03+03:00 fix(agent): align storage decorator contract
+1969b028657181ff4483ba718b92fa7701adadf5 2026-08-12T17:02:30+02:00 feat: SQLite migration
+ba6190f82009d3603246f8ba72aa724100b2c934 2026-08-12T17:06:11+02:00 feat: session helpers for repo
+042c2ce71cfda5bb0a3d09700430f37a7b6c4a3f 2026-08-12T17:12:49+02:00 docs: note on session stats
+9050aa24b0867f1dec5c04998bc21776260e2ba2 2026-08-12T17:35:41+02:00 docs: dont confuse clanker
+cf0102b9ce79b18094537b44d045b2504a030322 2026-08-12T17:41:29+02:00 feat(agent): retain memory sessions across reopen
+678732ccf68faec3727435262c2088d0d9a79116 2026-08-12T19:36:43+03:00 fix(agent): enforce durable assistant message handling
+0815e458901d2696d9c6ab07ecfe76fbe5671191 2026-08-12T20:51:38+02:00 feat(agent): add guarded session mutations
+141e27446598a82a9c5f791249e17e38d9001f79 2026-08-12T20:54:09+02:00 Merge remote-tracking branch 'origin/main' into dev
+dbae7ec9f329ee94608d46a2c5874f352ec2dc45 2026-08-12T21:44:29+03:00 Add comment
+a51cde3b48cbf13b10517f6f4fb46880c4da2530 2026-08-12T23:03:11+03:00 fix(agent): align context projection contract
+d0d70d9bbc4cdb7984f196972808df6a8e76f662 2026-08-12T23:38:22+03:00 fix(agent): complete session acceptance coverage
+90b63bf1720269437aac87cf55249a707ca6a497 2026-08-12T22:45:01+02:00 feat: initial sqlite repo
+c93ea6ccf0a398c293641e8001db06b8f7997c79 2026-08-13T00:32:26+03:00 fix(coding-agent): preserve usage in streaming events (#7982)
+9d5d9e4fabf2670a68951abda096eb51784a3609 2026-08-13T00:25:56+02:00 feat(agent): add harness execution primitives
+581d75a89cea21e50d6a26df840352f94427f633 2026-08-13T00:53:22+02:00 docs(coding-agent): document model catalog refresh
+18d010ea5159cd2ddca9126c0db75917e6521531 2026-08-13T08:55:36+02:00 docs(agent): simplify harness execution architecture
+686e6d7cdcc985b2f63639735132d8af8718a161 2026-08-13T09:29:38+02:00 fix(agent): gate harness tool execution
+8718fbea778c64ee9a863bda219bea470ecc8137 2026-08-13T10:34:50+03:00 feat(agent): add session storage benchmarks
+7d8c11d37f8d6687cc6688998fcb0d3db45e6151 2026-08-13T09:43:36+02:00 fix(coding-agent): share concurrent model catalog refreshes
+46bb9a2c3bdb296b0d2179f7309ec6b79a7f3106 2026-08-13T09:54:58+02:00 docs(coding-agent): clarify Windows paths in settings
+659f4deec781777e5a381592b164bbbc06292667 2026-08-13T09:55:08+02:00 Merge remote-tracking branch 'origin/main' into dev
+9c1b44687079522d10a89e8f2647956e2ec5ae43 2026-08-13T11:36:19+02:00 feat(agent): add format-4 JSONL storage
+cf82e2e2ae4485c6690972d76a7e26b76ffc0306 2026-08-13T11:58:39+02:00 feat(sqlite): more helpers
+6b8b140c858d3f1fb59cfd73597f465718ead9ba 2026-08-13T12:08:51+02:00 feat(sqlite): scaffold storage
+fdb8181de00ef693c34c368e22b282e5c367cfda 2026-08-13T13:42:46+02:00 refactor(agent): share in-memory storage state
+f69f19ecc0dad4c3408418fc1bd6b7f689fd93e7 2026-08-13T13:54:41+02:00 feat(sqlite): branch and usage helpers
+5b8df5682325d4ac39993acc727dacf2808c68b5 2026-08-13T13:55:13+02:00 feat(sqlite): readonly storage
+11dd14f6ee4a9fa12c085a7fd1f3825fcd6d9a94 2026-08-13T14:16:42+02:00 fix(sqlite): unicode keys, duplicate create
+9b45f9eddf214eee9d7a8e581281bd6aa0039f97 2026-08-13T14:26:09+02:00 fix(sqlite): ENOENT, copy migs into dist
+d957f808d41395d0fbdc46965bba471c9d32bd5c 2026-08-13T15:18:39+02:00 feat(agent): discard torn JSONL transaction tails
+08ef22c2767be09bedc3e7f36b0d0f352c185a6f 2026-08-13T15:52:24+02:00 feat(agent): organize JSONL storage modules
+6f707eb36064e82af9c1320a7634f4dfad21049b 2026-08-13T12:15:49+02:00 fix(coding-agent): show managed-tool startup status in TUI
+48bfdbaff5074a9d535f29096b42d36556f20439 2026-08-13T16:00:15+02:00 feat(sqlite): minimal SqliteOpenSession
+e52de91d088e59127f8d9c251f39e6558be63524 2026-08-13T18:24:27+03:00 feat(protocol): add service-addressed session RPC
+c40e08b8ba340030ab972808ad7b968ba5bc5395 2026-08-13T18:39:48+03:00 feat(server): derive socket from in-memory service ID
+14b5aaa2136a0216fd38b886467405969e979a3c 2026-08-13T18:07:03+02:00 refactor(storage-state): extract commit helpers
+b448269c832f8da6024680f8e54277cd8413a9bf 2026-08-13T18:08:37+02:00 feat(sqlite): session seq helpers
+fae6bf90bc85081875aec00da93fc4e879adf70d 2026-08-13T18:16:36+02:00 feat(sqlite): begin immediate transaction on apply commit
+9d2ec7ffabe927bfad2214c1cee25b6632a78dcf 2026-08-13T22:26:38+02:00 fix(ai): use pi user agent for Kimi Coding requests
+74791484797d0e2da0daceb81e0a9458962666a0 2026-08-13T23:53:52+03:00 feat(client): discover local Unix services
+e2888c4a93bf252f355c38c7866aacf582d9f5eb 2026-08-14T00:36:33+03:00 feat(coding-agent): add local list and attach demo
+ce142b2a69dadcba08f9138961a31206a7cb4f71 2026-08-14T01:32:32+03:00 fix: restore client-server protocol test coverage
+69c7f1fea215dfe87b883bebcdc73fbb0d498c84 2026-08-13T18:00:05+02:00 feat(agent): simplify session repo conformance setup
+76bb78c6b3af75c68b230cb251e4e31f7b618bc0 2026-08-13T18:06:14+02:00 feat(agent): split session repo conformance by capability
+17fd502621847d24056017bce39ce9a36b565d3c 2026-08-14T10:15:55+03:00 feat(coding-agent): host sessions in child processes
+e3234b0fcb1fa8fed675d53df827592012babadf 2026-08-14T09:19:56+02:00 fix(agent): cover register rollback in storage conformance
+b01c21e5e621d9e01a19e9c38530e57a0e61456f 2026-08-14T09:26:16+02:00 feat(agent): separate session ownership conformance
+5f7195c51eac43cdf329f813a7ef020d7bd74527 2026-08-14T09:32:24+02:00 fix(coding-agent): update Cloudflare compat test model
+fd389abc4677b4e0fa5dc9b2bbd2e63418f079b4 2026-08-14T09:33:00+02:00 Merge remote-tracking branch 'origin/main' into dev
+4ea01980ff941d7b54bb52a33d8777d6f811696e 2026-08-14T09:51:00+02:00 feat(sqlite): append entry to branch index
+d268454e9c347c115ac334b4abd719216e34046b 2026-08-14T09:59:42+02:00 fix(examples): accept array-form `tools` in the subagent example (#7598)
+721e2768ee3b0850723a1f6d9ba54d62bff3ebac 2026-08-14T08:03:33Z chore: approve contributors from issue #7973
+6633618350a9d9ea91fdc11668442e771869a56f 2026-08-14T10:09:35+02:00 fix(coding-agent): update vulnerable nanoid dependency
+83aed2ba5829654694ac972ba40b8e89e83de089 2026-08-14T10:11:15+02:00 fix(tui): handle generic SGR mouse releases
+781859c7d0eab2da0bc3f68661ca0e2841da9ed9 2026-08-14T10:19:43+02:00 feat(agent): add JSONL session repository lifecycle
+e14afc648e10fb6c527ea88fa627091ada764306 2026-08-14T10:22:36+02:00 fix(coding-agent): collapse fallback tool output closes #7979
+18ddf8ad909555b80940770df04375bf543392bb 2026-08-14T10:23:24+02:00 fix(agent): test session destination reservation order
+23ddba6a2b15895b39a7b3b1a18c9b880aa7e4f2 2026-08-14T10:26:11+02:00 test(agent): run JSONL message conformance
+21dec988de382468e91a7732dd5d01b53f6506c9 2026-08-14T10:43:36+02:00 feat(agent): isolate JSONL storage conformance tests
+f43f1ef81d452fc90815d7db4109c731a89c5134 2026-08-14T08:46:15Z remove defensive options capture
+893d82525f0e8d22a7bf8ab4f8146c84e6798708 2026-08-14T10:48:45+02:00 feat(agent): isolate JSONL repository conformance tests
+0589435e7d4c56152ff850c9648ffcfb54a90959 2026-08-14T08:49:18Z chore: approve contributors from issue #8007
+75bb6a0fcd290a509ba25e9c5939dfa79bbc07c6 2026-08-14T10:50:23+02:00 feat(agent): add SQLite storage conformance coverage
+f3c406a9b2d886ae6f4222c13f8ee7e26b87a0cf 2026-08-14T08:51:32Z chore: approve contributors from issue #8018
+f0182cdc9eead4d6c5894fb342bcbb64f603a208 2026-08-14T10:54:00+02:00 fix(agent): make fork parent source-derived
+a2dd8ab2a7e0b2fdd6d99dbe6e72970272eb96d8 2026-08-14T11:09:48+02:00 fix: skip incomplete SQLite conformance cases
+f7a00fe43b7d9b74764998b78c26a429a488a017 2026-08-14T11:12:20+02:00 fix: isolate incomplete SQLite conformance job
+b863f1cff68bbce71edd5dd712b00bfb94b9a8e7 2026-08-14T11:16:49+02:00 fix: revert SQLite conformance CI isolation
+c5b7cd2a33e3a412eaf35badc6bc641be201abdf 2026-08-14T09:20:04Z chore: approve contributors from issue #8063
+5093641a562cf9c78c0a8cf9af5d341418b7a112 2026-08-14T11:25:40+02:00 fix(ai): preserve Google length stops with tool calls
+ab0dc51fcfd1e4c0f8c04ab685812b748f3b8a70 2026-08-14T11:26:20+02:00 fix(coding-agent): use APP_NAME in user-facing messages (#8067)
+48bd3f424d4f26bc59d130ebc9589e838f252c06 2026-08-14T09:41:22Z chore: approve contributors from issue #8092
+4caa3c440baaf94c9fe9ec054e04b9528b0a07ef 2026-08-14T11:46:46+02:00 fix(tui): route selection copy through the host clipboard (#8110)
+d10c974b940d7ce3c8439fcdf02d140f3a206458 2026-08-14T09:46:51Z docs: audit changelogs since v0.84.1
+9b4adc823fa05f883565fa6b7a2ea58de3e39254 2026-08-14T09:50:22Z docs: audit changelogs since v0.84.1
+914cf1472e715297caa30db4b9535d534a9eb718 2026-08-14T12:00:00+02:00 Release v0.84.2
+0e0021fbbe83d67338b910aca8820bd99126793d 2026-08-14T12:00:04+02:00 Add [Unreleased] section for next cycle
+4f069996d48baf7fb18b4cce3ebfc01b2cdaf044 2026-08-14T12:16:11+02:00 refactor(agent): extract memory fork source validation
+7b8ee7a3f5503281238a628113f8f22d9a536530 2026-08-14T11:20:15+02:00 feat(agent): add session repository catalog benchmark
+48e4ef1f5d041fd5adcd62a9b07b69b1f62c2476 2026-08-14T12:08:48+02:00 feat(agent): share session benchmark infrastructure
+09fb0d157e33e985d410f3aa02e5d122255c9e64 2026-08-14T10:25:49Z Merge remote-tracking branch 'origin/main' into dev
+d46aaa5f1c55d94ac97e280b94bceca63bdcc9de 2026-08-14T12:30:48+02:00 fix(agent): narrow memory fork lane leaf registers type-safely
+c09fb2041cf2014dd54f9f0dc7841ab4aff2a991 2026-08-14T12:34:52+02:00 docs(agent): document session fork options
+0537b2f7021585c7c0c7912359c88d6fdc7d7bf5 2026-08-14T12:37:40+02:00 feat(agent): benchmark session repository forks
+4a92eb61a7a3f539c412ef53499b90e5e04b0f0a 2026-08-14T12:39:18+02:00 docs(agent): document session repository benchmarks
+6b3fb49dd9b9ac1f436deabf08702f7391647027 2026-08-14T13:14:17+03:00 feat: add fail-fast server generation replacement
+3d93ae29b97c00f8d68cb1ad70700712c7ff142c 2026-08-14T12:42:57+02:00 refactor(agent): extract memory fork content selection
+c36552212e898221cc9435cc78f4e1c443ecbbca 2026-08-14T12:45:26+02:00 agents: Adjust rules for changelog entries
+7edcfe25e43a53dcd976468e8025f5c95b5b052c 2026-08-14T12:45:57+02:00 Merge branch 'main' into dev
+a2fd9783f5ecdeaac694d7a8f791f6510164acf7 2026-08-14T12:49:49+02:00 refactor(agent): share session register key helper
+0bddd620d68249712743146b41275331cefeec9d 2026-08-14T12:50:26+02:00 feat(agent): benchmark session repository lifecycle
+0d868f034e4fe0ca3b7100a636af54db6f48e4a1 2026-08-14T12:50:35+02:00 docs(agent): document repository lifecycle benchmarks
+e429d90b800f9a37c8a5812f4c9c10a8cdcc85a7 2026-08-14T13:06:21+02:00 fix(coding-agent): update Z.AI Coding Plan defaults
+39b5f12a04fda7e048a5e526fa0c0490fd9ab0d7 2026-08-14T13:08:09+02:00 chore: extract validateCommittedWrites as shared helper
+3ad1d716ae769bd37d66dbfa2cfe7187e516059c 2026-08-14T13:19:12+02:00 refactor(agent): keep storage register keys internal
+35c1521573ce6b9cb4accf6c02a8bdbf53781f3f 2026-08-14T13:58:16+02:00 feat(sqlite): wire repo to return real session
+09ce3dda5deecc972c63a2fd99b7461aac683e13 2026-08-14T14:54:27+02:00 feat(agent): add AgentHarness R1 runtime shell
+0e5bd4c90dbb8d7c9f8362764a1b866c260d2018 2026-08-14T14:56:05+02:00 feat(agent): integrate AgentHarness R1 with current dev
+cd8bedcf75b7d53d08fc20d10999f5357788340b 2026-08-14T14:57:38+02:00 feat(coding-agent): prototype remote plugin app
+fd8380f3239a9f50a21834faeb89e279b00e5e92 2026-08-14T15:23:26+02:00 feat(agent): add JSONL session forking
+19fbf94110c1833f4151989f0fea2ed25bfea73b 2026-08-14T14:58:05+02:00 Ignore preliminary docs
+71026970a078b9efed3a8b2b935cf3d1fc342809 2026-08-14T15:18:59+02:00 feat(tui): add reusable mouse interaction support
+b1efcf7d7c5d7394fbb12ede0174e04d39ee7004 2026-08-14T13:46:34Z chore: approve contributors from issue #8124
+95e3765adea00a57c5e0c67ebbc5c5ec54749a85 2026-08-14T15:53:28+02:00 fix(agent): reserve JSONL session destinations
+bf68c783a935c98aefa1da520d5ada2699fb22c5 2026-08-14T15:44:49+02:00 feat: remove unused experimental protocol surface
+9fcaac9b1a86c827b768994d779071c9e359b65a 2026-08-14T16:59:45+03:00 fix: use bounded runtime paths for Unix sockets
+1d882a7eca12d07fec9468db0192d13d922bdb31 2026-08-14T16:18:33+02:00 feat(agent): add AgentHarness R2 minimal run
+434332dce83fdb1e3227845b9c508c5fa6223ba3 2026-08-14T16:18:42+02:00 Merge remote-tracking branch 'origin/dev' into dev
+908ae3f01854588062d041db081680314a4c83f4 2026-08-14T16:22:43+02:00 fix(agent): normalize assistant request action name
+d458bfc0734afbadde0ba8a30139d976f6ff8b51 2026-08-14T16:26:47+02:00 docs(agent): add slice-specific harness scratch examples
+4cb81e2bd92b6eafc8f630f080d882f8f0a64e5f 2026-08-14T16:45:14+02:00 feat(coding-agent): simplify remote plugin services
+a606448360ce28a12b04dbee326a5ced2f275404 2026-08-14T20:14:02+02:00 feat(agent): add AgentHarness R3 generation recovery
+80b6797c92799f1be972b3b7ac835e8a921f421d 2026-08-14T17:49:52+02:00 feat: rename service IDs to server IDs
+d411d7b05e68aa45cde6e33658bd3f51ecb6bc8c 2026-08-14T23:26:56+02:00 feat(agent): add AgentHarness R4 tool execution
+7d367c429f116def4ff654bc8c0ad00da96354e0 2026-08-14T23:27:30+02:00 Merge remote-tracking branch 'origin/dev' into dev
+ef93d9292e876544c23471252c25509314a9e464 2026-08-14T23:12:48+03:00 feat(coding-agent): configure experimental server session directory
+95d74e8c6bb945a5fa7bf12f7f6ae109b43bc304 2026-08-14T23:57:14+03:00 feat(server): pass session metadata to harness hosts
+b35b4e0e489a96a8a83b1d533ee9bf6235749814 2026-08-15T01:01:12+03:00 feat(coding-agent): host durable sessions in workers
+33eef6d1c6363c970c5f9001b77e53c671c357e9 2026-08-15T01:04:45+03:00 test(coding-agent): read worker metadata in fixture
+d5278eaac3446a65e41d5f1392b2c79571858393 2026-08-15T07:24:34+02:00 fix(ai): enable Copilot model policies sequentially during login
+086c32e74530564922d011ade23ff582c9d63116 2026-08-15T07:33:05+02:00 fix(ai): retry Copilot GET /models once on 429 during login
+8dce5da769cefd79b1ef043eabcd2277261f506d 2026-08-15T11:49:53+02:00 feat(coding-agent): coordinate replaceable servers and workers
+d96144c6a3f21584d04e482f577eb48a9c2bfa67 2026-08-15T12:06:59+02:00 feat(coding-agent): make server directory configurable
+5876bc49f9a83b47193b7a16975a397890f3db0f 2026-08-15T12:20:05+02:00 feat(coding-agent): isolate coordinators by server ID
+9ad77a2c6ba0769ed14e91bbe4f754bf7607bf1e 2026-08-15T12:26:28+02:00 fix: remove redundant hidden Unix socket entries
+312c5bd7001e2ca8779b914a33e09b84cb752b14 2026-08-15T15:51:37+02:00 fix(coding-agent): launch internal processes portably
+d1a569a791fc5993dbd7d32a04acfd658a902379 2026-08-15T20:35:24+02:00 feat(agent): organize AgentHarness runtime by protocol
+1ae13eb78992ae3fc5d93561a883a5415a3648e1 2026-08-15T20:35:43+02:00 feat(coding-agent): separate remote plugin app fixture
+d87b2b5c21eac7f0b2bc711ef3f988b8a91b8657 2026-08-15T20:38:16+02:00 Merge branch 'dev' of https://github.com/earendil-works/pi into dev
+258668cf4c0afac983aedba54f83339d3f74706f 2026-08-15T21:45:14+02:00 feat(agent): start lane-owned harness runtime
+1267b4cd2ce2523b51731602c53a36917d0d45e3 2026-08-15T22:13:36+02:00 feat(agent): serialize runtime2 lane transitions
+8f31282be6da73dad18537f59e0ee1752f0f6eeb 2026-08-15T22:20:06+02:00 feat(agent): add inert runtime2 shell
+71117ceb7333bf5d9a4397bfd16a2eb21f2d92d1 2026-08-15T22:46:02+02:00 feat(agent): implement runtime2 harness facade
+e482ffd172b7a9f8abc25300ec9c5b68f2da1c65 2026-08-15T22:54:59+02:00 feat(agent): add runtime2 lane configuration
+f9706fc40e264d81ee5fe66d9bac28ba50c2ee0a 2026-08-15T23:07:00+02:00 feat(agent): add runtime2 close boundary
+67523509eaf09d48478dc45428ea87c8b9a79f6c 2026-08-15T23:12:52+02:00 docs(agent): explain runtime2 close admission
+94787f1aa267798ac13c924543ce3ce9922c9b92 2026-08-15T23:15:00+02:00 docs(agent): clarify runtime2 close admission
+980edc9d2bf7d41d4c3f4823a0cfff47688bee80 2026-08-15T23:16:09+02:00 docs(agent): document runtime2 close propagation
+f18d523d4efd3d8cd98dcf7555211deae674dd88 2026-08-15T23:29:36+02:00 feat(agent): add runtime2 fault propagation
+a4919401706f17c2593659e6eff5a1e856851b47 2026-08-15T23:44:44+02:00 feat(agent): finalize runtime2 lane transitions
+1f76f7c150ee9c243b57e0a6fcc80d77702233af 2026-08-16T00:50:56+02:00 feat(agent): centralize runtime2 lane commands
+0697589ac0ee09cd7d83b9e3e3b61a2feeb7454f 2026-08-16T01:02:53+02:00 fix(agent): tighten runtime2 harness boundaries
+d5d656d4eca9bed3801f34dd0da6126df7f06ea8 2026-08-16T01:23:28+02:00 feat(agent): add runtime2 lane creation
+5030a5f5340cb7d3b6ff975b00b123adb48cfabe 2026-08-16T01:55:51+02:00 feat(agent): add runtime2 harness config
+65ec9453bc45c55220d75d659b6b5f85d9ecba50 2026-08-16T09:28:39+02:00 feat(coding-agent): add demand-driven experimental servers
+497faecc6db5ca007702c65b0c29ed8c787f7628 2026-08-16T12:48:59+03:00 feat(protocol): add Harness wire DTOs
+70e878d4cf8f643067c8fc73ea27b74133dca0ab 2026-08-16T16:47:38+01:00 feat(ai): route xAI models through Responses and default to Grok 4.6 (#8124)
+d3ab2af969d64997338253c9151190aa1bc33580 2026-08-16T17:48:06+02:00 fix: track kimi cached tokens (#8119)
+03f576f548d13dee2b149202ae09f88c0f547f2b 2026-08-16T18:00:17+02:00 feat(agent): inspect restored runtime2 operations
+9d3cba0274070a6425e2112c88631d4045784eb3 2026-08-16T22:27:16+03:00 feat(coding-agent): simplify experimental server runtime
+a5612a267e2d9924f72b27dc5b18d980bae318ea 2026-08-16T22:28:20+03:00 feat: prompt attached remote sessions
+e5960aeb3138911f910a9af528fceaef270f7896 2026-08-16T22:28:35+03:00 docs: document remote session prompts
+33dac3623608065b5a653e79dacdcd9a16c10320 2026-08-16T22:53:32+03:00 feat(coding-agent): move experimental runtime outside CLI
+011c78f710b897b9d3a9ba61e8e3f3b01d3ee564 2026-08-16T22:32:07+02:00 feat(sqlite): triggers for no duplicate ids across tables
+fc0a7cb362b5e7f27b9458f62151a85fedcdf29d 2026-08-16T22:03:34+02:00 fix: reconcile experimental server lifecycle races
+a8f856a9a0da54c6a30e1d39b93a0290c8c1fe4c 2026-08-17T01:25:21+03:00 feat(coding-agent): configure remote session workers
+e761b0d0fd0013461ff4f557c01496053aa39308 2026-08-17T02:09:46+03:00 feat(coding-agent): add one-shot remote prompts
+ef005635b382c4a35e36ea9e9849c2a0491b19c3 2026-08-17T02:17:25+03:00 feat(coding-agent): provide tools to harness
+8930b7daf4b3945b09e5e0765dd88d1f1a896392 2026-08-16T22:38:47+02:00 docs(agent): specify register and tool durability
+1e19edd133aa19f071aaa7940a4a722e12ef03c5 2026-08-16T23:06:38+02:00 docs(agent): use typed register tokens
+a829de0a7f99c043a9848819ac3833dfef3ab654 2026-08-17T00:03:51+02:00 feat(ai): add assistant message frame reducer
+a5c013c0c6b9d770d87e4e190d9d793aec35ca90 2026-08-17T02:20:02+02:00 docs(agent): track extension v2 design
+34bad4471ae9c4a937c256d288d1f1c0c1ee06e5 2026-08-17T02:27:01+02:00 docs(agent): consolidate harness runtime plan
+47bf47f11f1379b142574dfeacf762981989add4 2026-08-17T07:10:50+02:00 docs(coding-agent): clarify compaction paths
+58302d34e703e0453ea13bdd10c7e423589ce177 2026-08-17T07:34:52+02:00 feat(coding-agent): support compaction routing sessions
+07e4a253ce79f4f54150b2c4d46d3e76a660b8a9 2026-08-17T08:53:09+02:00 feat(sqlite): cache insert statements for trigger performance
+db0e24086174f2d2b4aee364f36c862b35838002 2026-08-17T09:28:04+02:00 feat(sqlite): lease lifecycle and renewal
+ca21c1686157bf29696c9252f623fc094447ddf2 2026-08-17T09:36:17+02:00 fix: single edit input (#8011)
+8c2529daebe0eac5aecb54424b607b4c88d55e15 2026-08-17T09:37:37+02:00 fix: dont load root mds as skills in settings (#8012)
+f47faf459f1a88ead70c3033b70931217251b4f3 2026-08-17T09:42:51+02:00 fix: register flag type mismatch (#8123)
+fc2a0b243e9f4d56a05ece03566e8c67119edb26 2026-08-17T10:09:16+02:00 feat(sqlite): fork
+5323788bd2390b9c3a942203ecf5c46d668843b0 2026-08-17T10:28:01+02:00 fix(coding-agent): shorten internal process test sockets
+8992320444bada968f80f2670b814dcd8b64b69f 2026-08-17T10:38:59+02:00 feat(sqlite): co-ordinate fork with open session
+86d001d36b898283ef7d63b1df31709e9730c452 2026-08-17T16:41:39+08:00 fix(ai): expose low thinking level for DeepSeek V4 Flash on opencode/opencode-go (#8181)
+9e964db34365725312e85836968df36b687703d3 2026-08-17T10:51:25+02:00 feat(sqlite): skip corrupt sessions
+b26fcee7f704f678e08806f8d75bd6b9d57acda0 2026-08-17T10:53:05+02:00 feat(coding-agent): create sessions for remote prompts
+c7c763f5c48736fa00cdcf0bcbfcae5cbc585e7c 2026-08-17T11:03:07+02:00 fix(coding-agent): clarify truncated recovery failure
+955a543b31a5672ecae52f7919cf5d0a87959656 2026-08-17T11:40:11+02:00 fix: expose sleeping llama.cpp models (#8235)
+374e56e553daccf730c2c8dcb0b6e161980b43c1 2026-08-17T11:40:05+02:00 fix(tui): avoid duplicate VS Code right-click paste
+a1bc0ec79010887210cc7de28714d72c78577dab 2026-08-17T12:15:56+02:00 fix: llama.cpp guidance as no default (#8236)
+d3e3bbc0117751bdb7ff284feaac8082dbe9551c 2026-08-17T12:36:17+02:00 fix: llama.cpp allow network for model discovery (#8238)
+080932e53cb6f82076b111efc424845e4d5c1902 2026-08-17T12:44:38+02:00 fix(package-manager): use semver.gt for version comparison (#8239)
+df018b6020181d4245575fba006361ab69a1408b 2026-08-17T12:55:28+02:00 fix(coding-agent): retry hung model catalog requests
+877c2d0eaaa8a36d27eeeabf54430c863cf96303 2026-08-17T13:00:07+02:00 feat(agent): replace legacy harness runtime
+a6b1dbceb1af5bf8a21da0b437ef756ce9fe85e6 2026-08-17T13:10:08+02:00 fix(extensions): emit compaction failed for extensions (#8241)
+cae09adcd89cc999668ad0fe059fd452ab84f08e 2026-08-17T13:10:17+02:00 docs(agent): clarify hook durability
+1d08508ef6e4951b74190db17814ee73a6a33edc 2026-08-17T13:10:23+02:00 fix(extension-examples): use agent_settled instead of end (#8242)
+af2c352238cffd12d404d5a4cd35a21f93a78fe0 2026-08-17T13:10:28+02:00 fix(ai): honor Google thinking level maps
+10acee6045e9025a22dff7e5220ed0d7538f12aa 2026-08-17T13:24:34+02:00 fix(ai): bedrock response to include smithy headers (#8243)
+c0bb6af3a78ba6e36166e1ffae55c025bb970c11 2026-08-17T13:42:20+02:00 docs(agent): finalize bound values handoff
+f13dbebb403192e28a2be9f1f4724c941087bdc3 2026-08-17T14:12:57+02:00 feat: stream remote session events to clients
+0e4d49541477c4fc6e404f845ad40ed47d157f24 2026-08-17T14:43:48+02:00 fix(ai,coding-agent): remove deprecated Xiaomi models
+382badce61d5dba8321b3e25a9033f06d5986ec9 2026-08-17T15:18:46+02:00 fix(agent): enforce JSONL session ownership
+ee6a5d29f2eb64c9b012865c07bc0b008cd5f818 2026-08-17T13:20:15Z Merge remote-tracking branch 'origin/main' into dev
+fa7299922125284f319bb4c28b2a1a66df64b69c 2026-08-17T15:58:00+02:00 docs(agent): update harness specification
+87205484bf749c2140fef5d1bea68995d57e739c 2026-08-17T16:22:49+02:00 fix(ai): use Chinese ZAI Coding Plan catalog
+c179395b1e627164f34a5c5c90aec834403ca7f6 2026-08-17T16:47:18+02:00 feat(agent): add bound values and lists
+2739510587c39c3146a5f85c14324238e64a419d 2026-08-17T16:48:06+02:00 Merge remote-tracking branch 'origin/dev' into dev
+06fca154da45548321fa2b0fc43ec663ed4a635c 2026-08-17T16:51:03+02:00 feat(agent): merge runtime2 and bound values
+6db110e6fab3a18e0e54a6e1aa5a479c1e282924 2026-08-17T16:58:39+02:00 fix(ai): add Qwen Token Plan Individual DeepSeek V4 Pro 0813
+85de0f5f1c06b46c11c6f5d44a226e1143800954 2026-08-17T17:09:17+02:00 docs(agent): mark WP01 complete
+68a9341ae51084d5a63d076eeaa564c9f0d3d0b6 2026-08-17T17:28:26+02:00 feat(agent): add invocation context primitives
+397673eb26954984c0b18cc4ac019d8b60a5a736 2026-08-17T17:38:03+02:00 docs(agent): document invocation context RPC and telemetry design
+8f0d1235014550932c697f5019c7f172b60e5554 2026-08-17T18:06:28+02:00 docs(agent): align context design notes with implementation
+5f7762f44450e5abcbbeca91ebe280eeac559a8a 2026-08-17T18:19:08+02:00 feat(agent): discover legacy v3 JSONL sessions
+5124256222d0034dc30dbd310f4508ac41c6efb1 2026-08-17T18:42:54+02:00 fix(coding-agent): allow internal process startup in CI
+e6ffbacff158c464aafaf23a0ddbcb0ed0607f99 2026-08-17T19:39:45+02:00 fix(coding-agent): launch source internal processes natively
+1c28f3032e6a39566c95aa709a0b1cefcf81c5db 2026-08-17T19:52:37+02:00 fix(ai): update cloudflare gateway sonnet test id (#8260)
+3fbfcf48ff7d97d2acb6685902f8c07f5a3a50c1 2026-08-17T19:54:16+02:00 feat(agent): thread invocation context through harness APIs
+5e11f65865865cbfae662acd69d90e701bf082dd 2026-08-17T19:59:55+02:00 fix(coding-agent): load nested markdown skills (#8255)
+eb1f87fa9a29e27e0c63dcb40dbed9a3624c82b1 2026-08-17T20:04:49+02:00 fix(coding-agent/ai): anthropic refusal error and fallbacks (#8258)
+54d22b74b3b538836f997ad0903fd44eaac45c93 2026-08-17T22:21:44+02:00 fix(coding-agent): reduce redundant git update tests
+c40f02cb862cbfd75fcab57c1beab40df8d284bd 2026-08-17T22:42:54+02:00 feat(agent): thread context through execution capabilities
+eb860519f0d3e38f71f03f356fcee4b03aea228b 2026-08-17T22:43:01+02:00 feat(agent): thread context through remote harness APIs
+3592465954b671d18d6435905c22f156277df5a5 2026-08-17T22:43:17+02:00 Merge branch 'main' into dev
+b82a374c7d4a08cdd00a4087b31351f39682a320 2026-08-17T22:57:18+02:00 fix(coding-agent): reduce redundant slow tests
+5503486bdcd4b65f4b58d25be305f24fa5c7f911 2026-08-17T23:17:50+02:00 docs(agent): update context design status
+0ebbae32578a33c79d18c67c438854a0758df751 2026-08-17T23:40:38+02:00 docs(agent): document plugin application architecture
+209bc7b9a89b01c8fd05861cf5bbdda3e300037a 2026-08-17T23:44:56+02:00 fix(ai): remove unused opentelemetry dependency
+8065eeb486a4d1d7cc5a902045df87beaad2bb9d 2026-08-17T23:46:11+02:00 Merge branch 'main' into dev
+b7277a566a0d8272bd57e12b1af4a3d1e1b39b33 2026-08-18T00:11:32+02:00 docs(agent): clarify plugin hosts and service chaining
+9a8b75b1f8892ca473a2092e5d71e923bd4f252a 2026-08-17T22:19:58+02:00 docs(agent): define coherent attachment work package
+91915f045de7b3b670fb202bca7129163d2fcd10 2026-08-17T22:45:37+02:00 docs(agent): clarify invocation context motivation
+a574b54e7f917f5095c190c54a58818cf3572a8d 2026-08-18T00:07:12+02:00 docs(agent): specify atomic attachment contract
+f61b4fbc8b79f59914a7fee15b2bb1e2b2f985f7 2026-08-18T00:18:51+02:00 docs(agent): align WP02 contract with context baseline
+198c04b8f407195d1972917ff02397796d7914a6 2026-08-18T01:04:56+02:00 docs(agent): define coordinator plugin topology
+8ba9326f8663b9319dc215f8d5c3c5c4f84d3a42 2026-08-18T01:09:41+02:00 docs(agent): disambiguate plugin context type
+9117326b4c9c4657d2ff5e41d229f52c8273e8fc 2026-08-17T22:19:20+02:00 fix(ai): forward Azure Responses tool choice
+ad58801ce793ca4ca2f6fb64b307e9eaffd2c471 2026-08-18T08:19:46+02:00 fix(ai): update Baseten GLM input modalities
+e5dde9a76bfec3c4eff764d1b6db3b60e5dd0b30 2026-08-18T08:41:24+02:00 feat(ai): add simple tool choice option
+90305d90a049d3f7784f15821d117fc6932248e7 2026-08-17T20:00:34+02:00 fix(coding-agent): disable tools during summarization
+8af7690c4f0c41fad274620829c75a3243d07aa3 2026-08-18T09:26:07+02:00 fix(coding-agent): skip trusted subagent prompts
+2509b5c037d366979f2febfce4174b88aeaadc6a 2026-08-17T20:14:22+02:00 feat(agent): expose provider context construction
+c695234e0b8382a1f54d1b177399958c7413f284 2026-08-18T10:03:35+02:00 rpc.md update
+4266bddc08f96ae5729ac27776d0351de61df79d 2026-08-18T10:43:16+02:00 Merge remote-tracking branch 'origin/main' into dev
+fb33e0db24961f31512590fc6d6c052082b8387a 2026-08-18T10:54:51+02:00 feat(agent): add remote session RPC
+537bb1f86e30c10106e9b45c96d8409ee8142073 2026-08-18T12:16:50+02:00 plugins.md update
+8a92c818571620dc085b11bd02764d19cbb4640b 2026-08-18T13:01:05+02:00 docs(agent): simplify WP02 durability boundary
+836aee6d38f60428ab6bd2679f93dce43a55dab3 2026-08-18T12:56:34+02:00 feat(coding-agent): show compaction usage notices
+ef8dc7385b1ed41c40cd0a4bbf612326ec18bd23 2026-08-18T14:17:38+02:00 feat(coding-agent): centralize compaction summary requests
+beac75ecc2254713cc2d7f3ab682c015762cc481 2026-08-18T14:36:33+02:00 feat(agent): implement atomic acceptance and coherent observation
+cff1cf52c6c73ef873dcb6148238ed68f69e1ead 2026-08-18T14:25:28+02:00 feat(coding-agent): add cache-friendly compaction primitives
+ed0f5834ff4d86845152aba77997123a188a324a 2026-08-18T14:58:06+02:00 fix(agent): decouple fork snapshots from storage state
+a6c6f801802a7083609541dbd49eec203804d8fc 2026-08-18T15:28:12+02:00 fix(ai): anthropic fallback usage (#8308)
+fd09e396a846176c74a9fa327f567d631e499168 2026-08-18T15:35:36+02:00 feat(agent): open legacy v3 JSONL message sessions
+bf7acdcc18e4dff6442ac3381f57f6d79cb66e7a 2026-08-18T16:32:25+02:00 test(sqlite): finalize repo and storage conformance
+b237412699fa33773921d295d2af14bf3031315e 2026-08-18T17:35:35+03:00 feat(ai): generalize openai-completions thinking token budget fields (#8275)
+c6190967a23d2f4f39d424586cb33bc8bd5dd3de 2026-08-18T16:44:38+02:00 docs(agent): clarify fork snapshot memory expectations
+c0613289814c54a28c649add556f509d9c79714a 2026-08-18T16:29:26+02:00 fix(coding-agent): load extensions in Node SEA hosts, closes #8237
+f0c5d86d20f85bbeee957b0e9b06ee085ea40c80 2026-08-18T16:49:14+02:00 fix(tui): fit text padding to narrow widths, closes #8252
+0c606c0626565eabfde0ce4726c5424c5282a2f7 2026-08-18T16:50:04+02:00 feat(agent): import legacy v3 JSONL custom entries
+59a71b235dadb4ad0d67557a8abb0aaa093e68b4 2026-08-18T17:10:35+02:00 Revert "fix(ai): anthropic fallback usage (#8308)" (#8313)
+289b1386622e57cbc542bbf712cbbd5c3c29fe3d 2026-08-18T17:25:36+02:00 feat(agent): import legacy v3 JSONL custom messages
+6fc8b83604402864a28f957986520e07a3c05c18 2026-08-18T17:27:50+02:00 fix(agent): simplify legacy custom entry normalization
+31e617b4ed7cc5745ab9b08149cc691460185bdb 2026-08-18T17:43:33+02:00 feat(agent): import legacy v3 JSONL branch summaries
+43c4f6cf725b84196363de181a3d43402854b583 2026-08-18T18:25:34+02:00 test(sqlite): timing benchmark
+a3fd21561599e32d5614ac740dd4ce74aba204ce 2026-08-18T18:57:43+02:00 feat(sqlite): repo close, simplify benchmark
+8f24b9d237525b97d35ba7e35c9bdc84ba1f55ed 2026-08-18T20:11:08+02:00 docs(agent): revise distributed plugin design
+6e6e35eb4fee540dbb1b34ed56f27a0a45495dfc 2026-08-18T20:53:41+02:00 docs(agent): simplify remote service state discovery
+4809c2abcaa86257337aa9a44801f4af91144dbc 2026-08-19T09:11:45+02:00 fix(ai): anthropic fallback usage (#8319)
+55b0db4d3e9075345b6509a5b488250d79e026d8 2026-08-19T09:40:18+02:00 fix(ai): prevent copilot policy login rate limits (#8254)
+028316ef4bd6ed5eb15179a637c8a4314f8777fb 2026-08-19T09:50:16+02:00 feat(agent): import legacy v3 JSONL compactions
+01001d7ad52b2949a7b6cb65fd893a7103d6b3d7 2026-08-19T09:51:14+02:00 Merge remote-tracking branch 'origin/main' into dev
+8dab70281bc03ad70407afc87da4818353d94707 2026-08-19T09:52:26+02:00 Revert "feat(coding-agent): add cache-friendly compaction primitives"
+3a0b9a3eeee280f750edb3b0fc8a1b9093e88137 2026-08-19T09:53:15+02:00 Revert "feat(agent): expose provider context construction"
+23da09ad4b7741b42cb8371e7a94f7e7b51218a2 2026-08-19T09:58:25+02:00 test(agent): cover legacy v3 compaction fromHook import
+4e23981835f712b4102de71beed31edf59ae08a3 2026-08-19T10:02:35+02:00 test(agent): cover legacy v3 compaction branch isolation
+2905c693fba7ce2bfbad69f63cd8fa6cdefc7533 2026-08-19T10:05:05+02:00 test(agent): cover invalid legacy v3 compaction boundaries
+4650276a9b061d0986d994341b55da168e45d88d 2026-08-19T10:09:27+02:00 test(agent): cover legacy v3 compaction tail projections
+ed867e90947910c907d7d4b9d1b7a8586448f648 2026-08-19T11:30:26+02:00 fix(ai): fallback cost not via stream options (#8352)
+d711bd5f0a5fca7f10f8a681763b5ed5e63d9400 2026-08-19T12:02:37+02:00 fix(coding-agent): preserve branch summary source leaf
+830a0a59e975ed3a4e551be18dc60d45479f5118 2026-08-19T12:24:30+02:00 fix(coding-agent): expose tool metadata at stream start (#7953)
+b32dc6c60bb2550796f7c5b6e18cc597321322ba 2026-08-19T12:29:35+02:00 docs(agent): model interactions as spawned services
+d57e531f5dc57974e2f9ce7a618730e5358a45db 2026-08-19T19:42:27+09:00 fix(ai): round-trip Bedrock redacted reasoning (#8314)
+1e1a6e27be36aa6e4e607137a648bb342a9a2477 2026-08-19T12:45:44+02:00 feat(coding-agent): include paths in settings errors
+913bcf3391be680a41fd6cb9acfe5d0fbfb3f7d9 2026-08-19T12:55:36+02:00 fix(coding-agent): report settings diagnostic paths
+678f0af30d63650052fb3ed16e9b779af1a8f9e8 2026-08-19T13:06:00+02:00 fix(coding-agent): show startup diagnostics in TUI
+3de00332f71a9a472d26cd9bca9dfc1961061e2b 2026-08-19T13:19:26+02:00 fix(ai): derive Z.AI reasoning effort metadata
+cfc6dd2101f77cc42e205d6ae19a99ff103d08b6 2026-08-19T09:21:49+02:00 feat(agent): remove drive deadlines
+a3c8d1828dcd00cfdf11e7c0f24765fc3f8870d6 2026-08-19T13:24:17+02:00 TODOs in lane.ts
+4495469a5e8466eb67e3f26969922d3e7b208de2 2026-08-19T13:44:00+02:00 fix(coding-agent): compact without provider usage
+1355cd36e0b10a3e71c6c78f713b7b36458db27f 2026-08-19T14:10:27+02:00 fix(coding-agent): normalize UTF-8 BOMs in text inputs
+e78186be5f8dfb36d3c7c8fe8f9289861a55f569 2026-08-19T14:30:20+02:00 docs(agent): simplify durable interaction settlement
+be67a81980fcd35eef30b96c866562af419504be 2026-08-19T14:56:11+02:00 docs(agent): add collaborative diff review example
+e541f652fd049f1878dd0333fb4e0e80fd95140c 2026-08-19T15:45:11+02:00 docs(agent): explain why record mutations need a critical region
+ac2cb5281220150ca748388e81532ee7dd81364e 2026-08-19T15:45:28+02:00 docs(agent): align RPC design with plugin services
+87af49dec23f5aee132071ef33d4b2441f551e4b 2026-08-19T15:56:26+02:00 Add pi user-agent to most api adapters (#8361)
+8f3aa6558b24792085afac3b29f2d79adbedea2d 2026-08-19T16:32:38+02:00 feat(agent): normalize legacy v3 configuration changes
+4ca636c5e07eb1e0fbc6be6c11c720d1a8856daa 2026-08-19T16:44:17+02:00 feat(ai): opeani completions reasoning details (#8246)
+2ff8ba62238e61642fe80985175774b163f77cfa 2026-08-19T16:48:29+02:00 fix(coding-agent): keep model and thinking level changes session scoped (#8356)
+164507bbac05196d1b80eb987922a63cf799e9cc 2026-08-19T16:55:13+02:00 feat(agent): simplify mutation event publication
+8445328a52b3a2e000a8bdab83f3034ceddbc4ac 2026-08-19T17:27:46+02:00 feat(agent): rename breakpoint primitive
+3be63cebb901129aefdc86b0503c09bdc48cbdbc 2026-08-19T17:27:55+02:00 docs(agent): preview manual-first drive
+98767a25d24494ea0b6acc10af4b91fc68c4cf7e 2026-08-19T17:29:02+02:00 fix(settings-selector): remove token estimates
+41aea38ffba7a19159ae6273c49eceb1e1593657 2026-08-19T17:42:03+02:00 docs(agent): add collaborative canvas example motivating DeltaState
+0476b86496d9945fab7fd2e0a65921d3cd90e268 2026-08-19T17:42:28+02:00 feat(agent): import legacy v3 session names
+ee29aa118bdeb7d8c4fdafa81130e0c61f8e0423 2026-08-19T17:43:21+02:00 feat(settings-selector): make default model and thinking level searchable
+a669db3c33851c7236315f7f5e0d028494c071f5 2026-08-19T18:25:14+02:00 fix(settings-selector): show modelid [provider] like /model
+f0a2880f291a0f13d6fee1fa0032dd6c61518c45 2026-08-19T18:26:36+02:00 fix(settings-selector): revert token estimate removal
+9c8070fbe4ef7c18feee8ab47c22c5dc1572fcd9 2026-08-19T18:41:53+02:00 feat(settings-selector): ctrl + s persists /model
+496185f6e4267b979e3663c45f7eb70b0c6a97b4 2026-08-19T18:54:52+02:00 feat(coding-agent): /thinking command
+9436869977a98fa9e84ad4ddb80c7ceea0edfb6f 2026-08-19T21:25:47+02:00 feat(agent): import legacy v3 entry labels
+126a70c4432d4239068918627c629f77cbc56c6a 2026-08-19T21:30:57+02:00 feat(agent): split legacy v3 normalization into focused phases
+e92294d4434c431ebdf96b99a39c1a6734f9d89c 2026-08-19T21:51:58+02:00 docs(agent): clarify deferred delta state design
+56cca20ea0d1ff127b105eff46b8724da9f55676 2026-08-19T22:24:20+02:00 fix(agent): define rootless v3 label handling
+f8a6e670d4372bd8dd08e33beca31c7c1b7d08af 2026-08-19T23:09:48+02:00 feat(agent): replace remote sessions with routed services
+0a7bdbf06932758b6228bc4ae18f1b4b529e6237 2026-08-19T17:58:50+02:00 docs(agent): require clean-room drive implementation
+de61e1ad2c993bf8e1ebdfc89158ff04792a1816 2026-08-19T23:20:25+02:00 docs(agent): plan direct durable drive
+b7bb00b936dbe21b8e160b3e89efdec361846699 2026-08-19T23:35:43+02:00 fix(ai): retain reasoning details in thinking signature
+8222adee86cfc403d10bbce0d66861095fc2210f 2026-08-20T00:04:16+02:00 feat(agent): add routed plugin service runtime
+9aa04fdf86462b00c3ad05c77c53e09fc4444317 2026-08-20T00:21:08+02:00 feat(agent): extract session worker services
+22ca1fffe1eb316acb5bce90227835b864d64d91 2026-08-20T00:28:54+02:00 docs(agent): repair direct drive handoff
+d9b1dae0622386e8e83ad266250263c593302622 2026-08-20T08:30:08+02:00 feat(agent): remove manual drive controls
+d94e521baac17ae988bc62adc72ded58a6b19f9b 2026-08-20T09:20:25+02:00 Merge remote-tracking branch 'origin/main' into dev
+48a07ddbfd3abff279187286cd6da97f722a75a3 2026-08-20T10:13:28+02:00 feat(agent): add server-scoped session services
+2c897da81513b1747035ae16984eb55dfe6dd5e6 2026-08-20T10:40:16+02:00 feat(agent): remove pi prefixes from client and server APIs
+29c41fc6cd6489f5936dd16763a6494491048318 2026-08-20T11:07:45+02:00 feat(agent): report usage for legacy v3 sessions
+d5e3b478775a65ee87179b19e14433db7ca34306 2026-08-20T11:27:25+02:00 feat(coding-agent): route prompting through chat service
+bafbdecd1b8aeacf41adbaba91057167519833cc 2026-08-20T11:52:28+02:00 feat(coding-agent): scaffold built-in service surfaces
+8df02a436ce6102363101ee30a39a97adeebd0b3 2026-08-20T12:37:46+02:00 feat(agent): implement remote events and client TUI
+5133c9284fe023436f4251fac2a6e8fb00a883b4 2026-08-20T13:30:47+02:00 chore(settings-selector): get rid of --default and global model
+5b3caaf4cb45d1e0315fbe46ebf26fc68f1dd065 2026-08-20T13:35:21+02:00 chore(settings-selector): get rid of default thinking in settings, ctrl + S is enough
+1d3503fb9b422f3b5262f369c1b718230ca76df8 2026-08-20T13:55:27+02:00 feat(settings-selector): show default, make default searchable for model and thinking (#8399)
+a10b538493ddae171f3ac0906091c10e11d9c9a0 2026-08-20T14:10:34+02:00 feat(agent): resolve legacy v3 parent session metadata
+768184923ab8f90f049244c2741b051c877a5c2e 2026-08-20T14:28:33+02:00 fix(settings-selector): nit spacing
+cffe4d776c8fad2b36b4fe6062ebb72c428e0f0f 2026-08-20T14:42:47+02:00 fix(settings-selector): nit ordering in default t.l. per model
+919ff8733a9043a864d4687233cf366b3048df2a 2026-08-20T14:57:06+02:00 feat(agent): cover legacy v3 session forks
+8f2ae3faddb9f4eea565bbb67190ea126fac0691 2026-08-20T15:58:47+02:00 fix(tui): prevent wrapped table link color leaks (#8363)
+5cd93f688aaab89dbb6dfa4aca535f21796ae185 2026-08-20T15:59:12+02:00 feat(coding-agent): add development pi wrapper
+2f642c5d736ea1a6c159cd74ac895efaca70abfa 2026-08-20T16:48:51+02:00 feat(agent): upgrade legacy v3 sessions on first write
+294d72b1bbb478f629aa68544026d66a59a209fa 2026-08-20T16:54:38+02:00 fix(agent): cover zero-usage adjustment during v3 upgrade
+2c6393ce927e92699d488f318291d9c2adfae79e 2026-08-20T17:02:27+02:00 fix(agent): cover atomic v3 upgrade publication failure
+7ebf9087e7220d434bc7fa9a60940361b68b14b2 2026-08-20T17:08:30+02:00 docs(agent): remove stale legacy v3 TODO
+0cad8a04d6eb16558eaaf1455c44818ee9bf902a 2026-08-20T17:31:56+02:00 fix(agent): create JSONL sessions atomically
+d4edf066f91bdfc01e10037d7fa108b2d807059f 2026-08-20T17:39:36+02:00 fix(agent): extract JSONL storage serializer
+4e9f632c6cf2c2ea9ad591ffb0a372c02d032ba5 2026-08-20T21:14:16+02:00 fix(agent): reject unsupported JSONL versions before replay
+a17323e5b1e766433e76a3ed7a129f640924c079 2026-08-20T23:07:48+02:00 docs(agent): design plugin dependency discovery and reload
+686f3487f5ef3ce290432e22f8b3296e1694d9dd 2026-08-21T16:05:01+02:00 feat(interactive-mode): share via radius artifacts under experimental (#8443)
+a2f369d63a3e412a68a2570583dd60cadb7d63a5 2026-08-21T16:14:10+02:00 fix(slash-commands): order tree above thinking
+77f2d1235ee2992c6072b9dcb6e99439a70c6f45 2026-08-21T16:47:08+02:00 chore(interactive-mode): get rid of theme, only share via radius if logged in
+f4585b8bec581d005cbb1edfc07edfcce723d0ae 2026-08-21T18:33:27+02:00 fix(coding-agent): simplify session sharing links
+e54d14b59cfef6bd6d2ef491e259ab925fd6d19b 2026-08-22T00:37:02+02:00 feat(agent): simplify plugin service names
+c77ab55ecfc96291d2b81f05bb23856f68644556 2026-08-22T01:10:08+02:00 ref(ts): Use NoInfer<T>
+c49906ec77788625aacbdc53ebca6fbe65bd20f5 2026-08-22T01:19:25+02:00 fix(coding-agent): preserve managed state file permissions
+7d4c0e05dd31545de2b1043142a89d90ce1ae736 2026-08-22T21:19:38+02:00 feat(coding-agent): bundle Node runtime (#8474)
+39d869f02a331717df2f800d29f9fed19596494e 2026-08-22T21:21:37+02:00 fix: publish installer artifacts
+cec3a91c029e453c4bebdd02d84335a0f52503d7 2026-08-22T22:50:12+02:00 feat(coding-agent): defer uncommon syntax grammars
+74786a748f5314cc2127ebbcfa2d732e9b8433f5 2026-08-22T23:15:49+02:00 fix(coding-agent): support -- end-of-options, closes #7269
+62bcbf6be0206cc4fd2ca0e35dd5eb879ca6c8e7 2026-08-23T00:01:33+02:00 docs(coding-agent): document -- end-of-options delimiter
+faecac2ca85fa18e039d4c36d24e98023b652db7 2026-08-23T00:02:45+02:00 feat(coding-agent): reduce bundled startup work
+77c540704d6872d8491fefdfb4829529635bcf09 2026-08-23T00:07:31+02:00 meta(changelog): Add missing changelog entry
+a1f955e9f47fd3379b44f4aace65ab916c80519a 2026-08-23T00:24:15+02:00 fix(coding-agent): remove redundant development dependencies
+f8f03460a011c47100bad47bd21c9457fb0f70f0 2026-08-23T09:28:19+02:00 fix: reduce workspace dependency tree
+309b524f4fc10ad7005c8ff41d834203b8d37121 2026-08-23T09:28:36+02:00 fix(coding-agent): avoid duplicate clipboard binaries
+c1279a65b3ef6b0b19950ed1771d5933241c240f 2026-08-23T10:36:34+02:00 feat(coding-agent): defer jiti until extension loading
+bcad846f938e8f3afcfb6881f1e5a09bd731907f 2026-08-23T12:39:20+02:00 fix(coding-agent): update end-of-options CLI test
+a69bef789bc95abf0acee16f7b4660b70b650bb9 2026-08-23T18:39:42+08:00 fix(coding-agent): discard failed extension factory state (#8424)
+460191cfcf27d60ff81fc0178812f4ff09e8df06 2026-08-23T20:45:14+02:00 feat(coding-agent): include context in Radius session shares
+27b7a626de0e36845feb0c21d6da77352dd4834a 2026-08-23T23:30:16+02:00 fix(coding-agent): use Windows-friendly keybinding defaults
+81152d88bb4cc25364f34cbd2d480f4a09529742 2026-08-23T23:34:08+02:00 docs(coding-agent): clarify custom footer usage APIs (#8482)
+a470b121bf683b4c2b9fc0b3a7c807de7e0cfe9c 2026-08-23T23:34:30+02:00 fix(coding-agent): expose finish reason compatibility override (#8487)
+4af9d21d3b4d664e4a29fcabfec85171077248e3 2026-08-24T09:34:34+02:00 feat(coding-agent): update managed installations in place
+8798b7996d6c655deb750f36800fab206e82a810 2026-08-24T07:50:17Z Merge remote-tracking branch 'origin/main' into dev
+80e62761f7251a104f1b21d9c73920c720f0ec00 2026-08-24T12:27:03+02:00 feat(coding-agent): add optional PowerShell tool (#8512)
+41c9795be7fe8d19f3d926726f04923286501b2f 2026-08-20T12:38:28+02:00 feat(agent): add durable drive foundations
+fa35550e95e9854a51b6d984cf4db5017dff41f0 2026-08-24T12:37:35+02:00 feat(agent): simplify durable drive ownership
+ab3a774c8fa152619783494b5c8fa2c6c9855a82 2026-08-24T12:40:53+02:00 fix(agent): preserve legacy upgrade commit stats
+7623e8a0f1728aec54b84374c525856fb9471f26 2026-08-24T12:47:11+02:00 docs: audit unreleased changelogs
+4e58f324fae8ebfa98a3d45181fb248072a2afac 2026-08-24T12:50:48+02:00 Release v0.84.3
+31d4ed586092309b8835edf22e79cb993fb82091 2026-08-24T12:50:52+02:00 Add [Unreleased] section for next cycle
+bfb004d4418ff05c6f909eaaab856cbe75c1fde0 2026-08-24T12:53:52+02:00 fix: extract Windows release ZIPs in CI
+97fa14e39cfce78c273a36b2d9e8509cd5bc6b72 2026-08-24T13:07:30+02:00 fix(coding-agent): reject truncated compaction summaries closes #7048
+c399e34658c892cc1c96c3c2a60efe3f9ff6059a 2026-08-24T13:13:03+02:00 feat: merge main into dev
+dcd461925db2edf69a43c8135db1180d418afd54 2026-08-24T13:29:51+02:00 feat: show llama presets if autoload enabled (#8558)
+a789067a0d94cf28324f2fafb2e4865f563fef6f 2026-08-24T14:17:17+02:00 fix(coding-agent): support bundled experimental processes
+5cda0ad03f64c7471e53f6d43ca81e60a1578258 2026-08-24T14:20:48+02:00 Merge branch 'main' into dev
+94108a1ac65a2cfce5d97431e9d24d14f6da858e 2026-08-24T15:40:18+02:00 feat(sqlite): databasePath, sessionId for sharding
+7ccb2a088252bad7cc863bb6a84f9f5fbbe51b81 2026-08-24T19:49:15+02:00 docs(agent): simplify durable drive ownership
+6bb8252099bc94bf27f68e6720839de3de180c51 2026-08-24T20:24:32+02:00 docs(agent): restore direct tool batch procedure
+9f666bfbbbf413c0abc4ad04fae8b2c3e8e7b8fb 2026-08-24T20:46:18+02:00 feat(agent): add durable terminal mechanics
+9b034fc45e4afd51cfad27e5ffea37b494c6ec39 2026-08-24T21:56:02+02:00 feat(agent): add durable generation procedures
+852142daa0286322247b3219ba64cbf234e009ea 2026-08-24T23:32:33+02:00 feat(agent): add explicit session mutations
+a2208678e963a2d99b6c6c38a6f195bdc24edf75 2026-08-25T00:17:23+02:00 fix(agent): make service hydration readiness explicit
+5c6655e76e07996e53ebc45226ec4dc32b79323b 2026-08-25T00:52:59+02:00 fix(agent): make durable assistant framing burst-safe
+b7170b86a609028618cd2efe9b31f3f2b347ad4d 2026-08-25T08:13:02Z chore: approve contributors from issue #8388
+c5de2cc67f04d2e700617f9452a22a4242aaa1a4 2026-08-25T08:17:15Z chore: approve contributors from issue #8409
+e8c632ef64f99b0d2ce7cc7c215aecb5c66b0016 2026-08-25T11:03:13+02:00 fix(ai): cloudflare gateway type, include workers
+5cd6a2a502a723398326ef0bfaa62a83dd90065f 2026-08-25T11:12:15+02:00 fix(ai-test): update glm 5.3 price
+c5ad7c1b0f7623bbfdf64dd4967fa6e99c15c01a 2026-08-25T11:19:31+02:00 fix(ai): concatenate openai completions reasoning deltas (#8605)
+de82e536738f10fda8e53404d2968241f3fcd96a 2026-08-25T06:39:16-03:00 feat(coding-agent): export image MIME detector (#8600)
+cacb5917f9712d7e80807f540b7dd70885422bf6 2026-08-25T17:43:36+08:00 fix: export ToolExecution*Event types from public API (#6847)
+45207864febb4658c294d075e761533a9b2f79f2 2026-08-25T09:47:58Z chore: approve contributors from issue #8574
+c1729a0f7532d553cf590da3958ad0c18162f770 2026-08-25T09:54:56Z chore: approve contributors from issue #8594
+650e7a6126d4f45a7bd4457b198fcdcc6fcf98c1 2026-08-25T12:11:21+02:00 fix(ai): derive OpenRouter reasoning controls (#8614)
+240eb29c41b2f5c6e7fcab80bc2b090d871ccaad 2026-08-25T12:13:50+02:00 fix(coding-agent): append run-time custom messages after the turn's tool results
+fe37e9f9b5fb2e7bd9ff504e678f08d115375230 2026-08-25T12:26:06+02:00 fix(ai): omit tool_choice without tools closes #8607
+1bb61986cd6b12d0e62dda3af9bc73b2ab63d34c 2026-08-25T13:31:42+02:00 docs(coding-agent): update provider links to api
+587be985a093cc74ff24a6e7a8f0f4d84fa1e7b2 2026-08-25T13:57:20+02:00 feat(ai): add deepseek-v4-flash-vision-exp
+a79b3733421ead0dcea3cbe32247ea2464400dcb 2026-08-25T15:19:49+02:00 feat(coding-agent): expose RPC queue clearing
+e99a01b9461ec99fc3d93f4b5ae3be7b45acb75b 2026-08-25T15:42:07+02:00 Remove outdated docs
+cbaec010481b492807db3655a771941f2bc779e9 2026-08-25T15:58:05+02:00 feat(coding-agent): add setup-driven facet generations
+423e20cb78f037ecfd8a250666305665e8d0eb5c 2026-08-25T16:35:13+02:00 feat(agent): separate sessions, branches, and lanes
+7ddbac2823ef86e38e2aa96fe9046f155710478f 2026-08-25T16:44:07+02:00 fix(ai): keep cloudflare ai gateway workers-ai models when models.dev drops them
+1de96af75fd464b66d9238bf3b757413bc19f6c2 2026-08-25T16:48:56+02:00 fix(client): update unix transport test to renamed pi.session-directory service id
+8fa7eebd235355522c8104166b4f1f959b4e2f10 2026-08-25T17:49:28+02:00 fix: persist default to scoped if non-empty
+b37834b695a386869fac3681557a255950c947b3 2026-08-25T18:35:45+02:00 feat(agent): add durable retry and deferred polling
+eb1185d93eec09ceb9369373ac02d31e9ca41785 2026-08-25T20:13:16+02:00 feat(agent): add durable tool execution
+df2a3409e83efc701dc4237c890e626647230370 2026-08-26T00:15:08+02:00 feat(agent): simplify durable drive runtime
+417905647c27bfd712df8c21b890df1661242421 2026-08-26T00:50:09+02:00 feat(agent): clarify operation continuation semantics
+0e77e57d96e99b49f710c652d3f5985ac0c66f8f 2026-08-26T02:07:57+02:00 feat(agent): simplify durable runtime procedures
+7af2d27dced8f1f2aff3a678f2e7bc748693dfef 2026-08-26T10:33:10+02:00 fix(coding-agent): prevent Windows taskkill spawn crashes
+6b36eb5927c495f8a6f1421acf588f67d1722844 2026-08-26T11:10:28+02:00 fix(coding-agent): remove explicit tool choice from compaction calls
+2470ea4404b184b0d31e4738358488a5ad4e85f0 2026-08-26T11:59:50+02:00 fix(tui): let drag select text over the editor
+9b23c65834e0345ff1d7de055500d6928f65e118 2026-08-26T12:00:25+02:00 feat(agent): add structural drive foundation
+b37ebb7f22ec1a8fbf882366dc20ae6d6010a6e2 2026-08-26T12:03:41+02:00 fix(tui): autocomplete orders nested results (#8669)
+0b5ee5d8b316a6c0c031360ec226e2b3ec843276 2026-08-26T12:07:30+02:00 fix(coding-agent): repair unterminated session files
+7aab6c26e53c82e63f369b497552849aff36f903 2026-08-26T12:51:09+02:00 fix(ai): serialize thinking signature once (#8671)
+6c4f360264397c59801f6da2bdac13e3b1fcbe91 2026-08-26T13:08:26+02:00 fix(tui): chunk large main-screen renders closes #8028
+3a68f018c045ccb8308dc13ac953ec836bcc8994 2026-08-26T14:09:35+02:00 docs(agent): redesign WP05 around lane inbox, result records, and neutral leaves
+b07e17faa2d4a08598b3986a5616ebfc4fcd5550 2026-08-26T14:27:21+02:00 fix(coding-agent): preserve partial Bash output when toggling thinking
+1ac6128e66bd44668b58db773c2a76c29163ade5 2026-08-26T14:33:47+02:00 fix(tui): make alt screen not segment on - and / (#8676)
+938109e7259068ff736dbba3bed14c81af25abbe 2026-08-26T14:43:57+02:00 chore: changelog entries
+c60dd63fdff6a26331c993422de99732cd109b07 2026-08-26T16:10:53+02:00 feat(agent): simplify durable operation graph
+42f7f29ad1cf15d6ec7eb5f41749b2e6ab291eb2 2026-08-26T16:25:30+02:00 docs(settings): default model and thinking
+c5a35eabbfcb706fc240ac9417a1815aec4b13ff 2026-08-26T16:46:39+02:00 feat(agent): fuse structural boundary routing
+0f0ca0f6b78019b11f494b1476b0263a03a59597 2026-08-26T17:34:56+02:00 feat(agent): make run boundaries atomic
+e86823096c5bad39e1ca282ec24bc5eb9bec745b 2026-08-26T17:39:56+02:00 feat(tui): add terminal capability overrides closes #8665
+3625e5b14645a42e2572b62a40df27c535421153 2026-08-26T18:06:27+02:00 docs(agent): resolve M7 cancellation decisions
+8b6910732992521bcf907ce39101f8a633a5ba8d 2026-08-26T19:10:36+02:00 feat(agent): make durable drive total
+353c990f40183c1526595fda7cacbb4dce3dbde3 2026-08-26T20:26:06+02:00 feat(coding-agent): add mini, a three-process coding agent on the durable harness
+e055b9fca9b6de8505347f68c709f260bde1b9c0 2026-08-26T20:41:13+02:00 feat(coding-agent): address mini lane events to one presentation
+89356540fb7318e04e9599a1bc742f5e8f358fe2 2026-08-26T21:14:59+02:00 feat(agent): expose durable lane operations
+d09576def8ccc7774acfd998c051965948c88092 2026-08-26T21:51:37+02:00 fix(agent): finalize durable lane replication
+5507d76ee84124d907fd1f84ae5fea9ca641d777 2026-08-26T22:02:31+02:00 feat(agent,ai): add narrow subpath exports so clients skip the barrel
+5976a2f8b90f8937706ac985130802b3f0ad8017 2026-08-26T22:41:05+02:00 docs(agent): audit post-WP05 roadmap
+eb3e9feed1bd092535ae77232e9dd351bc781e23 2026-08-26T23:08:57+02:00 feat(coding-agent): split tool renderers and theme validation from their implementations
+2d675d069a629a3d3ad20d980941f6cd826e1f60 2026-08-27T00:22:46+02:00 docs(agent): condense harness specification
+f0bfae2a96978e70ca9fb08d9050bf9884bd126e 2026-08-27T00:30:54+02:00 docs(agent): clarify harness alignment corrections
+97f7472f4e285cb8de661b3e8591c14647054955 2026-08-25T21:47:44+02:00 feat(coding-agent): replace facet attributes with services
+e44ecea8fbdc7a0225918b7c35b7290b39a6c07d 2026-08-26T00:12:57+02:00 feat(coding-agent): derive facet service routing
+75223072b816ffe0d94660a0c262c1dc8683f027 2026-08-26T00:20:31+02:00 feat(coding-agent): expose experimental TUI service
+6f0ea81e8b8483d7f3402f5263f61085f143ff73 2026-08-26T12:13:38+02:00 feat(coding-agent): preserve handles across facet reloads
+a17ead3292da5ad1f7921fd52a722e669a71c86a 2026-08-26T13:46:19+02:00 feat(agent): remove remote service events
+8288bc35434340888ccf5d816fa2958d723e95cf 2026-08-26T14:16:06+02:00 feat(coding-agent): wire Chat into experimental TUI
+6441fa68b5829a07109dff502a2f523663f04190 2026-08-26T16:02:18+02:00 fix(agent): align facet service contracts and errors
+35fb116a6a99d32ebfdec2eaa796d6d20e1b23cf 2026-08-27T10:53:55+02:00 docs(agent): restore subtle harness contracts
+ccfe79ed238674f760c986e3a61493aab794000a 2026-08-27T11:28:05+02:00 feat(extensions): ui prompt events (#8355)
+1defa151e0c1dac87d38a2d0ac09d67f817b30f9 2026-08-27T15:51:29+02:00 fix(coding-agent): expose https-proxy-agent named export (#8723)
+4bd9438e5d6113969b89fd2acc781e795e7e3784 2026-08-27T15:57:55+02:00 feat(coding-agent): run experimental client as direct chat
+ecd31642d7ed55773aedc0f04b45447b21cfafd1 2026-08-27T17:18:13+02:00 fix(coding-agent): remove unnecessary local service tokens
+4e494929998d6bc4fccf75e0a233f727db4b70ee 2026-08-27T18:07:54+02:00 feat(tui): allow disable copy on fullscreen, ctrl + x copies selection (#8731)
+b6c87974591ff677920d53236762740050fa2057 2026-08-27T19:09:26+02:00 feat(coding-agent): share fullscreen TUI with experimental client
+1d0d110ab471a277d568f497c9cdb46cbdeeca68 2026-08-28T02:09:53+02:00 feat(coding-agent): connect experimental sessions through Radius
+f55da4a9df42210d35cac055de9a8b830b38cbbd 2026-08-28T09:38:19+02:00 fix(coding-agent): allow exit while Radius reconnects
+d4ce5d5a22aeca571e699f319dea43f9ece49686 2026-08-28T10:08:19+02:00 feat(agent,coding-agent): unify process-local service lifecycle
+fcbb0b3405435aaa500ddb9704a5e51fb282dc55 2026-08-28T10:35:21+02:00 feat(coding-agent): add facet-based slash commands
+56f3f33a9a675ef2a2c30cf2e35a6a385cdf2ed4 2026-08-28T10:39:45+02:00 fix(ai): remove retired Fireworks turbo router test
+758a0ee9b78afc844e789d28e8f1c6d0d2c10c2a 2026-08-28T13:19:43+02:00 Merge branch 'main' into dev
+35741a456dbabd0c8f6fe83225b59b57778cc592 2026-08-28T13:31:05+02:00 fix(coding-agent): restore client compatibility entrypoint
+56700d42ed65a94a80af7376adb19a9298065164 2026-08-28T13:40:59+02:00 fix(coding-agent): compact before post-tool model requests (#8782)
+e54d45d119c46e19be163d686c2733ade3469122 2026-08-28T16:39:28+02:00 docs(coding-agent): remove issue-specific regression test placement rule (#8775)
+6c87d9a026677b601e8278030dcf1ad97fe0bd86 2026-08-28T16:48:37+02:00 fix(ai): merge indexed Mistral tool call chunks
+35c49350fdb6e97ca9804fe5a6b9e17537e8f19c 2026-08-28T14:57:52+02:00 fix(coding-agent): reconnect after abnormal Radius closure
+bba6be972e09f85ac0748fd422775b91c7091924 2026-08-28T23:51:36+02:00 docs: audit unreleased changelogs
+5ce4afbd95ec10104c0e73866a745f602b592392 2026-08-28T23:52:49+02:00 fix(ai): refresh generated image model catalog
+b79e4cc834970cca69daebffab7df1da7d1e52c4 2026-08-28T23:56:03+02:00 Release v0.84.4
+853a80d26c90a14c1886f0ebb8ffaae133ca2185 2026-08-28T23:56:06+02:00 Add [Unreleased] section for next cycle
+58ea6c0ba5da5a1395f47575d4600f961b8b2c8c 2026-08-29T08:21:44Z Merge remote-tracking branch 'origin/main' into dev
+28b49a6b3bab1c04e5477e9db3204804f948517d 2026-08-28T23:54:47+02:00 feat: add Chord runtime foundation
+34dc9d055aba8313a06521a9c34821a44486d44b 2026-08-29T14:51:01+02:00 feat: move facet services into Chord
+4151e5754cf406272c7a8dec8c318f87faba7abd 2026-08-29T18:24:18+02:00 feat: simplify Chord service instance API
+6ec57e6e5f852f2ba4eba738b085012e4cbf06d8 2026-08-29T18:56:26+02:00 feat: consolidate Chord public API
+e6dc574d1b222593591858088f94ed95d46169bc 2026-08-29T20:01:32+02:00 feat: isolate Chord context API
+1bf0de21441a19fcbf476bfcfb9a867d1faecf73 2026-08-29T20:31:33+02:00 feat: simplify Chord service APIs
+b1e9b9ea8f8698baf76a36d8d78c10f186afdce9 2026-08-29T21:08:04+02:00 feat: simplify Chord service slots
+024439d151ad9db6aba623d830435499fda5ba04 2026-08-29T21:43:01+02:00 feat: clarify Chord remote service APIs
+45d0174eed3ea6ba094246a8388500784ed62d62 2026-08-30T01:00:26+02:00 fix: harden Chord service lifecycle semantics
+0252dff88653572be650907046ff725265ce7338 2026-08-30T12:52:58+02:00 feat: add bundled facet distribution and reload
+429f4e756c67379f01f468b17554f7b88e6f4044 2026-08-30T22:05:12+02:00 feat: add package-based facet plugins
+5245aba7c81ba049cb5af86d8663d84a9baa790c 2026-08-30T22:36:30+02:00 feat: simplify plugin facet lifecycle
+d3697e65cabe160975889b7f89748d73f049e900 2026-08-30T22:51:00+02:00 feat(coding-agent): simplify experimental services and CLI
+7731f1cfe234a01978b430b6c23fed074ad6e702 2026-08-30T23:36:39+02:00 fix(coding-agent): remove obsolete plugin app fixture
+984846b785cf9e6d7e14dc7346c266d032cee49b 2026-08-30T23:15:04+02:00 feat(coding-agent): remove legacy session RPC facade
+65f77ecd6f877c9e1c670106a2bc6cd5db359fc8 2026-08-31T00:10:41+02:00 feat: make Chord facet generations collectible
+5cf1b95c870c75ba912e9c136126af217edde811 2026-08-31T00:17:31+02:00 docs(agent): align SQLite ownership with session workers
+8e374e4dc2016f1126b63e11742f3bcbfdbe6570 2026-08-31T00:39:43+02:00 feat(coding-agent): tighten experimental service boundaries
+abeb9e07f375e64e0b2a89f47944f1b9848a12e1 2026-08-31T01:38:28+02:00 feat(coding-agent): reduce experimental test duplication
+9e1aa8b445839e021b22444236dde62b276e8d1b 2026-08-31T02:04:06+02:00 docs(agent): add mobile design handoff
+f7079d56281b4408f7b963b80c956ccde940d0a4 2026-08-31T02:04:17+02:00 feat(chord): add JSON delta tracking
+9af45be821abcde96f1a62c90c25fd459085d467 2026-08-31T03:53:50+02:00 feat(chord): generate deltas at flush
+b99964b2460a6d2749b90b2b7334d617dfcb995d 2026-08-31T03:55:12+02:00 docs(chord): introduce delta operations upfront
+3de0030abc108dc8aef92d752b1ba844fe01ea3c 2026-08-31T03:55:29+02:00 docs(chord): keep delta guide user-focused
+8a738e2b761895c31c045b4ee2b2a4264d9476e3 2026-08-31T04:00:18+02:00 docs(chord): explain delta stream encoding
+f98c2850f5024409d95c9078b8b6417110b353cc 2026-08-31T04:09:40+02:00 docs(agent): add streaming fork work package
+ef11444b6e0c434bb72ff59a9b2944de0b5c5018 2026-08-31T04:19:32+02:00 fix(agent): align SQLite ownership with session workers
+2865393cecfffefe51f1a23d273a9829f5f80310 2026-08-31T04:30:01+02:00 docs(chord): clarify delta ownership and array costs
+c02552484cab435e5afa6aa8d105a24c2642eb0d 2026-08-31T04:52:16+02:00 docs(agent): align assistant output handoff with Chord
+ba74f038c66d9096694bb0a491ddf2a888243cdd 2026-08-31T10:21:43Z delta updates, on behalf on mario
+ae2cc5116f5adc2ed9d2c88c3d6093fae2f960b7 2026-08-31T08:03:17+02:00 feat(coding-agent): replace lane RPC with Chord service
+86bac52f94b0d1340d692995446eb5fbbd757bcb 2026-08-31T14:04:42+02:00 feat: add delta-backed replicated state
+6f6fa205cac9bb66a47dc2373911f6fac7764219 2026-08-31T15:12:57+02:00 fix(coding-agent): allow Chord delta bundle import
+fbf2db6353138c7ffd7a4cbe42cb12d26bb9d57e 2026-08-31T19:23:56+02:00 fix: remove dead experimental protocol code
+1a7bc80e7cf57822726aa8cd9554b2f986976eb7 2026-09-01T00:53:40+02:00 feat: move service wire semantics into Chord
+6c3fafbcb95306a7c6eec77944f5d19b1f3afd74 2026-09-01T01:56:23+02:00 docs(agent): close delta append API decision
+d24c99f44d33244ae4f761bc6cd2e97e74743418 2026-09-01T02:17:43+02:00 feat(tui): add large transcript render benchmark
+fa5036836d0412a625453ef2af0b61ca04f7c11d 2026-09-01T08:25:34+02:00 feat: consolidate remote service adapters
+7cf456aa1c127d37e886b92254b7dae2f71784cd 2026-09-01T09:51:12+02:00 feat: remove experimental compatibility shims
+c4b0e35abe631bc830190fa6cafbe81b098b97d7 2026-09-01T10:47:08+02:00 feat(chord): keep services available during facet reloads
+56c6fb33c4972ef8bb2f4f829518d5d9a7fa24a1 2026-09-01T16:58:20+08:00 fix(coding-agent): settle active turn before in-memory fork (#8937)
+afda4d6202cc179f3d7029d50c9e5752c3b3097d 2026-09-01T17:00:51+08:00 fix(agent): stop prepared tools after preflight abort (#8936)
+f2a622789947b5b4297af6ac3b0091978cdd4216 2026-09-01T11:02:53+02:00 feat(coding-agent): adjust TUI selections in thinking-mode, models and scoped models (#8900)
+64921447734ef7a7e8ffcf3a72e076403ce48fa5 2026-09-01T13:03:34+04:00 fix(tui): detect Zed terminal capabilities (#8828)
+62835ea81b4bdaee91ec8f775f4ac6d7f693ff2e 2026-09-01T12:16:29+03:00 fix(coding-agent): use ctx.cwd for cwd-sensitive tools when available (#8627)
+a63fb12c135b27aef26a2aa71d8c72f747e96e99 2026-09-01T17:38:31+08:00 fix(ai): match subdomains and root domains in NO_PROXY (#8737)
+3fc3ef532b966b28b764af070d62302c0acab0d5 2026-09-01T12:01:50+02:00 fix(coding-agent): keep theme markers visible (#8950)
+f8da63be590e14080dc06eed8c8986bc2eec8310 2026-09-01T12:35:14+02:00 feat(agent): require explicit named branches for session forks
+435b0c69f58b03391572baee133fdf395a74a371 2026-09-01T12:35:53+02:00 Merge remote-tracking branch 'origin/dev' into dev-named-forks-streaming
+3205678b301c50e501a0482d84747bd242483085 2026-09-01T12:10:46Z chore: approve contributors from issue #8885
+605a1b0385a7e94e3760d7e0a507741fbb67ac21 2026-09-01T14:16:21+02:00 fix(tui): wrap SIGWINCH self-signal so restricted seccomp policies do not crash startup (#8898)
+b8b873b9872db04a938fb4357b5e8e824ddc051c 2026-09-01T20:42:52+08:00 fix(ai): add supportsMaxOutputTokens compat flag for openai-responses (#8941)
+f2eae920c61f0434b37b331cc597a4faa0f90830 2026-09-01T14:58:49+02:00 fix(agent): validate fork entries against named branch ancestry
+1081eb2126748588c6579df7117be42f40a9892e 2026-09-01T15:18:05+02:00 fix(agent): require configured lanes for branch forks
+4e356c0ade5a788098c892bb8e35080bc439e97f 2026-09-01T15:58:13+02:00 feat(agent): centralize scalar fork namespace policy
+4b7a0a7dbafe6c4fcbc704183c772a4ca4b7c863 2026-09-01T14:13:14Z update wp08 doc
+5dd8c01320fcf76ee887185153cb156f4b743af4 2026-09-01T16:16:12+02:00 fix(chord): make post-cutover reload failures terminal
+1df998a96ce918cd836a294336bad23981e13c84 2026-09-01T14:26:42Z update harness.md to fork changes defined in wp08
+bf60867443c9ee9979af066ae02a02a90d1270a1 2026-09-01T16:27:01+02:00 Merge remote-tracking branch 'origin/dev-named-forks-streaming' into dev
+487af8e1683a449856b30ad3aef9ed7ff6ad4f87 2026-09-01T14:48:57Z Merge remote-tracking branch 'origin/main' into dev
+5009d0608c2675f54f2c099b0abe7ac00873239e 2026-09-01T17:31:40+02:00 feat: add deslop prompt
+c30cda1d4303228f2434487a2fe2a32d53a5d156 2026-09-01T17:32:56+02:00 Merge remote-tracking branch 'origin/dev' into HEAD
+6ee906d3d2de2202f0847422fd658fdaa10c75e4 2026-09-01T17:50:33+02:00 fix: resolve workspace source dependencies in tests
+ee398cb6d7c3777580303e0f60a6dce0eecb2846 2026-09-01T18:09:35+02:00 fix(coding-agent): recover mini operations and forward aborts
+0095bce7db4fe6a63524b37535315f41b086656d 2026-09-01T18:12:06+02:00 fix(agent): bound shell execution output
+fbb31a7015947d67faf4b7de7bda46dd2fb79b8f 2026-09-01T18:13:16+02:00 docs(agent): add scoped storage implementation handoff
+a84a161c7589d30282162e0604c17f349abe5d5c 2026-09-01T18:13:48+02:00 Merge remote-tracking branch 'origin/dev' into dev
+d14d6b22327d545d6a253f932165b63e48d7f9c8 2026-09-01T18:16:25+02:00 fix(agent): finalize bounded shell output integration
+23842b1e693e09e9d596412c0be13036ec653e3a 2026-09-02T09:23:23+02:00 fix(coding-agent): tunnel proxied HTTP requests
+96317e50b8d6e7f6d0e47fd29122baf1461c00f5 2026-09-02T07:37:23Z fix(ai): bump claude code user agent version
+7123410467dfdff6e9975a7f185634b8a6b9cb1b 2026-09-02T12:21:58+02:00 Merge branch 'main' into dev
+6e8b9c8ea6ba378346b8afd5884e2fb34d6d3695 2026-09-02T12:22:26+02:00 Handoff for tool settlemenet
+2c273c1d90f078c16760524d778096b782edc093 2026-09-02T11:59:21Z chore: approve contributors from issue #8971
+ebc374490952f3047808e9cf108ec0f04373c0da 2026-09-02T20:16:03+08:00 fix(agent): surface proxy stream EOF without terminal event as an error (#8997)
+256f63024d03dd92a540dd6a63fcfa2fcf3a0944 2026-09-02T13:20:07+01:00 feat(ai): add vllmPriority compat flag for vLLM scheduler priority (#9004)
+69afa10503ade5fd04a0246d0ce219a48afe67b9 2026-09-02T14:22:38+02:00 fix(ai): route GitHub Copilot Fable 5 through Anthropic Messages
+1e4fbe3847e83d4f57e2a4bdc3390b5cfd0e0dba 2026-09-02T14:33:39+02:00 fix(ai): use completions API for all Fireworks GLM models
+8d1b1178cdf90ac5a3995f9cc9daf7d081d85373 2026-09-02T14:53:49+02:00 docs(coding-agent): clarify session-scoped model/thinking-level changes (#9009)
+e583b290a61e19a6dd6cece5216567a6074cd139 2026-09-02T15:05:29+02:00 fix: remove misleading write byte counts
+e266507b606b9552fa277252644054afd4384b11 2026-09-02T15:06:37+02:00 fix(coding-agent): remove duplicate auto retry event type
+e26afb63a46c374f4f482f4808317336790abb7a 2026-09-02T17:53:25+02:00 fix(agent): retain settled tools until placement
+e7b47bd7deab19641f5c4f9b56775b4fdb1b9908 2026-09-02T20:40:35+02:00 fix: resolve plugin and conformance tests from source
+4e69b0c28060f0f02fbe38bfa7c21a2e2eb25057 2026-09-02T21:39:29+02:00 feat(ai): preserve Anthropic per-turn thinking effort
+bea67d90d1a74dde8852c63cac72d476013d3879 2026-09-03T09:40:24+02:00 fix(coding-agent): cancel compaction on session abort
+f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6 2026-09-03T09:53:14+02:00 fix(coding-agent): update interactive mode test fixture
+8c08d0645a62851b995c5b7ac00de1d50c9d325b 2026-09-03T07:58:51Z Merge remote-tracking branch 'origin/main' into dev
+9f74575f7902219dacdf079725b6e3bb9b4a0851 2026-09-03T09:59:09+02:00 Merge remote-tracking branch 'origin/main' into dev
+bf157122af6d66a01f267a450a831b1ea53cab3d 2026-09-03T10:21:43+02:00 fix(ai): remove unnecessary Chord dependency
+d459ff0c4e82648235f873f063c1c15e1b8d49cf 2026-09-03T08:32:29Z chore: approve contributors from issue #9033
+f0592205f808c44bbd9705847220adcf2f584224 2026-09-03T16:45:02+08:00 feat(tui): render relational algebra join symbols & fix(coding-agent): type error in test (#9050)
+2631b25c34cbfcb660b1f05e1fe77170c1cf1f82 2026-09-03T16:47:40+08:00 fix(coding-agent): preserve compaction boundary when forking (#8990)
+1a773c8e7a535e35a15e9babc37231e515b18794 2026-09-03T16:48:18+08:00 fix(coding-agent): avoid overwriting imported sessions (#8985)
+2b768ba42cdbd7336474d6986a3ef1efbb0a44f7 2026-09-03T10:49:41+02:00 feat(coding-agent): ingest external entries in in-memory sessions (#8980)
+57e53b0d790a5d81fde91542d867bdeba00adada 2026-09-03T16:59:04+08:00 fix(coding-agent): resolve fd/rg release versions without the GitHub API (#8708)
+c6b00676b8fea5e8e2bddd618943c6e73a38c9b3 2026-09-03T17:02:39+08:00 fix(coding-agent): scan past non-EXIF APP1 segments (#8616)
+6f35de5b598037c28e05f52e23a00301e1275819 2026-09-03T17:05:41+08:00 fix(coding-agent): isolate concurrent session shares (#8613)
+1d6dbf9e3d60f129bf8ee513c82a98f222c57788 2026-09-03T06:08:26-03:00 fix(coding-agent): keep skills available with bash-only tools (#8552)
+22940a62f5b7c998530a467f00b54307c3cd911f 2026-09-03T11:10:33+02:00 fix(ai): keep Baseten GLM-5.2 text-only (#8293)
+55adba4f2439c31e50d1c67f2ea2acb215898131 2026-09-03T04:11:19-05:00 Replace the AI Gateway binding shim with a plain binding fetch (#8287)
+64eeb82a4694335ed9f6a4dc2fa6fb198d71ef26 2026-09-03T11:25:40+02:00 fix(ai): process unterminated Codex SSE terminal events
+3316c4e35b1eb505e791610d3a97d6b4c1c48309 2026-09-03T11:40:37+02:00 fix: repair Baseten and coding-agent test checks
+c505f4c19871e4bba12fa0bf53e364a747f6a296 2026-09-03T02:59:14-07:00 fix(tui): remove coding-agent config reads from pi-tui
+007c0be640789b8971db6ecacdc96e61107d849f 2026-09-03T12:03:59+02:00 docs(tui): clarify standalone renderer configuration
+265a33393eeea4191b5b6ede216d38b7a32203c5 2026-09-03T12:33:29+02:00 fix(ai): add Qwen3.8 Flash to individual token plan
+8b5899dce26f9f6b8d313ee6a4b4a8dccbb9bfc2 2026-09-03T13:53:57+02:00 fix(ai): restore stream compatibility
+0fdec07ba3973f9bd008cbfffb0eaa10ace8c5b3 2026-09-03T14:26:49+02:00 fix(ai): preserve provider thinking level in frames
+7d399e7be83cb7ffb0236b2925ba21f2bc9efe18 2026-09-03T15:09:51+02:00 feat(tui): search improvements (#8800)
+e44d75c20a51142abc056c243b13c1d7bb4be687 2026-09-03T15:10:32+02:00 fix(coding-agent): raise branch summary output cap
+2e2805d92f9093f6675983a7b29ca01b45b7f755 2026-09-03T16:31:29+02:00 feat(agent): construct memory forks directly from live state
+1d9787c11fb91ecf7c892050f4c0607a995dd15b 2026-09-03T20:34:04+02:00 feat(tui): prettier Working... spinner (#8799)
+79680533c6b898894f2d2421c7f640b212d3dfdd 2026-09-03T22:54:59+02:00 feat(tui): add clickable jump-to-end indicator to fullscreen transcript
+457ae8c79c2e3c570a36d305095afa18d3791dd1 2026-09-04T00:05:47+02:00 feat(tui): alt mode scrollbar but prettier (#8801)
+c2d3dc55b0b20af5aa3bb1d25774968116c9733f 2026-09-04T06:06:16+08:00 fix(agent): map signal-killed processes to non-zero exit codes (#8994)
+6aedd1066e540642165aa30fa7b4a1b863778aa7 2026-09-03T19:17:51-03:00 fix(coding-agent): download statically linked musl builds of fd and ripgrep on Linux (#9070)
+0dbf2b76fe7919d5fe4184523898507b4ae19ee0 2026-09-04T10:18:26+02:00 fix(ai): remove Grok Build 0.1 from built-in xAI model catalog (#9093)
+2d41163332c1a6d11c45911a92100fd2a55e4d1a 2026-09-04T10:21:08+02:00 fix(tui): make fullscreen transcript search scale linearly
+ef41a24b391bb90043e28eb8925911bb3f8acf2a 2026-09-04T11:15:20+02:00 fix(ai): keep Copilot tests aligned with current model catalog
+744a94d7d4e6d4231fd7c1ea5738dedde79e0762 2026-09-04T11:19:20+02:00 fix(coding-agent): use current Copilot model in registry test
+1148f7958c260188b03488496044dcfa852ef580 2026-09-04T11:24:40+02:00 docs: audit unreleased changelogs
+107d79f11072bbc8a3a757ed7fd69596bee7d68c 2026-09-04T11:57:38+02:00 Release v0.85.0
+dd7e816b57dedbe971d159b388f48317a6139079 2026-09-04T11:57:42+02:00 Add [Unreleased] section for next cycle
+47236c84450656043dd8fb21c8513d1421505ae3 2026-09-04T15:27:32+02:00 docs(coding-agent): document running pi in Docker Sandboxes (#9077)
+04d17a1080da2f026a75031b007dcbf362958aba 2026-09-04T16:05:22+02:00 feat(agent): add two-pass JSONL fork prototype
+9ee703230f7151aa2c13254168d11cd2e5fa24df 2026-09-04T16:05:40+02:00 Merge remote-tracking branch 'origin/main' into dev-named-forks-streaming
+420deedf810cd9c3c7dc894517381c9fe0d16714 2026-09-04T16:11:41+02:00 docs(agent): record JSONL fork capture question
+89670bc4a635b2960fb5bcb7136ecf9b571c36c1 2026-09-04T16:44:13+02:00 fix(agent): reduce JSONL fork list index memory
+e3c966b6ffe09369c51fc4b0c5dd51acdea1f57b 2026-09-04T16:46:14+02:00 fix(agent): reject open legacy JSONL forks
+9908b2176a6c30a29773a7fc0e30c0c2411bea78 2026-09-04T17:40:30+02:00 feat(agent): fork closed legacy JSONL through format 4
+92d8e2d17d4f357788381c49ce2cdb3f4ed1f21c 2026-09-04T18:06:21+02:00 fix(coding-agent): selector save keybindings (#9149)
+17de82d7bea18a6589677a9761baabc2060c9efb 2026-09-04T22:08:06+02:00 feat(ai): add GPT-6 Astra support
+85186f823d31c6d36c135190b3c357dbb6522c81 2026-09-04T22:45:31+02:00 fix(agent): expand fork conformance for Memory and JSONL
+9841914c71a74d81abe07f751aefd271fd924e63 2026-09-05T00:46:34+02:00 fix(tui): keep list selection unchanged on mouse hover
+1382777ed8000e8a84f81053d66f6bb713dccd92 2026-09-05T12:45:04+02:00 fix(coding-agent): keep remote harness dependencies development-only
+ab9e6f89b45344f5e84e33eb6140f3e6e4c8d81e 2026-09-05T08:14:11-03:00 feat(tui): accelerate Alt-modified wheel scrolling (#9166)
+1a46b923d7c725e4d0759139f8687f04797a33d4 2026-09-05T13:10:51+02:00 docs: audit changelogs for v0.85.1
+6f11c31d1134a32e64bf221baeec38e431091e05 2026-09-05T13:16:01+02:00 fix(coding-agent): assert source-only experimental package exports
+082f7577c23e5e7d1575292f1ab16b718dcb3b57 2026-09-05T13:40:16+02:00 fix(coding-agent): make footer debounce tests deterministic
+cce65539877fe11423463a508c6f54a28ad50abb 2026-09-05T13:40:22+02:00 docs(tui): document Alt-wheel scrolling in unreleased changelogs
+fbc87d25a8254cf82590e7279285e89889f1e445 2026-09-05T13:52:54+02:00 feat(ai): refresh generated image model catalog
+d981de1229ef899957bbe968bc8dcda02a21f477 2026-09-05T13:54:46+02:00 Release v0.85.1
+da840b6216578c2a571d0374ac6a2091a83f9d91 2026-09-05T13:54:52+02:00 Add [Unreleased] section for next cycle
+caf6dfe7310c2860b152ed286f83eeb19ca6631c 2026-09-05T23:52:32+02:00 feat(tui): Simplify clipboard handling (#9163)
+fcff255b004a6cde812b5b7a714e0bfe9c540986 2026-09-05T23:54:02+02:00 feat(coding-agent): prefer strict sampling for built-in tools by default
+9767ba275f3e9a5ee0f5c5342249b629ab1b2282 2026-09-06T00:30:17+02:00 fix(coding-agent): select Radius models after catalog discovery
+e687434a60174db1a9c961d973881a7a851a0597 2026-09-07T16:32:10+08:00 fix(coding-agent): reject tree navigation during compaction (#9179)
+1f78cea7ad938f529cae6251bbbfd82b8bca0df3 2026-09-07T12:16:12+02:00 fix(coding-agent): allow extensions to stream from custom providers (#9272)
+6dfc66d32aec503846ee7fafbee1084809f17a9e 2026-09-07T12:47:26+02:00 feat(agent): stream legacy JSONL migration and forks
+d3ba857ef42f1094f51963a97e4588fac857b925 2026-09-07T12:48:15+02:00 Merge remote-tracking branch 'origin/main' into dev-named-forks-streaming
+47acd8e6cfa740bb8a09c5ebc8fe6181073d744e 2026-09-07T12:59:03+02:00 fix(coding-agent): preserve active operation UI during tree navigation
+7d8ab31a477ecc07b36f56ffcae58c79307a68be 2026-09-07T13:01:50+02:00 fix(ai): route Copilot GPT models through Responses (#9253)
+aa23e784c647d713e775a8adcaf3c219e84f5068 2026-09-07T14:09:39+02:00 fix(coding-agent): update repository links to "earendil-works/pi" (#9278)
+c1d4c801114545f47c440921d8b3e04aeb1e565d 2026-09-07T15:31:00+02:00 fix(coding-agent): embed all session status spinners in the editor border
+9211da172325117dc59e6f9f25f248dc628b3f81 2026-09-07T20:21:39+01:00 feat: add implementation-backed documentation evals (#9280)
+b2602be77cb7b0de45dd616407fd210daa48aa75 2026-09-07T22:25:58+02:00 fix(ai): optimize EventStream queue
+96617628e85227dedc05095717fbb1b7e878a975 2026-09-08T10:30:28+02:00 fix(ai): use reasoning_effort for reasoning-capable mistral-medium-* models
+d0963bf06a13ea160addf35605f19391e895bb39 2026-09-08T12:23:14+02:00 docs(agent): relax WP08 fork streaming requirements
+41218b39408bb5f10ffd21c23684d955879c56ab 2026-09-08T13:34:58+02:00 fix(agent): relax fork lane validation and sequence conformance
+3e4bc2680ea8eca162207974b88667ccfc20a564 2026-09-08T13:37:01+02:00 Merge branch 'dev-named-forks-streaming'
+f53ac1135149f03fd1e2a5bfd29861120eaf5b96 2026-09-08T14:16:18+02:00 fix(coding-agent): collapse empty fullscreen footers
+4a6ed01945c7f6a2a350996fb439148149ab65ee 2026-09-08T16:04:35+02:00 fix(coding-agent): update runtime dependencies (#9341)
+faa9863cb8b54689f1d0c2df9dbab1ee1fa9de19 2026-09-08T17:18:12+02:00 fix(coding-agent): run input handlers for queued messages
+6160683a4a8012f0d1cd30c145df18b4ca6f5176 2026-09-08T17:30:54+02:00 fix(coding-agent): await queue operations in concurrent tests
+561a2e066c0742e3d3e33c75d5d32a69b1d89194 2026-09-09T10:09:43+02:00 fix(ai): send OpenCode session header
+be26e32704f7cab048e2b356206350ef7ad65999 2026-09-09T10:44:24+02:00 docs: extract interactive testing and release guidance into skills (#9370)
+c37b0e03b5d727c44a5d6b47d6ecf7e7b3d32e7a 2026-09-09T11:54:56+02:00 fix: cap agent retry backoff
+acaa253cc8e3f159e6100b6f3874861b1f0bfc99 2026-09-09T12:09:36+02:00 fix(coding-agent): validate extension tool parameter schemas
+f3564a1d41cc8d209ba735235de3fc5e67d53fee 2026-09-09T17:34:42+02:00 docs: validate documentation navigation and reachability (#9380)
+73f3257ddca75404646d33cbfd3d22b8b7510d0d 2026-09-07T22:51:24+02:00 docs(agent): preserve pico2 spike design for review
+e045ed2f3302cdc290daec6a12c75556d90ec9fa 2026-09-09T15:17:50+02:00 docs(agent): add pico design drafts
+2188891bf3ed7988a13a37f8c8fcbf60d69962c9 2026-09-09T19:03:21+02:00 docs(agent): resolve pico context and state ordering
+ce5ec9ca355a852fb1f25c088cf409df47a95213 2026-09-09T20:40:04+02:00 docs(agent): persist pico entry projections
+05c6229813414010445558db9a80c84e15d65e70 2026-09-09T21:55:37+02:00 docs(agent): settle pico task lifecycle
+400d6905ce46ec46e79da8a7701b1b48850192df 2026-09-09T23:29:53+02:00 docs(agent): make pico input attribution explicit
+46bde88a1cd752966aa2a357d292e83aff98b132 2026-09-07T10:19:53+02:00 feat(coding-agent): support per-model compaction token budgets
+e86102f18f58868b2b722e742d129c54d0b01d56 2026-09-10T09:06:27+02:00 fix(ai): send Codex Off reasoning effort
+6b94ae2ecea2139741cde52b3a7dd6f1b2f35b7e 2026-09-10T09:24:48+02:00 fix(ai): preserve Fireworks thinking and native effort levels
+519184eb65d4be13671c78fcad6a99136f1b4267 2026-09-10T10:30:39+02:00 fix(ai): accept Fireworks models in adaptive thinking metadata test
+bbb61e34aaf231639fdaaad1adbd757947034eac 2026-09-10T10:35:48+02:00 fix(ai): send OpenRouter session affinity headers by default
+12f59336afa67af6e996cdb6f220f0bf4cbd571a 2026-09-10T14:13:03+02:00 fix(ai): update DeepSeek Flash catalog
+2e6fe2f988028aa36f97d4e0084f94a1be61fa78 2026-09-10T14:25:55+02:00 fix(ai): remove retired GPT-5.4 Codex models
+4bd3f48df0b14c82e8df2640645e94f82f125f44 2026-09-10T14:30:08+02:00 fix(ai): enable GLM-5.2 reasoning on Mistral
+08dc60bc52d89d6823a9738cc90b1916e5e446e5 2026-09-10T16:30:22+02:00 docs(agent): settle pico driver and storage contracts
+d92eb8d4b13a2033e1ab2b32ee8e4354980210f1 2026-09-10T10:13:33+02:00 feat(ai): enable Fireworks Messages deferred tool loading
+fcdc40e175d13d12d521084c6d305bd9e1dec68a 2026-09-10T19:23:57Z chore: approve contributors from issue #9323
+b734a756340a0749909000fb5cd80ab048249111 2026-09-10T19:30:41Z docs(agent): pico handoff for outstanding decisions
+1b5aa80aecc2f3c9edc1b3da80615c8c437bb477 2026-09-10T20:25:12Z docs(agent): tagged-union task state and derived orphaned variant
+378977cd3d68b07cffb364425e7bb0c5bc2a2f21 2026-09-10T21:08:28Z docs(agent): simplify input results and unify queued input
+66f3b138fe2187ef94662a648b5cf0857d95fd5b 2026-09-10T21:18:34Z docs(agent): note foreground dependencies on background work
+c7eee01950b604f357672b95fb140e4830703861 2026-09-10T21:21:05Z docs(agent): scope out permissions, migration and the wire schema
+2176b9dd8f0020bfb383bcf074f78a5f30efc29e 2026-09-10T21:28:48Z docs(agent): runtime schema bundle as a work item
+66b72dd7834bbc9920367cfa522b4aefe2eeef36 2026-09-10T23:13:36Z docs(agent): turn tasks gate model-visible appends
+d12cd92e45e308d4af000554292165ef1984253b 2026-09-10T23:13:57Z docs(agent): guide notes for appending entries
+62129190d81067ec86ae5a5fc907c96bfe435a78 2026-09-11T07:59:38Z docs(agent): status lives in task state
+e8413008cdbd688214889ea06023c2e146ff03d8 2026-09-11T11:49:52+02:00 fix(ai): update stale DeepSeek Flash test model IDs
+7b4cfd6eb0fd490e3b54370ec9e9227b29717cb4 2026-09-11T11:49:58+02:00 docs(agent): define pico system sections and mutable registries
+f3c672245d25ef2283ffc0d9cdec8a5482651103 2026-09-11T12:57:47+02:00 docs(agent): require typed status payloads for pico task writes
+713bdf38d58e407db91c8d9747ea25546862b5c5 2026-09-11T15:08:41+02:00 Revert "fix(ai): update stale DeepSeek Flash test model IDs"
+b215884021491772a1eb7a9f92c6653a2a52a69d 2026-09-11T17:29:34+02:00 feat(coding-agent): add customization documentation evals (#9491)
+71dca871bc80b6bc97be37f0ca3189399d651fff 2026-09-11T19:42:45+02:00 fix(ci): Fix a broken test
+4819cc877e13bfb85c514805702fa5323f25dc6d 2026-09-11T21:49:53+02:00 docs(agent): add approved pico implementation handoff
+f467cf7068ade93f8820e36dce02675860edb4ee 2026-09-12T00:02:58+02:00 feat(agent): add pico compile-time foundation
+7a2647f32a11864d0c2f98bd2278d18fdf524f9a 2026-09-12T01:20:49+02:00 docs(agent): define pico state tasks and tool boundaries
+d11c4b7281b687bf6362215bf64a90a721de579f 2026-09-12T22:31:03+02:00 docs(agent): simplify pico scheduling and core task model
+1915b35a9b03a1203d4bf0bd2fd143cce1562853 2026-09-12T22:31:16+02:00 feat(agent): refine pico core task capabilities
+df484f277558bbabbf81bbb2150da1d4221f948d 2026-09-12T22:31:41+02:00 feat(agent): add pico memory storage foundation
+99a3948c4cee7b32e7dc1ee440ba266fc0a228ad 2026-09-13T02:20:26+02:00 docs(agent): define pico v2 kernel contract
+51f3090790c152530dbf591fab40fc84c8f196d0 2026-09-13T04:00:27+02:00 feat(agent): align pico foundation with v2 contract
+a9930d28575b4fda2c13998e30b1af0b521df859 2026-09-13T04:01:44+02:00 docs(agent): correct pico v2 foundation contracts
+fd3b009d9f8d4a815de697ae75ce787ba76e9b13 2026-09-13T22:38:07+02:00 docs(agent): add pico3 view/events, plugins and hardening handoff
+09b031600d8e911eeea0b115555f11d3f3466093 2026-09-13T22:49:14+02:00 docs(agent): pico3 review decisions: revision, visibility, memos, waiting, reload
+9b2aff2c5bf5e6c11a79ba0e6fd1b36a9e03eef1 2026-09-13T23:02:38+02:00 docs(agent): pico3: forbid AsyncLocalStorage; nested-line detection via Chord context key
+0c7bb7c5c72118e4c71e4c04dfa2ad4a0a6a62f1 2026-09-14T10:14:48+02:00 fix(ai): identify Responses error providers
+ceea48f5d5d12fd7915dfefba2835ccd55f23bb9 2026-09-14T10:28:54+02:00 Revert "fix(ci): Fix a broken test"
+46b66c59af8f1422a5961e135224524e7615c4ec 2026-09-14T11:17:04+02:00 feat(agent): add hardened pico3 kernel
+850f83794db2be7ff7d51e7fc5132c71b5599983 2026-09-14T11:17:49+02:00 Merge remote-tracking branch 'origin/main' into pico
+53816d7dcc5ebe3a0eedec3cd07196c3a66d83fd 2026-09-14T15:05:33Z chore: approve contributors from issue #9440
+f9bcd351dc3cedf989bc5fc0f8aa012db5737df2 2026-09-14T23:58:15+02:00 docs(ai): document Codex WebSocket cleanup
+56cd5989ea9e74d4707d1f0e0d6e8d304bdd1534 2026-09-15T11:27:53+02:00 docs(agent): replace obsolete Pico prototypes with Pico5 design
+8a7b0c03dfb702663acafb6dc29f8acaa4ffe391 2026-09-15T14:18:15+02:00 fix(ai): price Bedrock one-hour cache writes
+ea7f84678c46a240c4d5bc5e8198fdc33ec2b293 2026-09-15T17:17:35+02:00 Merge remote-tracking branch 'origin/main' into pico
+c8e4a5a552712c467d311c7437d09d47951c60be 2026-09-15T17:36:13+02:00 docs(agent): finalize Pico5 architecture and presentation
+d7296c063b7971a7298769cfff1a167a9a16f8ed 2026-09-15T17:54:18+01:00 feat(coding-agent): isolate documentation lift evals (#9635)
+b02eef418672317f30247093a8e68797b8cfe144 2026-09-15T19:27:23+02:00 docs(agent): specify Pico5 harness API
+4c2d91339a4b7a0ec20af9e994855b73eacc754b 2026-09-15T22:47:59+01:00 fix(coding-agent): export extension event hook types (#9642)
+3349e1db180045ce0abc657e7e2411433e50ba41 2026-09-15T23:08:14+02:00 fix(coding-agent): reject unverified local clipboard writes
+60e7e76bd7ea25cad1dd6f3f1ce0d18814a42759 2026-09-16T01:29:52+02:00 fix(coding-agent): surface clipboard backend failures
+b03a367a4fbc02df81bfd96702d7a12c2d79aa45 2026-09-16T10:49:11+02:00 feat(coding-agent): allow configuring Anthropic fallback models
+9b791a4cc127c34623685107d14f5abe24b90c9b 2026-09-16T05:15:16-04:00 fix(coding-agent): avoid transcript scans for exact session IDs (#9601)
+6671c604766b3670ed95f405aa7856835d0ca702 2026-09-16T12:09:28+02:00 fix(ai): send Baseten session affinity headers
+9e05370b298d0a6b8d9bc2c02e4bfae189ef1616 2026-09-16T15:54:07+02:00 Mid conversation system messages (#9548)
+1247476e6df6e632e553eaa61489a77a12b1e463 2026-09-16T17:47:13+02:00 fix(coding-agent): update eval prompt section markers
+aa50fe778aedb6ebeb918fc594599d12a60d8a0c 2026-09-16T17:45:33+02:00 fix(ai): derive Google thinking levels from models.dev
+01528e20945c4512fee4353613fe472ff6f6fb29 2026-09-16T17:58:54+02:00 Merge remote-tracking branch 'origin/main' into pico
+bdee230f1ea4beec1972c54716433ced691a92b5 2026-09-16T17:49:32+02:00 feat(ai): refresh generated image model catalog
+fde6d778f80eea81153d14221c20064ba6f648b9 2026-09-16T18:08:06+02:00 fix(coding-agent): toggle summary entries on click
+509ee2bd0ba9fc3d31fb96fe8f5a6ef73b51833c 2026-09-16T17:21:17+01:00 fix(coding-agent): fail closed on user bash hook errors (#9662)
+e4c75a73222ae2c72abb5f5314fa35ee8effc508 2026-09-16T23:35:01+02:00 fix(coding-agent): replace the system prompt when a handler forces it
+16235fd93521f9f96164f5891beea62e6bea5b18 2026-09-17T10:07:47+02:00 fix(ai): avoid unsupported Gemini thinking levels
+1283afd0d0685d1ffe88aa56a725c0e4ad3cfc7b 2026-09-17T10:22:47+02:00 fix(ai): preserve thinking replay through renamed Anthropic models
+e5d18382a207a4b108d97f7cc97abdc90a23d32d 2026-09-17T10:39:48+02:00 fix(ai): retry Cloudflare 520 responses
+7140838fdd5ee1ff21dbe50955a8801617b065ef 2026-09-17T09:24:25Z chore: approve contributors from issue #9645
+2b04ce27fbeff3d1180e6a67ba34d7db5a62528e 2026-09-17T11:24:54+02:00 docs(agent): refine Pico5 plugin state API
+e98f287ee498e0116546f4e9aa083fdec9793cd2 2026-09-17T12:01:39+02:00 fix(ai): retry Azure peak-load capacity errors
+42cd371ba49ac2cd398de6a37bb06542792cf613 2026-09-17T13:21:31+01:00 feat(coding-agent): add TUI context footer eval (#9705)
+729d5cb74db347e28ac6ed2dec55b91ab2e337f1 2026-09-17T14:57:03+02:00 docs(agent): finalize Pico5 specification set
+5a3a03a7f5db43692915d6ae45e6d96497ea248d 2026-09-17T14:12:10+01:00 fix(coding-agent): validate eval prompts from transcripts (#9706)
+0e19ac11615a696c9b15c949c4b30ddba3d0316d 2026-09-17T16:31:25+02:00 Merge remote-tracking branch 'origin/main' into pico
+7e19507681dca4c293afadfb5a0cabb85d428350 2026-09-17T16:33:03+02:00 feat(coding-agent): add experimental micro agent
+2c995acf44b40555322d0f9dfd2cf2f55455245f 2026-09-17T16:36:37+02:00 feat(chord): replace delta tracker with operation log
+4658534986fd40365340832452fd56ad961dca95 2026-09-17T16:38:35+02:00 fix(coding-agent): shorten Anthropic thinking drop notices
+3955b27a1d2da3267a7548e7568c0b9a8da72f44 2026-09-17T16:43:05+02:00 fix(ai): preserve Vercel AI Gateway unsigned thinking
+a8b3dd19983883be2907253e566dd52989aee936 2026-09-17T17:01:28+02:00 fix(coding-agent): fail signal-terminated shell commands
+781139411232411196de9fcc9f8823229c9ae084 2026-09-17T17:51:25Z docs(coding-agent): update changelog
+16292398af7270c6248a06f7a9da42aa0f91d413 2026-09-17T20:02:07+02:00 fix(coding-agent): send forced system prompts without recording them
+46c9de402bddf46b03c3b9f46487b777aaa41861 2026-09-17T21:44:26+02:00 feat(coding-agent): add event handler unsubscribe (#9630)
+c4289b20ebb953bf5260c3793cba5ca6551294c2 2026-09-18T00:32:50Z fix(chord): keep tracked paths correct across structural mutation
+328926b30e392dd2ca82981554b875c668b01fcd 2026-09-18T00:58:07Z docs(chord): describe tracker ownership and aliasing as they behave
+ea9e09351677ff06ce4ebca8235e9671f3bae3a8 2026-09-18T09:48:55+02:00 fix(ai): update tests for current model catalogs
+13784598d27491e70ddcb549859f722417001786 2026-09-18T09:58:14+02:00 fix(coding-agent): suppress repeated Anthropic thinking drop notices
+bb0f4aa602f332838015ce66bdb0a94d8206dc93 2026-09-18T10:43:20+02:00 fix(ai): preserve DeepSeek V4 effort metadata
+661619e87277d92caa2af71960112d9d92c13a5c 2026-09-18T11:13:52+02:00 fix(ai): scope bodyless overflow errors to Cerebras
+fe219d7f8d41e0ca51e9603264315033d4738f58 2026-09-18T12:25:15+02:00 feat(coding-agent): format bash tool durations to support hours, minutes, seconds (#9742)
+cf8d5fac3082c1057ea61b110b9b743bd1813d7b 2026-09-18T12:32:00+02:00 feat(agent): add Pico storage foundation
+eed5263cdd2bd049f743965b7564626abafa8e8f 2026-09-18T12:33:14+02:00 Merge remote-tracking branch 'origin/main' into HEAD
+5901446094988aa5cd8e11efdaa131c3949106f1 2026-09-18T12:47:20+02:00 fix(tui): reduce fuzzy search latency
+8bdcd4498a925301bcd8b9053386797727eae3b0 2026-09-18T13:34:33+02:00 fix(coding-agent): compact oversized trailing tool results
+080160162164b6668f6c55b8bc1f335749f74eb3 2026-09-18T13:39:09+02:00 feat(durable): move Pico into dedicated package
+cf33309117a667535fca4a2441755988ecf183d4 2026-09-18T13:39:36+02:00 Merge remote-tracking branch 'origin/main'
+b5ef419d5bac58f0d9b85b3b21743266b81132db 2026-09-18T13:48:19+02:00 docs(agent): restore non-Pico5 documentation
+1e39862f677a2a2f5aab73671a43659f338ea461 2026-09-18T14:54:17+02:00 fix(coding-agent): detect llama.cpp chat-template thinking
+c1263aa11325d95c1e9cc499802fe3385970111c 2026-09-18T15:00:25+02:00 fix: clean up delta lint diagnostics
+59eb4c393c79310fcbc585fcce8c38f0961cfa69 2026-09-18T14:12:14+01:00 fix(coding-agent): clarify copy shortcut description (#9745)
+e4ce7b449f4d91589c8760d6fbfa6eaaf82b05fe 2026-09-18T16:04:16+02:00 fix(ai): update Kimi model catalog source
+a16ccd9be8e35e941a518e0930e7d36aeb8469e6 2026-09-18T21:01:46+02:00 feat(durable): refine record and query contracts
+0db5659249c039e554c82a70d8523099f4376236 2026-09-18T22:17:36+02:00 fix(durable): index memory storage queries
+734ab3434fb311f745f63a7974305b7162398af5 2026-09-18T22:18:01+02:00 Merge remote-tracking branch 'origin/main' into HEAD
+e80cf14011f12140e32517834f3b5bce5b7d46ed 2026-09-19T00:19:43+02:00 docs(durable): simplify document runtime contracts
+58541ee7216bc7d76f7f8f708a8edb7682084395 2026-09-18T23:51:50+02:00 fix: reduce delta proxy retention and compact cloned objects
+36b60d2e8985899743c4cf5bd5f8929832a3f05d 2026-09-19T00:24:10+02:00 fix: clean up delta test lint diagnostics
+3c75b2747965e8d69ad9e17cbe788b2e33bf4d99 2026-09-19T17:20:54+02:00 feat(coding-agent): add bug reporting
+de2de549bcc369726b2e1a50d1626c39806ccc09 2026-09-19T19:18:01+02:00 fix(coding-agent): close compaction cancellation races
+4d38031fbdbed43bc481ddf9c3c279005ab24674 2026-09-19T19:23:10+02:00 feat(ai): ship Radius model catalog
+eba619879c1685fa46308fc4598b6df25a99d2af 2026-09-19T19:33:31+02:00 docs: audit unreleased changelogs
+7d5eb0ee3b16ee3e5733e235107ee3f382cfca04 2026-09-19T19:41:20+02:00 fix(ai): mock Radius in model generation tests
+c596d09d9cef6fdf0db2dd08f3eec8582b7fe8ba 2026-09-19T21:18:15+02:00 feat(coding-agent): add prompt cache warming (#9668)
+bfa6862400d0aaa3ebf3c09a44a2479487f470f1 2026-09-20T03:53:26+08:00 fix(tui): handle CJK punctuation in file autocomplete (#9746)
+40c256cccbce062f6af5f2cacb85d0ce1ab4224d 2026-09-19T23:25:47+02:00 feat(coding-agent): defer extension loader dependencies
+fa0e1f48ac07b00f652cbf243eb9552a61b551da 2026-09-19T23:28:04+02:00 fix(tui): improve LaTeX compatibility and layouts
+b7f788194971a2397526f17aa836881d77394df5 2026-09-19T23:32:44+02:00 fix(coding-agent): await terminal remote prompt event
+d7951ec3624fa3c8fed15426292de905cf496e3d 2026-09-20T06:25:43+08:00 fix(tui): rank skill autocomplete by bare name (#9120)
+803f0e906d21e1e734b98aad59db1373cd34c88e 2026-09-20T00:25:22+02:00 fix(tui): preserve fullscreen images in WezTerm
+21b8cc1a4b84786aa08400fb4dbb6a92a5891fd6 2026-09-20T06:38:42+08:00 fix(coding-agent): ignore stale tool image conversions (#8743)
+dfbf793b785120c10a25804492ff26713e459bb6 2026-09-20T00:48:09+02:00 feat(coding-agent): load session picker progressively
+dd01f5b240033c3d195e4d1b925928133d8f5da6 2026-09-20T00:50:10+02:00 fix(coding-agent): speed up recent session discovery
+12032deb7055803dfa3dd0730488795911c8cbbc 2026-09-20T00:55:19+02:00 docs: complete unreleased changelog audit
+ecac0a9c4edad3dac5d9f8b40e0c7db7a56471fc 2026-09-20T01:00:41+02:00 Release v0.86.0
+50d766cba2f7fbe208188435bf74400776a88719 2026-09-20T01:00:48+02:00 Add [Unreleased] section for next cycle
+d1230ea2000d876b479a69b8b061f9d670f262f5 2026-09-20T01:40:27+02:00 fix(coding-agent): preserve multiline bug descriptions
+b73412a3787abbc9427fd6f335b423c66e0e3fa8 2026-09-20T06:13:43-03:00 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)
+60740991c0bba00d22ea259de7b30b27c5294103 2026-09-20T11:44:20+02:00 feat(coding-agent): cache compiled Node CLI modules
+d875512cc4142654ddd085f701ed8d3c0e980f14 2026-09-20T12:05:52+02:00 fix(coding-agent): suppress bug hints for expected failures
+ee2df312e58ac31dfb19427f13da149ce7b34f09 2026-09-20T12:15:11+02:00 docs: audit post-release changelog entries
+6dff740fab3f080858726ad727e2f4cbb93a8b1d 2026-09-20T12:42:15+02:00 fix(coding-agent): restore OSC 52 clipboard fallback for headless sessions
+0e283203c7fe903ed1b3b9076252ab024748221c 2026-09-20T12:46:15+02:00 fix(ai): detect z.ai prompt-too-long errors
+af7359b90435b85bb87bf1bb7858941c8db99d7c 2026-09-20T13:52:18+03:00 fix(ai): exclude Cerebras from supportsStrictMode (#9804)
+199160a6a85b267672c1781f638232d1a33dc5ec 2026-09-20T12:56:21+02:00 docs(coding-agent): document inherited z.ai overflow fix
+68f98022e345f38ccf9b575e74b6844ff1c87378 2026-09-20T13:00:29+02:00 docs: audit Cerebras fix changelog entries
+13cbf77df2396303013a41646bcfa77b4271ae56 2026-09-20T13:04:11+02:00 Release v0.86.1
+19451accdeec671c1f4da9eafac8fc270f510ef4 2026-09-20T13:04:18+02:00 Add [Unreleased] section for next cycle
+3390bd93630965a12a0a1a5c36ce890ec22f7e1d 2026-09-20T15:53:22+02:00 fix(coding-agent): skip late cache warming refreshes
+f5c946480c575604c50d810adc88b11679d6aecb 2026-09-20T22:59:16+02:00 feat(ai,coding-agent): add image input limits (closes #9631)
+63787ee6bae459fea74e5d846c81a5835f7b3f44 2026-09-21T01:00:43+02:00 feat(coding-agent): identify extensions in crash stacks
+890f920884f6d21fc7617d236ef9e1cc5d7a0ef8 2026-09-21T01:14:32+02:00 fix(ai): default unknown providers to non-strict tools (closes #9816)
+8bfef4de880cd529b8d4fc164497a723542780c3 2026-09-21T09:39:21+02:00 fix(ai): update strict mode test expectations
+47a18e37b1a8c56ec29d166ffc32784e55adf602 2026-09-21T10:30:42+02:00 fix: require complete GIF image signatures
+c7cdb460aa8a0cebef3446c4166729b8a0d97ead 2026-09-21T10:48:44+02:00 fix(coding-agent): reject bug reports offline
+1e0fe20497ede31346957636d1ee38a2e61f69d0 2026-09-21T13:54:57+01:00 fix(coding-agent): allow offline bug report exports (#9841)
+b6419322e6c8bd9c0dc82fcdcdb68a28990f6519 2026-09-21T14:22:17+01:00 fix(coding-agent): report invalid prompt frontmatter (#9830)
+9ac95c7151bcff0cb7a61ff67467bed971c72609 2026-09-21T14:40:42+02:00 docs(coding-agent): audit unreleased changelog
+10d1ad621f9dc4b6c441221f14057a770d1d0fa2 2026-09-21T16:07:39+02:00 feat: add transactional replicated state
+466db0fecdc20996a553116984d18c0d362b035a 2026-09-21T16:29:12+02:00 feat: add canonical session context boundaries
+aef5fc429b9895d3f3a39acb8a8c4789696d3891 2026-09-21T17:14:22+02:00 fix(coding-agent): keep prompt and tool state across context handlers (#9846)
+8c727937854b4f435df56809b022ae1015a17c9e 2026-09-21T17:16:06+02:00 fix(tui): prevent jump-to-end label from shifting when scrollbar hides (#9842)
+7f06f9cf1626504cde95683f1c81a72a7bc7a0cb 2026-09-21T17:22:53+02:00 docs(coding-agent): complete unreleased changelog
+eaf72ed4d86be179e4b0b4c64af04e92b49d19bd 2026-09-21T18:26:29+02:00 fix(coding-agent): update stale test expectations
+16787ad5b2dc748047f314ca1bfe7708f30f54f3 2026-09-21T18:31:52+02:00 Release v0.87.0
+4c8eb393c73220c742e75745df210335aedc020e 2026-09-21T18:31:58+02:00 Add [Unreleased] section for next cycle
+1b6ddca87ca041e3b02b387d5a321eb77fc39eca 2026-09-21T21:48:11+02:00 fix(ai): omit empty text parts from multimodal user messages
+1a584a7a56eb5e7b4ff8ccbd46430f1533282eed 2026-09-22T00:07:34+02:00 feat(ai,coding-agent): add Grok 4.7 support
+e40126f578ccc0a4a21f8d30cd8e96c8ecfe1722 2026-09-22T08:29:57+02:00 fix(coding-agent): reject invalid --mode values
+95fbc04997eaee961eb673fa7923e9220609ebd5 2026-09-22T08:40:15+02:00 docs(coding-agent): update changelog with --mode validation fix (#9877)
+8158b0321395ce7877eeca1603bd731354c1def6 2026-09-22T13:54:50+02:00 feat(durable): add versioned document storage
+d201760ffee16564aa8d9a759e0c85b70db33674 2026-09-22T13:56:53+02:00 Merge remote-tracking branch 'origin/main'
+25cc5c7bf4cbc76b2e134c729eb8d57d521ed749 2026-09-22T16:48:19+02:00 docs(coding-agent): refresh documentation (#9898)
+d192bd6dcae78fb87cf5c1c5e2af2790a0296278 2026-09-22T16:52:07+02:00 fix(coding-agent): avoid Fable split-turn summary refusals (#9908)
+5901c9b9e58f543543d635a56dd0634342bcbd52 2026-09-22T17:46:42+02:00 feat: add durable SQLite storage backend
+2c2cd636f3353df8d416d56abf0ecadb6dc6b0a8 2026-09-22T17:47:53+02:00 Merge remote-tracking branch 'origin/main' into durable-push-5901c9b9e
+81274f0e18279035abee8c590867a8064665846a 2026-09-22T17:56:51+02:00 fix: verify durable browser-safe exports
+b4588f26af2f74f7b1387b548e04a3c8d81da75b 2026-09-22T18:46:17+02:00 feat(ai,coding-agent): add Claude Opus 5.5 support
+3a624b82ddc0043e89896d6af05a2c62cac8147e 2026-09-22T20:51:40+02:00 fix(ai): update reported Claude Code version
+db91e0331942c251e6b21fa8fc6e75403207ce2b 2026-09-22T20:57:04+02:00 feat(ai,coding-agent): add GPT-6 Sol and Luna support
+27c072e98f613edb1da4bc6377d939b1c8e03fd1 2026-09-22T21:14:13+02:00 feat(ai,coding-agent): add new Copilot models
+b7f4b05c7f8b51521b217687bc2353bc6a5afb62 2026-09-22T21:26:09+02:00 fix(ai): stabilize Claude Opus 5.5 effort levels
+3a4c777f26c6e48e2d925101d73920925c061ab3 2026-09-22T21:26:21+02:00 docs(coding-agent): complete unreleased changelog
+f07218c4d4bbc12bef056a7058c3dd49dfe41abe 2026-09-22T21:28:02+02:00 Release v0.87.1
+a8ed497713ee712b2ba5f27c2ec269d68657465b 2026-09-22T21:28:09+02:00 Add [Unreleased] section for next cycle
+a32782520f69cd81b54814c3a13df4c7bd1f3ad7 2026-09-22T23:46:19+02:00 docs: propose Pico5 live extension registries
+967246214355009a3e3b916cba8fd62cd4a162db 2026-09-23T00:26:05+02:00 docs: refine Pico5 JSONL publication design
+898ab804050730e9dcefb4443875d5a932aa6a32 2026-09-23T01:33:31+02:00 feat: add durable JSONL storage backend
+9a139c62bf6b033519352abc2b58ef3fd1195dbb 2026-09-23T02:22:52+02:00 feat(chord): consolidate immutable delta tracking
+4bc1a2fe5304bcb8f88b464bddb35d37471d62b3 2026-09-23T02:23:16+02:00 feat(chord): add optimized delta engine prototypes
+b313731b80ff0b8616e327fdeb114f25addb91fc 2026-09-23T09:54:05+02:00 feat: add JSONL sidecar reclamation
+4c2dfd93624e8f350a56a3d319190929c896e975 2026-09-23T11:32:31+02:00 chore: regenerate image models
+fde38ed7c2f64434beffc6c0ec3b9994cb89ae23 2026-09-23T11:41:33+02:00 fix(ai): stabilize Copilot Claude Opus 5.5 effort levels
+36af9dc48e69a3fe36c2e588a5696864d2c37fd2 2026-09-23T14:32:09+02:00 fix(tui): restore skill prefix autocomplete, closes #9944
+8d897edaa69bf810fa6d14f854ce0cf101f11093 2026-09-23T15:33:29+02:00 fix(coding-agent): prevent duplicate extension runtimes (closes #9863)
+002fc8385268300ca91a5fc95f935c2afbbdac02 2026-09-23T16:03:30+02:00 feat: expose provider stream events to extensions (#9901)
+667fc3dd3608da6ff38410283d6d12d61f3fe087 2026-09-23T17:16:32+02:00 fix(ai): price Vercel AI Gateway 1-hour cache writes correctly
+a328aa89ad6e6dc5c5628ff896769532ed3d29df 2026-09-23T17:41:19+02:00 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)
+7fd564cbb78f35f3de14d5382fea692b87ec4026 2026-09-23T20:08:05+02:00 feat: share model catalog protocol with pi.dev (#9763)
+b45597504eeaba1f11a9920a1d1048c361ed4b8e 2026-09-23T23:21:15+02:00 feat(durable): export scoped storage conformance suite (#9977)
+8676a0dcd8f9f6bca78835e63c8cd31493c4154d 2026-09-24T09:15:58+02:00 fix(coding-agent): require advertised X11 clipboard images
+7c696c00f34cf773c86d33093de8d5711994c5e4 2026-09-24T11:33:12+02:00 docs: revise Pico5 immutable revision design
+a7d17e39aaa0091c7573d0790714751956f10bd1 2026-09-24T12:13:51+02:00 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI
+601437d5a7c639d6bde4fb780676f4baf0018e5b 2026-09-24T13:34:46+02:00 fix(durable): test execution environment and fix output truncation metadata
+481c7232f1e780d8a9fe30d6ac31329d973d0e8a 2026-09-24T13:50:10+02:00 docs(durable): align Pico5 with canonical immutable tracker
+cbe7cf00be393ab32539155d2de97b1c9daf7313 2026-09-24T14:11:10+02:00 docs(durable): move Pico5 strict-JSON checks to roots and Chord placements
+3f0573877e8ec71bc3cd1d9580b0fdbc1a4b2b11 2026-09-24T14:26:22+02:00 feat(durable): export storage benchmark workloads
+56746909666ba3298d9e144b1e36dbe08470c594 2026-09-24T14:42:22+02:00 feat(tui,coding-agent): add color values and theme styling (#8398)
+d5cba1d97c4e3a295f383fab49af319b6ef9e644 2026-09-24T15:06:54+02:00 feat(chord): make immutable delta tracker canonical
+d5629e20489ccf770ed90b5a33941cb3b7ef24d0 2026-09-24T15:08:36+02:00 fix(tui): autocomplete paths after opening wrappers like ( and backticks
+6966636dbe69e70f5036124be3f6b31043d5b74c 2026-09-24T19:33:02+02:00 fix(chord): allow promise probes on settled drafts
+7cf037c218be969425c01c24568ddd7d4bc6ee2b 2026-09-24T20:51:10+02:00 fix(tui): choose Kitty image dimensions by aspect distortion (#9957)
+19a0361be89bf78ccf9bbaed9a496d6484759f67 2026-09-24T22:23:36+02:00 feat(durable): add transactional sessions and documents
+5d4de953ce48ebe1fbdd72e9819b8bccabaeb08d 2026-09-24T23:09:15+02:00 feat(durable): add checkpoints and document migrations
+b2bd111f2d46eed1a4689c32f30fde6306498827 2026-09-24T23:18:25+02:00 feat(coding-agent): add hidden-message toggle to HTML exports (#10020)
+9e70c3d505db56fdb095cf5d777096f6888662a2 2026-09-25T00:08:32+02:00 feat(chord): optimize immutable batch application
+5fd446ca1843682e8da3fec4ceb71c42f56fbace 2026-09-25T00:08:51+02:00 feat(durable): optimize document replay
+f444ea5eafeb11dd02ea487f8916ba3a89540fb3 2026-09-25T10:53:32+02:00 fix(coding-agent): use per-ref cache folders for pinned temporary git extensions
+92e8d4f02a069289a9ff474eabf9c6e023e9d266 2026-09-25T11:26:14+02:00 fix(coding-agent): stop RpcClient skipping listeners on unsubscribe
+49681e1b71c9c32cdfbf45c21f8e3cb3a8c8629d 2026-09-25T11:35:36+02:00 fix(coding-agent): hide line range for full-file read calls with null offset/limit
+ca7460d16b5f72f3d0a3fb79b88c56754de81bfa 2026-09-25T13:14:33+02:00 feat: build with TypeScript 7 and run sources with plain node
+b3487650f6378f1b0d1643dd254445ceb4a98035 2026-09-25T13:30:50+02:00 fix(tui): keep cursor visible when overlays close after stop
+e473b5cd8b6f2e82f1295aeee81cb697ffde2ed5 2026-09-25T14:51:52+02:00 feat(coding-agent): report prompt disposition in RPC responses
+ddba59618794b870786210e14065a639656ea10e 2026-09-25T15:44:41+02:00 fix(coding-agent): honor truecolor in custom themes (fixes #9973) (#10039)
+c01f687e5b900a42a69d22248f472b7fe4a790ea 2026-09-25T15:52:46+02:00 fix(ai): apply model samplingParams in direct stream()/complete() calls
+8930b9ec0b9299d4e48da2d9e0b7009f5f54391d 2026-09-25T16:00:51+02:00 fix(ai): ignore empty Mistral content deltas
+507d7649e9573f7caa38c7d920e2278b64a74ed8 2026-09-25T16:17:23+02:00 feat(durable): add conversation document forks
+ff72faba28d10c86611863d0aaa5d3122f2d8cb0 2026-09-25T16:27:23+02:00 fix(coding-agent): save new session file at the first user message
+ab30693d64f96615e36707e7affa58adf45a98dc 2026-09-25T17:27:12+02:00 fix(ai): upgrade openai SDK to 7.19.0 (#10044)
+a6ca861024ddc1492af14e5386a3d3e2bfe8ab64 2026-09-25T17:39:09+02:00 fix(ai): price OpenAI Fast mode service tier like priority
+04b5bad666830eb3a0dddc77a715eed95e12485a 2026-09-25T17:46:13+02:00 feat(durable): add typed IDs and explicit ownership
+d6af72e1857cfb10b41d8ff8e69f0d72b4cf6d31 2026-09-25T18:05:22+02:00 docs(durable): clarify scratch examples
+bf8e4b953183009507e68697750179951095a60c 2026-09-26T13:33:47+02:00 feat(coding-agent,tui): System theme (#10067)
+2b0a123de98318c2ff8069661721ce0c3794c34e 2026-09-26T14:37:30+02:00 feat(coding-agent): remove themes section from startup banner
+6f7551516b84278eb9da1c340c8e7bc66be1a6ba 2026-09-28T00:22:39+02:00 fix(ai,coding-agent): update Fireworks tests and default for removed models
+ebced834311dbbbce621c075565c79183c7e4fe1 2026-09-28T12:01:02+02:00 fix(ai): update tests for removed OpenCode Go Kimi K2.6
+e1787702d32e0a7fd7387840c918faa4d1286187 2026-09-28T12:08:56+02:00 fix(coding-agent): default OpenCode Go to Kimi K3 after Kimi K2.6 removal
+04efdfc38078f952a0436a3363e50744226ec824 2026-09-28T14:19:07+02:00 feat(ai): Discount jev (#10119)
+dc84c1ac0afd15721071507a3a06b5e3d0cad614 2026-09-28T14:32:48+02:00 fix(ai): send requested thinking level to Mistral reasoning models
+c1449660c83fd00a7c71d5f7e1bd29fafd400550 2026-09-28T14:55:08+02:00 fix(ai): allow empty thinking signatures for OpenCode qwen3.8-flash
+35180b9df8e9e1ad0f58731f9f01d44f251718b1 2026-09-28T16:36:06+02:00 feat(durable): add document states and buffered watches
+cd5ff1125981f0fc37a56df25eee7310286a3f89 2026-09-28T16:47:23+02:00 docs: reorder durable harness milestones
+11894012dd461232eb075bc890538b6866860a10 2026-09-28T17:21:20+02:00 feat(durable): expose deltas since base to checkpoint predicates
+c90d9ea586194003211f10cded3c14f74a4f81e1 2026-09-28T20:46:38+02:00 feat(ai,coding-agent): add Claude Sonnet 5.5 support
+3883fcb1f310c065d494b14dd597ba6658f04978 2026-09-28T21:57:29+02:00 feat(durable): add openable Harness with registry and conversation config
+fd889a2741891ee45116cb6131052d7fad220886 2026-09-28T20:59:29+01:00 fix(coding-agent,tui): paste Finder file paths instead of icons (#10136)
+1b2aa0ca0e3b5bf918c31f4cdc28b3d09b4b5c7a 2026-09-28T23:19:21+02:00 fix(ai): reject unfinished Responses tool calls instead of running them
+540e174c72cd793170b73db8160c6d5f6c5a2236 2026-09-28T23:30:45+02:00 feat(coding-agent): Virtual models (#10035)
+cb7969d212836b8939001dce159fbd2ed6ad395f 2026-09-28T23:55:11+02:00 feat(durable): add durable task runtime
+28fd59086880aa6622c0ca2dfdfca31e879dab99 2026-09-29T08:11:56+02:00 fix(ai,coding-agent): replace removed Together Kimi K2.6 with Kimi K3
+b485fa3128c3d8dae87cb59da6e95db0f991c5bc 2026-09-29T08:23:22+02:00 fix(tui,coding-agent): reduce render cost of theme changes and streaming
+8562bcf66a8eeefdf75ddd231ca9d7aa7d64f86e 2026-09-29T09:12:50+02:00 feat(coding-agent): codemode and MCP
+f1927c2d56bbc8a58f2d6a6a4957f52c77507557 2026-09-29T09:57:53+02:00 feat(tui,coding-agent): configurable fullscreen wheel scrolling with auto acceleration
+034be02d21b20b21d0cc4335abf7f15e659fe719 2026-09-29T10:05:34+02:00 docs(durable): specify first chat turn (Package 15)
+da19b63c775086f3a3dc372eb77f3e981d36c952 2026-09-29T10:07:27+02:00 fix(llama): cached context on reload (#10158)
+1d74741e1777f7cc147d65bdfbcd08bb752972cd 2026-09-29T10:18:24+02:00 fix(coding-agent): serialize MCP OAuth refreshes across processes
+4259686d9290c0d73ae7192b796aee3e530a9779 2026-09-29T10:51:01+02:00 refactor(coding-agent): resolve built-in extensions as builtin:<name> paths (#10159)
+4df1574339bfbd1a9750ff485bb618da397ba135 2026-09-29T12:10:29+02:00 feat(ai,coding-agent): share OAuth callback server and sign-in page
+30a1d1849da2e606f185c51561746b569e9fdd5d 2026-09-29T14:02:57+02:00 feat(coding-agent): support +name/-name in defaultTools
+837d8a16bddcd617eca1670694e566d3406ce877 2026-09-29T14:08:12+02:00 feat(durable): first runnable chat turn (Package 15)
+5257d0d5f3ab7d42550804f32c67a77b49f485d4 2026-09-29T14:09:54+02:00 feat(coding-agent): show tool call arguments for MCP and fallback-rendered tools
+33e203354391ba26937cd1e8a210b4db10e82c66 2026-09-29T15:32:10+02:00 feat(ai): expose Jev on Vercel AI Gateway and OpenCode Zen
+89a5c7bdaaf79cad6b3a432ddbe6a869a8e0e690 2026-09-29T16:08:22+02:00 feat(ai): report token usage and cost for System One classify results
+9a100c7cc4707f013438b13969c6671bc0a33c4c 2026-09-29T16:21:39+02:00 feat(coding-agent): report codemode classifier and nested tool usage in session cost
+9d1a6503521d7bba9f8a1c59fe09fa47e23ef0aa 2026-09-29T16:37:51+02:00 fix(extensions): show warning when replaceable builtin replaced (#10174)
+02eed88fd8912e54a804ddebd409e2e4c08ac5ef 2026-09-29T17:16:15+02:00 feat(ai,coding-agent): add alternative sign in for the openai provider
+1ff5b6fddf69c322c6937781a720f97e87c93774 2026-09-29T18:06:34+02:00 feat(coding-agent): return up to 1 MiB of bash output to codemode scripts
+8eb2bccf2603c28907ef3a583a04cafb1af284ae 2026-09-29T18:38:07+02:00 fix: bump vitest to 4.1.11 and gondolin's undici to 6.29.0
+f81cf5520d0c44c15a446d48f4b1810481cd00bb 2026-09-29T19:01:43+02:00 docs: audit changelogs for 0.99.0
+dfbb4a21edeff536558840fa6aef9db2756e90ba 2026-09-29T19:01:55+02:00 fix: include codemode and mcp in local release packages
+4b060d3a98618019adb9985d517516c8e99a2bbe 2026-09-29T19:04:28+02:00 Release v0.99.0
+312184edb68c38248e1acfc3eec68500ba49d9cb 2026-09-29T19:04:43+02:00 Add [Unreleased] section for next cycle
+12c416e1a6f4c673523c04aebc30827266485684 2026-09-29T19:43:27+02:00 feat(ai,coding-agent): add GPT-6.1 Sol and make it the Codex default
+72abf01ba9e23a99a983cbed7008f6bc020e9597 2026-09-29T20:00:11+02:00 fix(coding-agent): bundle openai-chatgpt OAuth flow
+a879e23ca756120c29aa4d66f9638c9f0fc6a6e5 2026-09-29T20:01:50+02:00 docs(coding-agent): audit unreleased changelog
+d86654abb8862e201933517d6f1fce9f88dd117f 2026-09-29T20:06:55+02:00 Release v0.99.1
+6a4af07d6145c88dad4e3472acebe75cc57af88f 2026-09-29T20:07:07+02:00 Add [Unreleased] section for next cycle
+0a7a4eca6895006cd893085301f3bc3518419ab0 2026-09-29T15:23:42+02:00 docs(durable): specify first tool turn (Package 16)
+ba7d5fbedb1864c1d6e1b26910b95b1634a665c9 2026-09-29T15:24:05+02:00 feat(ai,durable): add lightweight pi-ai/models entry and avoid TypeBox in durable
+445770e032daddd4886cb4b9343eb903d4e65312 2026-09-29T18:02:39+02:00 feat(durable): first coding-agent tool turn (Package 16)
+749e45ae69c523d51d8715b6afa0cc973c2291b2 2026-09-29T21:23:39+02:00 docs(durable): specify live UI and product state (Package 17)
+47f65f1a3a58caf17ff73aff9f8dcb2fb90d157f 2026-09-29T21:23:46+02:00 feat(durable): inbox, reset, usage, conversation view, and experimental events (Package 17)
+dc58677e6be043d265c4ff03dfc1a5f54d0fdde6 2026-09-29T21:25:24+02:00 docs(durable): move unreleased changelog entries out of the 0.99.0 section
+e5960c483f1e3e5eba35e40548b8561850ba224e 2026-09-29T21:31:16+02:00 docs(durable): rewrite README as an experimental usage guide
+c4f5ef9451eb6ffbca3515b4162bfebd04655c67 2026-09-29T21:38:50+02:00 docs(durable): rename collapse to compaction
+fddc968b96052176e0f570949df2bdfdd700c740 2026-09-29T22:16:56+02:00 fix(coding-agent): mark native providers with stored credentials as configured on registration (#10190)
+9f1013506f292fb885eedc015e47652f4ab320c0 2026-09-29T22:30:35+02:00 docs(durable): specify ownership and subagents (Package 18)
+2532a0bef7f72f45828f190b0be6c38227bbd34d 2026-09-29T22:30:42+02:00 feat(durable): conversation abort, ownership cascades, and subagent handles (Package 18)
+1b347794e2a630e4359f2584f4eea388145d0ddf 2026-09-29T22:47:17+02:00 fix(durable): cover ownership cancellation races (Package 18)
+ee602414c703be8da722ec56de7f2399e62581ac 2026-09-30T08:56:08+01:00 fix(coding-agent): preserve renderer example prompt guidance (#10193)
+e7a9bf7e94238f2c0f56f6ff6622750a3ce9caff 2026-09-30T08:14:27Z chore: approve contributors from issue #10177
+99e85eb7d1ec5c1424445692d87ae7825c20cb75 2026-09-30T09:28:48+01:00 docs(coding-agent): improve MCP server guide (#10220)
+3e9451238337071b74ba5cdd53f1ab7cf4100ae8 2026-09-30T10:28:15+02:00 fix(coding-agent): make /mcp sign-in URL clickable like /login
+3dd803d7e780fb04b815261b510f76bff563d46d 2026-09-30T10:51:10+02:00 fix(ai): detect Z.AI CN endpoint context overflow errors
+d2931ad3d5bf6936fbdfa5dfc81fb32f875499b2 2026-09-30T12:10:30+02:00 fix(coding-agent): validate codemode image() base64 and detect image type
+f3e68e8eaf3274d8111796b9df4e6b43e2f8e58a 2026-09-30T11:10:50+01:00 feat(durable): make SQLite storage asynchronous
+fd3af5ee2bb27b51d24de52be77723b41834798d 2026-09-30T11:39:02+01:00 feat(durable): pass a transaction handle to SQLite transaction callbacks
+4a42f8fafaff65126b6c21632be03b605aec9ad5 2026-09-30T13:46:18+02:00 fix(coding-agent): load codemode worker in Windows binary
+96377f5c2a980a6c2df4cf91beb8b721ab4890c5 2026-09-30T13:49:51+02:00 docs(durable): specify structured concurrency (Package 19)
+03180653c624d1c079a509c61ab30322e7ff7b62 2026-09-30T13:50:03+02:00 feat(durable): structured concurrency: task ownership, waiting, completing holds, bottom-up abort (Package 19)
+1c7e7df765a6fe542d24906756ee981bf7bb84c4 2026-09-30T13:54:02+02:00 feat(coding-agent): list MCP servers instead of their tools in codemode
+7c9fe66452de9689223e3b490939f014c6e94e52 2026-09-30T13:59:24+02:00 feat(coding-agent): allow a custom OAuth client name for MCP servers
+37c9d0d200fbf609485623e49871ad6306ffbb60 2026-09-30T14:01:39+02:00 fix(durable): harden the persistent subagent example
+a0660b174eceded86ab93d31320249e6dc994ef8 2026-09-30T14:19:46+02:00 fix(coding-agent): resolve branch model selection with one catalog lookup
+c34f2d6ad593e57c5f9903e2bcd77ed3f8e3c216 2026-09-30T14:33:58+02:00 fix(coding-agent): merge remote catalog models in linear time
+dc83372f8fb890f37153a825860500e6830dba37 2026-09-30T15:01:08+02:00 fix(coding-agent): validate extension command registration
+7ef68d4f2f4a8d53fc7ad4ff31172c11918e2a23 2026-09-30T15:03:35+02:00 fix(mcp): call fetch without a receiver in Streamable HTTP transport
+295cc72b03058ee4df1936046b1e1ec67978af4d 2026-09-30T15:20:04+02:00 fix(ai): send Anthropic tools non-strict when schema has rejected keywords
+2bbfcca437c3aa5a21af1e4ee44ae7a051f953ad 2026-09-30T15:30:54+02:00 fix(ai): use exponential backoff when Retry-After is unparseable
+e029c3ed0add2ba55cc9c68b2bc3920e56d32888 2026-09-30T17:20:47+02:00 feat(coding-agent): stop waiting for MCP servers on the first prompt
+0582d9c11da78c1812d4537af2d194f1dd060d26 2026-09-30T17:24:44+02:00 fix(coding-agent): limit codemode and MCP result previews to wrapped lines
+028c0ec56ee237764af95a77522dd674e8cfe95c 2026-09-30T17:46:43+02:00 fix(coding-agent): do not list codemode-hidden tools in the system prompt
+db6cc71dc7b69202dc560e71106bb9dfd454e758 2026-09-30T17:55:25+02:00 feat(coding-agent): enable tools newly added to defaultTools on reload
+b72cf98ec7ac5bd8b33fdda08623ee55c251942f 2026-09-30T18:23:10+02:00 docs(durable): specify compaction and overflow (Package 20)
+ed0d6b91b68b7bd180c19a92f49ee816ab0ef52f 2026-09-30T18:23:17+02:00 feat(durable): compaction and overflow (Package 20)
+b29db895c5c1b30b560a39fb9e4664508f1683de 2026-09-30T18:39:38+02:00 fix(coding-agent): align MCP tool names with codemode identifiers
+91f9f3b5dfd7a49dda90d6450de7313ba425b3ca 2026-09-30T20:17:40+02:00 feat(coding-agent): let MCP servers authenticate with a provider login
+cd0ba2fabcebd1c234d1009595cebf37a1f6c5e6 2026-09-30T19:49:55+01:00 feat(durable): execute SQLite queries by SQL text and cache statements per connection
+a9424cd43d242f32d31a3638bb7fe1305c20f72a 2026-09-30T14:58:37-04:00 feat(ai): Anthropic workload identity federation (#10242)
+002c183e18d85b1d95d4ce6b9b95640e705bfb60 2026-09-30T21:07:03+02:00 docs(ai,coding-agent): audit unreleased changelog entries
+77ac62f22a8198608ea6d15b48547cfe2df150fe 2026-09-30T20:10:39+01:00 refactor(durable): simplify Node SQLite queue and bindings
+005af57d88ee23b33778f343a9595b32e67ff788 2026-09-30T21:12:28+02:00 Release v0.99.2
+955cc6665ee3986c6a033db52200779310d10dfd 2026-09-30T21:12:42+02:00 Add [Unreleased] section for next cycle
+8f89293a26a46e7c5c3213dfbf7df887a6a7dc6d 2026-09-30T21:36:10+02:00 Merge PR #10232: feat(durable): make SQLite storage asynchronous
+a0feabda7ce19ba7155c57775519640606e74a1e 2026-09-30T20:38:41+01:00 refactor(durable): drop AsyncLocalStorage misuse detection from Node SQLite adapter
+ed391c4f0a2db137c4b218d1d18352261cc60dfb 2026-09-30T22:32:34+02:00 fix(durable): harden async SQLite adapter queue and close
+d4d74eb19be92c559f629a7f9707c5503a840edc 2026-09-30T22:32:47+02:00 Merge PR #10232 follow-up a0feabda7 (already included in ed391c4f0)
+b35af04f465d60c2f15d124ed074476b8986deb4 2026-09-30T22:56:18+02:00 feat(coding-agent,tui): add a hidden easter egg to the header logo
+65117e31f242daa8e0a17dbd2810f7bb92bf4087 2026-10-01T05:13:01+08:00 fix(tui): complete slash commands after leading whitespace (#10218)
+7a11fe1c723b942fa093edb8b00f051ddb9b6627 2026-09-30T23:17:13+02:00 feat(ai): add copy code login method to Anthropic OAuth (#10194)
+d850edee9ccc5d3b6cec79553d4839a1cbab47ed 2026-09-30T23:55:48+02:00 feat(coding-agent): add MCP oauth.authServerMetadataUrl and check RFC 9207 iss
+17f3dccbef6c56cbc8cee73dbcfe2bba4f8734f9 2026-10-01T00:05:28+02:00 fix(tui): preserve ANSI order at slice boundaries
+4bae8677597bc4f96acae5e6d3039de1f61ecb58 2026-10-01T01:27:49+02:00 docs(durable): specify extensions and per-conversation agents (Package 21)
+b56702ad345201a1de46a5f8e94542a3a59ad3bd 2026-10-01T01:28:04+02:00 feat(durable): extensions and per-conversation agents (Package 21)
+8ce69e9d2b171d173fe4b6b2b6256f1f4411e69d 2026-10-01T02:05:35+02:00 fix(mcp): treat empty and null optional OAuth fields as absent
+5b5ccddfac3abba2f3c26b558ec69dcde85000ab 2026-10-01T09:52:07+02:00 docs(durable): settle lifecycle wording and specify the task graph view (Packages 22, 23)
+49683a36476e3a3fdbb40008745073375df563b7 2026-10-01T09:52:56+02:00 feat(durable): lifecycle conformance and task graph view (Packages 22, 23)
+5609b0d6c07cd3bf8014429123086f6da0a5e14e 2026-10-01T09:53:08+02:00 feat(coding-agent): experimental TUI coding agent on pi-durable
+41169ba2af7f5bd5c97237633879117bc3fa9cd9 2026-10-01T09:53:58+02:00 fix(coding-agent): make /mcp login sign-in URL clickable in the TUI
+70c036211de5378508ae2456f3c7ae3cf9f8bc75 2026-10-01T10:07:11+02:00 feat(coding-agent): show the durable TUI's task panel by default
+0c453048bd4bb699b90463d9423c382d1787087f 2026-10-01T10:24:55+02:00 fix(coding-agent): require --model when --provider is given
+e529a82c98fad679c6e20c03ffbb0bc7896fecb9 2026-10-01T10:22:33+02:00 fix(mcp): keep granted scopes on step-up authorization
+a4715ec9bffbfcb8a32a1a4100dcfd06c12c93e4 2026-10-01T10:22:45+02:00 test(coding-agent): run the official MCP client conformance suite in CI
+5806068c26e55feefd1f5875bf05c0419ec5d912 2026-10-01T11:20:59+02:00 fix(coding-agent): store MCP OAuth credentials per server name and URL
+54c19a252997ee6607e2379b4c168a0adc93338e 2026-10-01T11:36:36+02:00 fix(tui): reduce memory retained per rendered message
+e792ba131ed0495f3ff58a0eb13f20540e344d5c 2026-10-01T11:36:43+02:00 fix(coding-agent): keep one copy of each rendered user message line
+0f8740bb65638180403a225ad7ec4d0cc1f8dedf 2026-10-01T12:36:45+02:00 fix(coding-agent): rename unconfigured to not configured
+c662ec7e374563bd549dc35f47bac52dcc4bed88 2026-10-01T13:34:54+02:00 fix(coding-agent): restore MCP tools loaded by tool_search on resume and reload
+409e808f5834dc4f2f37b54abf24d3a2f6ecad75 2026-10-01T13:40:36+02:00 fix(coding-agent): keep pastel palettes pastel in the system theme (#10293)
+f29ea3deb298280b417892c6229ce478ad8c4d2f 2026-10-01T14:42:02+02:00 feat(coding-agent): add header-only quietStartup mode
+7fd478a2e888ebc28869566f33a186303d372838 2026-10-01T14:44:30+02:00 feat(agent): remove the experimental harness from pi-agent-core
+48dd1e2f0f9dc7a767d7e5ee693bc85a4d6db38c 2026-10-01T14:44:50+02:00 feat(coding-agent): port the experimental client/server to pi-durable
+233f174401c1fbf112046b0020bcfb7ea5cd8467 2026-10-01T15:10:11+02:00 fix(ai): use color Pi logo on OAuth pages
+ed8b3bcc194c8263ec8bec3f337053ae73866da1 2026-10-01T15:12:24+02:00 feat(coding-agent): offer Radius sign-in and MCP setup in /login
+aab34df655e3c5974fc40618f75e9eafdb031293 2026-10-01T16:50:29+02:00 feat(coding-agent): add models.generateImages() to codemode
+ca9c925117b8d172d42e516a4175be4db0e51d79 2026-10-01T16:58:24+02:00 fix(coding-agent): show text wordmark instead of logo in Apple Terminal
+c2f65d8f13f6205c2efa963f7689ebb08a87fd33 2026-10-01T17:05:45+02:00 docs(coding-agent): add Radius to providers page, rename provider docs sections
+88ff80b986e34d4fbd1fa94a4df65c60ae964516 2026-10-01T17:26:20+02:00 feat(coding-agent): make fullscreen the default TUI mode
+6f1072cc081f06b86a673bd142f03720d17afe15 2026-10-01T18:27:08+02:00 feat(coding-agent): shrink codemode prompt and guide scripts back from errors
+395315f4841ab5a090a33b8259f60b6df281c1ca 2026-10-01T19:55:16+02:00 feat(coding-agent): experimental durable vacation planner demo
+eaa8b0d0650f40bab58611008f89dd94020b3839 2026-10-01T20:23:30+02:00 fix(durable): publish README and changelog, link the spec, add default export condition
+92fc452c52240917252d76bc723d83e77f4fb1f1 2026-10-01T20:41:15+02:00 docs: audit changelogs and add new features for next release
+bc2d8dc1c46c50f2c6a0f3237e6a2453817e51a1 2026-10-01T20:42:40+02:00 fix(ai): drop mismatched item ids when replaying grammar tool calls
+a13d35a742c6ef8462812a28fbe1d8c8b7431c32 2026-10-01T20:52:21+02:00 Release v1.0.0
+86dfceec402ad77e563bf4feab5f26c42d5f5db6 2026-10-01T20:52:38+02:00 Add [Unreleased] section for next cycle
+7fbbd5f4a1d982bb02d63472dde0774fa639f99b 2026-10-01T22:10:57+02:00 feat(coding-agent): play a 3D Armin on /arminsayshi in fullscreen mode
+1c1e9c0efc18a3b2b7890267b6a5e747ecab0202 2026-10-02T09:50:04+02:00 feat(coding-agent): remove daxnuts easter egg
+c450f2c0f8402c3b4757f408b9c7a8296701d830 2026-10-02T10:08:56+02:00 feat(coding-agent): restore 3D pi logo easter egg alongside 3D Armin
+ced72c2f095bc71999f0242b699a82210f0bc8bd 2026-10-02T10:10:25+02:00 feat(coding-agent): copy OAuth sign-in URLs with app.message.copy
+28eaccb8e87d075562593073282cc0774f2c2e3b 2026-10-02T01:18:11-07:00 fix(ai): update Together DeepSeek V4 Pro model ID (#10336)
+0495646a8322ff99ce40ac2f9e15f1f49f56bb11 2026-10-02T10:40:58+02:00 fix(coding-agent): pin brace-expansion 5.0.12
+3874b3e98983c70fa05fa193b675d42cfcb8b9f8 2026-10-02T11:38:35+02:00 fix(ai): retry "Selected model is at capacity" provider errors
+b271b0a524b29e13c0c9e748aea0d34e1597f2db 2026-10-02T12:30:17+02:00 feat(ai): define Anthropic mid-conversation tools inline
+9b3c19da5cffc4c5e8b6bd74c45abc1ab6bfcd16 2026-10-02T13:42:14+02:00 fix(coding-agent): ignore empty entries in --models
+de7e675de2c909776a2ed6253fe6b8495465167b 2026-10-02T14:29:23+01:00 docs: update repo and CLI READMEs
+1499466d8581035a4dec6c869725b8712aea4bbe 2026-10-02T16:02:10+02:00 feat(coding-agent): opt-in MCP OAuth client ID metadata documents
+c10bfb0d79dbbc998539a0a3e6c6a736a4e6db06 2026-10-02T16:10:34+02:00 fix(ai): use dashed Claude model IDs for Cloudflare AI Gateway
+4812cb268efc3f0846337cdfb8f00ce51b7b8d5a 2026-10-02T09:52:58-05:00 feat(ai): add Cloudflare Clef classifiers to Workers AI (#10316)
+221cbcb02e8d8ee0b11db8076d755b0dace03857 2026-10-02T16:58:49+02:00 docs(ai,coding-agent): document Cloudflare Clef classifiers
+581e7ba78141a4d8b61cc9d11b8b22ae7e59195e 2026-10-02T17:16:23+02:00 feat(coding-agent): remove npm shrinkwrap and recommend the managed installer
+eeac84ca92498ac18b6832754d01aef1d3c5f654 2026-10-02T17:43:21+02:00 fix(ai): fail Sign in with ChatGPT when the callback port is taken
+319fecb89b17b7bf8a4b62734de9a6cc6ceabe49 2026-10-02T17:53:52+02:00 fix(codemode): cap script output so print loops cannot exhaust host memory
+4665fafb4ddc8cf066484fbe14d0c5825f4d3a1d 2026-10-02T18:25:43+02:00 fix(ai): keep models.dev pricing tiers for Amazon Bedrock models
+c71a496ff994e5afc52b893b9c20711300e0acfc 2026-10-02T18:30:51+02:00 feat(coding-agent): add Nix flake (#9137)
+1387af7b427c5328eba734715f61b97b0b822688 2026-10-02T18:34:49+02:00 feat(coding-agent): allow project mcp.json to override enabled and exposure of global servers
+672000c80c84f59a4b3ffd7f7f8975772c270b1b 2026-10-02T18:44:01+02:00 fix(tui): preserve WezTerm images while scrolling
+9fba660cf1caca0ade5bea72269352416e595a19 2026-10-02T18:49:34+02:00 chore: accept unfixable node-forge advisory in npm audit
+69f0be6f0a6ca1bf66a2a9cf59c821b632e6bca1 2026-10-02T22:38:43+02:00 fix(ai): drop stale thinking blocks on Bedrock Claude replays
+a276dabe57911253350bffb93cb7d7aff6a73261 2026-10-03T00:14:52+02:00 fix(tui,coding-agent): convert non-PNG images for Kitty in Image
+11449730c8a733953ce1bcce70e066bccaa778a5 2026-10-03T13:53:50+02:00 fix(coding-agent): render MCP tool calls before their server connects
+4215d4d6bec2cd042137abf796fcf0d315187041 2026-10-03T14:10:22+02:00 docs(ai,coding-agent): audit changelog entries since v1.0.0
+49b9df48952b155937e62fed11f03ad2e15ff3c1 2026-10-03T14:14:51+02:00 fix(coding-agent): default NVIDIA to Nemotron 3 Ultra
+a7229ddc21810d6245105978033b7df645ecc2f7 2026-10-03T14:20:57+02:00 Release v1.0.1
+4c6fb7cfe8c538a668726f6f8b3554098c39faee 2026-10-03T14:21:11+02:00 Add [Unreleased] section for next cycle
+83692682f095528f8b71652ddacff7075e36e893 2026-10-03T15:23:44+02:00 fix: fetch full history before fast-forwarding stable in the Nix workflow
+70eceaade630d348aa42ca3e4ff3b785dad80754 2026-10-04T00:54:10+02:00 fix(durable): persist provider session identities
+76dfb88f63ce51ff2e3fe2ead4fcf1f65f71f121 2026-10-04T01:29:01+02:00 feat(ai): add per-thinking-level sampling parameters (#9776)
+750105c80ef41b2aa15a7d6dc720d88b8941e1df 2026-10-04T02:36:48+02:00 docs(ai,coding-agent): move #9776 changelog entries to Unreleased
+cd32f7725fdbddbaecdff5b1e68491563394e0ca 2026-10-04T02:41:16+02:00 Release v1.0.2
+200387122ca450d6387f033949423114a270b96c 2026-10-04T02:41:25+02:00 Add [Unreleased] section for next cycle

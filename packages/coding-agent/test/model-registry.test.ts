@@ -705,9 +705,10 @@ describe("ModelRegistry", () => {
 			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
 			expect(sonnet?.name).toBe("Custom Sonnet Name");
 
-			// Other models should be unchanged
-			const opus = models.find((m) => m.id === "anthropic/claude-opus-4");
-			expect(opus?.name).not.toBe("Custom Sonnet Name");
+			// Other models should be unchanged, even when retired models leave the catalog.
+			const other = models.find((m) => m.id !== sonnet?.id);
+			expect(other).toBeDefined();
+			expect(other?.name).not.toBe("Custom Sonnet Name");
 		});
 
 		test("custom model and model override carry sampling params", async () => {
@@ -739,8 +740,9 @@ describe("ModelRegistry", () => {
 			expect(sonnet?.samplingParams).toEqual({ top_p: 0.9 });
 
 			// Models without sampling config keep it unset.
-			const opus = models.find((m) => m.id === "anthropic/claude-opus-4");
-			expect(opus?.samplingParams).toBeUndefined();
+			const other = models.find((m) => m.id !== sonnet?.id && m.id !== custom?.id);
+			expect(other).toBeDefined();
+			expect(other?.samplingParams).toBeUndefined();
 		});
 
 		test("model override with compat.openRouterRouting", async () => {
@@ -787,13 +789,19 @@ describe("ModelRegistry", () => {
 		});
 
 		test("multiple model overrides on same provider", async () => {
+			const baseline = await createModelRegistry(authStorage, modelsJsonPath);
+			const other = getModelsForProvider(baseline, "openrouter").find(
+				(m) => m.id !== "anthropic/claude-sonnet-4" && m.api === "openai-completions",
+			);
+			expect(other).toBeDefined();
+			if (!other) throw new Error("Expected a second OpenRouter model in the built-in catalog");
 			writeRawModelsJson({
 				openrouter: {
 					modelOverrides: {
 						"anthropic/claude-sonnet-4": {
 							compat: { openRouterRouting: { only: ["amazon-bedrock"] } },
 						},
-						"anthropic/claude-opus-4": {
+						[other.id]: {
 							compat: { openRouterRouting: { only: ["anthropic"] } },
 						},
 					},
@@ -804,12 +812,14 @@ describe("ModelRegistry", () => {
 			const models = getModelsForProvider(registry, "openrouter");
 
 			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
-			const opus = models.find((m) => m.id === "anthropic/claude-opus-4");
+			const overriddenOther = models.find((m) => m.id === other.id);
+			expect(sonnet).toBeDefined();
+			expect(overriddenOther).toBeDefined();
 
 			const sonnetCompat = sonnet?.compat as OpenAICompletionsCompat | undefined;
-			const opusCompat = opus?.compat as OpenAICompletionsCompat | undefined;
+			const otherCompat = overriddenOther?.compat as OpenAICompletionsCompat | undefined;
 			expect(sonnetCompat?.openRouterRouting).toEqual({ only: ["amazon-bedrock"] });
-			expect(opusCompat?.openRouterRouting).toEqual({ only: ["anthropic"] });
+			expect(otherCompat?.openRouterRouting).toEqual({ only: ["anthropic"] });
 		});
 
 		test("model override combined with baseUrl override", async () => {
@@ -832,10 +842,11 @@ describe("ModelRegistry", () => {
 			expect(sonnet?.baseUrl).toBe("https://my-proxy.example.com/v1");
 			expect(sonnet?.name).toBe("Proxied Sonnet");
 
-			// Other models should have the baseUrl but not the name override
-			const opus = models.find((m) => m.id === "anthropic/claude-opus-4");
-			expect(opus?.baseUrl).toBe("https://my-proxy.example.com/v1");
-			expect(opus?.name).not.toBe("Proxied Sonnet");
+			// Other models should have the baseUrl but not the name override.
+			const other = models.find((m) => m.id !== sonnet?.id);
+			expect(other).toBeDefined();
+			expect(other?.baseUrl).toBe("https://my-proxy.example.com/v1");
+			expect(other?.name).not.toBe("Proxied Sonnet");
 		});
 
 		test("model override for non-existent model ID is ignored", async () => {
@@ -1013,6 +1024,61 @@ describe("ModelRegistry", () => {
 				],
 			});
 			expect(registry.getProviderDisplayName("oauth-provider")).toBe("OAuth Provider");
+		});
+
+		test("catalog context windows govern matching extension models and refresh dynamically", async () => {
+			const providerId = "catalog-context-provider";
+			const baseUrl = "https://provider.test/v1";
+			const cxId = "cx/shared-model";
+			const codexId = "codex/shared-model";
+			const overrideId = "cx/overridden-model";
+			const liveOnlyId = "cx/live-only-model";
+			const writeCatalog = (cxContextWindow: number) =>
+				writeRawModelsJson({
+					[providerId]: {
+						baseUrl,
+						apiKey: "test-key",
+						api: "openai-completions",
+						models: [
+							{ id: cxId, contextWindow: cxContextWindow },
+							{ id: codexId, contextWindow: 872000 },
+							{ id: overrideId, contextWindow: 272000 },
+						],
+						modelOverrides: { [overrideId]: { contextWindow: 260000 } },
+					},
+				});
+			const liveModel = (id: string, contextWindow: number) => ({
+				id,
+				name: id,
+				reasoning: false,
+				input: ["text" as const],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow,
+				maxTokens: 128000,
+			});
+
+			writeCatalog(272000);
+			const registry = await createModelRegistry(authStorage, modelsJsonPath);
+			registry.registerProvider(providerId, {
+				baseUrl,
+				apiKey: "test-key",
+				api: "openai-completions",
+				models: [
+					liveModel(cxId, 872000),
+					liveModel(codexId, 872000),
+					liveModel(overrideId, 872000),
+					liveModel(liveOnlyId, 400000),
+				],
+			});
+
+			expect(registry.find(providerId, cxId)?.contextWindow).toBe(272000);
+			expect(registry.find(providerId, codexId)?.contextWindow).toBe(872000);
+			expect(registry.find(providerId, overrideId)?.contextWindow).toBe(260000);
+			expect(registry.find(providerId, liveOnlyId)?.contextWindow).toBe(400000);
+
+			writeCatalog(300000);
+			await registry.refresh({ allowNetwork: false });
+			expect(registry.find(providerId, cxId)?.contextWindow).toBe(300000);
 		});
 
 		test("modelOverrides apply to dynamically registered provider models", async () => {

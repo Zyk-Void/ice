@@ -144,6 +144,8 @@ Set `api` at provider level (default for all models) or model level (override pe
 
 For providers with `models`, non-built-in provider configs need `baseUrl` and an `api` value at either provider or model level. `apiKey` is not required to load the file: models become available when auth is configured through `/login`/`auth.json`, CLI `--api-key`, or provider `apiKey`. If no auth is configured, the models load but stay unavailable in `/model` and `--list-models`.
 
+When a provider extension refreshes a model with the same ID, an explicitly configured `contextWindow` in that provider's `models` entry remains authoritative. This lets the local model catalog drive context accounting and compaction while extensions supply live metadata for models without a configured context window. `modelOverrides.contextWindow` remains the explicit top-priority override. A model-runtime refresh reloads `models.json`, so changes to catalog context windows take effect on refresh.
+
 ### Value Resolution
 
 The `apiKey` and `headers` fields support command execution, environment interpolation, and literals:

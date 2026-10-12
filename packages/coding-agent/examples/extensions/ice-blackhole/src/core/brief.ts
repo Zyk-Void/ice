@@ -404,11 +404,11 @@ export const buildBriefSections = (blocks: NormalizedBlock[]): BriefLine[] => {
 		const ref = m[2];
 		const body = sec.lines[0];
 		const prev = collapsedErrors[collapsedErrors.length - 1];
-		const prevMatch = prev?.header.match(/^\[tool_error\]\s+(\S+?)\s*\(((?:#\d+(?:,\s*)?)+)\)(?:\s*x(\d+))?$/);
+		const prevMatch = prev?.header.match(/^\[tool_error\]\s+(\S+?)(?:\s*\(((?:#\d+(?:,\s*)?)+)\))?(?:\s*x(\d+))?$/);
 		if (prev && prevMatch && prevMatch[1] === tool && prev.lines.length === 1 && prev.lines[0] === body) {
-			const refs = prevMatch[2] + (ref ? `, #${ref}` : "");
+			const refs = [prevMatch[2], ref ? `#${ref}` : ""].filter(Boolean).join(", ");
 			const count = prevMatch[3] ? parseInt(prevMatch[3], 10) + 1 : 2;
-			prev.header = `[tool_error] ${tool} (${refs}) x${count}`;
+			prev.header = `[tool_error] ${tool}${refs ? ` (${refs})` : ""} x${count}`;
 		} else {
 			collapsedErrors.push(sec);
 		}

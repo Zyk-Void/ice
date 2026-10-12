@@ -69,4 +69,12 @@ describe("issue #3302 find returns no results for path-based glob patterns", () 
 		const files = await runFind("src/**/*.spec.ts");
 		expect(files).toEqual(["src/foo/bar/example.spec.ts"]);
 	});
+
+	it("leading ./ resolves against the search directory", async () => {
+		expect(await runFind("./src/**/*.spec.ts")).toEqual(["src/foo/bar/example.spec.ts"]);
+		expect((await runFind("./*.spec.ts")).sort()).toEqual([
+			"some/parent/child/test.spec.ts",
+			"src/foo/bar/example.spec.ts",
+		]);
+	});
 });

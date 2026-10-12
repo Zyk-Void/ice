@@ -249,11 +249,16 @@ export function createFindToolDefinition(
 						// fd --glob matches against the basename unless --full-path is set; in --full-path
 						// mode it matches against the absolute candidate path, so a path-containing
 						// pattern like 'src/**/*.spec.ts' needs a leading '**/' to match anything.
-						let effectivePattern = pattern;
-						if (pattern.includes("/")) {
+						// A leading './' names the search directory itself; '**/./x' would never match.
+						let effectivePattern = pattern.replace(/^(?:\.\/)+/, "") || pattern;
+						if (effectivePattern.includes("/")) {
 							args.push("--full-path");
-							if (!pattern.startsWith("/") && !pattern.startsWith("**/") && pattern !== "**") {
-								effectivePattern = `**/${pattern}`;
+							if (
+								!effectivePattern.startsWith("/") &&
+								!effectivePattern.startsWith("**/") &&
+								effectivePattern !== "**"
+							) {
+								effectivePattern = `**/${effectivePattern}`;
 							}
 						}
 						args.push("--", effectivePattern, searchPath);

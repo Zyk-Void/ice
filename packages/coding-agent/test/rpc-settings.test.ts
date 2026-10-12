@@ -92,35 +92,78 @@ describe("RPC settings bridge", () => {
 		expect(snapshot.fields.some((item) => item.key === "trackingId")).toBe(false);
 		expect(snapshot.fields.some((item) => item.key === "extensions")).toBe(false);
 		expect(snapshot.fields.some((item) => item.key === "extension.demo.submenu")).toBe(false);
+		expect(field(snapshot, "ice.subagents.maxConcurrent")).toMatchObject({
+			label: "Subagent concurrency",
+			value: 4,
+			effectiveValue: 4,
+		});
 		expect(snapshot.fields.every((item) => !item.description?.includes("/secret/extension.ts"))).toBe(true);
 		expect(field(snapshot, "terminal.showImages").restartRequired).toBe(true);
 		expect(field(snapshot, "terminal.showImages").hostOnly).toBe(true);
 	});
 
-	it("projects effective shared subagent concurrency policy through RPC settings", async () => {
+	it("projects the subagent V2 settings the runtime enforces", async () => {
 		const manager = SettingsManager.inMemory({
-			ice: { subagents: { concurrency: { default: 6, max: 7 } } },
+			ice: { subagents: { maxConcurrent: 6, maxDepth: 2, defaultAgent: "explore", disabledAgents: ["a"] } },
 		});
 		manager.setIceSettingsValue("project", {
-			subagents: { concurrency: { default: 2, max: 3 } },
-		} as never);
+			subagents: { maxConcurrent: 3, maxDepth: 4, disabledAgents: ["b"] },
+		});
 		await manager.flush();
 
 		const snapshot = createRpcSettingsSnapshot(createContext(manager));
-		expect(field(snapshot, "ice.subagents.concurrency.default")).toMatchObject({
+		expect(field(snapshot, "ice.subagents.maxConcurrent")).toMatchObject({
 			value: 6,
-			effectiveValue: 2,
-			projectOverride: true,
-			effectiveSource: "project",
-			kind: "number",
-			constraints: { min: 1, max: 8, integer: true },
-		});
-		expect(field(snapshot, "ice.subagents.concurrency.max")).toMatchObject({
-			value: 7,
 			effectiveValue: 3,
 			projectOverride: true,
 			effectiveSource: "project",
+			kind: "number",
+			restartRequired: true,
+			constraints: { min: 1, integer: true },
 		});
+		// A project can only lower the ceiling.
+		expect(field(snapshot, "ice.subagents.maxDepth")).toMatchObject({ effectiveValue: 2, effectiveSource: "global" });
+		expect(field(snapshot, "ice.subagents.defaultAgent").effectiveValue).toBe("explore");
+		expect(field(snapshot, "ice.subagents.disabledAgents").effectiveValue).toEqual(["a", "b"]);
+		expect(field(snapshot, "ice.subagents.askTimeoutMs")).toMatchObject({ scope: "global", effectiveValue: 600_000 });
+		for (const legacy of ["concurrency.default", "concurrency.max", "defaults.thinking", "allowedRoles"])
+			expect(snapshot.fields.some((item) => item.key === `ice.subagents.${legacy}`)).toBe(false);
+	});
+
+	it("validates subagent writes against the V2 schema", async () => {
+		const context = createContext(SettingsManager.inMemory());
+		await expect(
+			applyRpcSetting(context, { key: "ice.subagents.defaultAgent", scope: "global", value: "Not Valid" }),
+		).rejects.toMatchObject({ code: "invalid_value" });
+		await expect(
+			applyRpcSetting(context, { key: "ice.subagents.maxConcurrent", scope: "global", value: 0 }),
+		).rejects.toMatchObject({ code: "out_of_range" });
+		// No upper ceiling: the user decides how many subagents may run at once.
+		const many = await applyRpcSetting(context, { key: "ice.subagents.maxConcurrent", scope: "global", value: 50 });
+		expect(field(many, "ice.subagents.maxConcurrent").effectiveValue).toBe(50);
+		await expect(
+			applyRpcSetting(context, { key: "ice.subagents.askTimeoutMs", scope: "project", value: 5_000 }),
+		).rejects.toMatchObject({ code: "scope_not_supported" });
+		const snapshot = await applyRpcSetting(context, {
+			key: "ice.subagents.defaultAgent",
+			scope: "global",
+			value: "reviewer",
+		});
+		expect(field(snapshot, "ice.subagents.defaultAgent").effectiveValue).toBe("reviewer");
+	});
+
+	it("reports ignored legacy subagent keys without blocking delegation", async () => {
+		const manager = SettingsManager.inMemory({ ice: { subagents: { concurrency: { max: 3 } } } });
+		manager.setIceSettingsValue("project", { subagents: { allowedRoles: ["explore"] } });
+		await manager.flush();
+		const snapshot = createRpcSettingsSnapshot(createContext(manager));
+		expect(snapshot.diagnostics.filter((diagnostic) => diagnostic.code === "ice_deprecated_setting")).toEqual([
+			expect.objectContaining({ scope: "global", message: expect.stringContaining("ice.subagents.concurrency") }),
+			expect.objectContaining({ scope: "project", message: expect.stringContaining("ice.subagents.allowedRoles") }),
+		]);
+		expect(snapshot.diagnostics.some((diagnostic) => diagnostic.code === "ice_policy_error")).toBe(false);
+		expect(field(snapshot, "ice.subagents.enabled").effectiveValue).toBe(true);
+		expect(field(snapshot, "ice.subagents.maxConcurrent").effectiveValue).toBe(4);
 	});
 
 	it("reports project precedence and persists global and project values across fresh managers", async () => {
@@ -147,22 +190,23 @@ describe("RPC settings bridge", () => {
 	});
 
 	it("projects deny-first ICE settings instead of displaying a permissive value", async () => {
-		const manager = SettingsManager.inMemory({
-			ice: {
-				subagents: { enabled: false, allowedRoles: ["explore"], restrictions: { denyRoles: ["explore"] } },
-			},
-		});
-		manager.setIceSettingsValue("project", {
-			subagents: { enabled: true, allowedRoles: [], restrictions: { denyRoles: [] } },
-		} as never);
+		const manager = SettingsManager.inMemory({ ice: { subagents: { enabled: false } } });
+		manager.setIceSettingsValue("project", { subagents: { enabled: true } });
 		await manager.flush();
 		const snapshot = createRpcSettingsSnapshot(createContext(manager));
-		expect(field(snapshot, "ice.subagents.enabled").effectiveValue).toBe(false);
-		expect(field(snapshot, "ice.subagents.allowedRoles").effectiveValue).toEqual(["explore"]);
+		expect(field(snapshot, "ice.subagents.enabled")).toMatchObject({
+			effectiveValue: false,
+			effectiveSource: "global",
+		});
+
+		const invalid = SettingsManager.inMemory({ ice: { subagents: { maxDepth: 9 } } });
+		expect(field(createRpcSettingsSnapshot(createContext(invalid)), "ice.subagents.enabled").effectiveValue).toBe(
+			false,
+		);
 	});
 
 	it("attributes malformed global and project ICE policies to their actual source", async () => {
-		const invalidIce = { subagents: { defaults: { maxOutputBytes: "not-a-number" } } } as never;
+		const invalidIce = { subagents: { maxConcurrent: "not-a-number" } } as never;
 		const globalInvalid = SettingsManager.inMemory({ ice: invalidIce });
 		const globalSnapshot = createRpcSettingsSnapshot(createContext(globalInvalid));
 		expect(globalSnapshot.diagnostics).toContainEqual({
@@ -332,14 +376,43 @@ describe("RPC settings bridge", () => {
 		).rejects.toMatchObject({ code: "persistence_failed", scope: "global" });
 	});
 
-	it("labels the subagent result byte cap as an output authority", () => {
-		const settingsManager = SettingsManager.inMemory();
-		const snapshot = createRpcSettingsSnapshot(
-			createContext(settingsManager, { getExtensionSettings: () => [createExtensionSettings()] }),
-		);
+	it("does not expose legacy subagent keys as writable settings", async () => {
+		const context = createContext(SettingsManager.inMemory());
+		await expect(
+			applyRpcSetting(context, { key: "ice.subagents.concurrency.max", scope: "global", value: 4 }),
+		).rejects.toMatchObject({ code: "unknown_key" });
+	});
 
-		const bytes = field(snapshot, "ice.subagents.defaults.maxOutputBytes");
-		expect(bytes.label).toBe("Subagent result size cap");
-		expect(bytes.description).toMatch(/not model tokens or cost/i);
+	it("reads and writes compaction budgets, branch summary, and global-only preferences", async () => {
+		const manager = SettingsManager.inMemory();
+		const context = createContext(manager);
+		const defaults = createRpcSettingsSnapshot(context);
+		expect(field(defaults, "compaction.reserveTokens").effectiveValue).toBe(16384);
+		expect(field(defaults, "compaction.keepRecentTokens").effectiveValue).toBe(20000);
+		expect(field(defaults, "branchSummary.skipPrompt").effectiveValue).toBe(false);
+		expect(field(defaults, "httpIdleTimeoutMs").effectiveValue).toBe(300000);
+		expect(field(defaults, "toolStyle").hostOnly).toBe(true);
+
+		const updated = await applyRpcSetting(context, { key: "compaction.reserveTokens", scope: "global", value: 8000 });
+		expect(field(updated, "compaction.reserveTokens").effectiveValue).toBe(8000);
+		expect(manager.getCompactionReserveTokens()).toBe(8000);
+		await applyRpcSetting(context, { key: "branchSummary.skipPrompt", scope: "project", value: true });
+		expect(manager.getBranchSummarySkipPrompt()).toBe(true);
+		await applyRpcSetting(context, { key: "favoriteModels", scope: "global", value: ["local/a", "local/b"] });
+		expect(manager.getFavoriteModels()).toEqual(["local/a", "local/b"]);
+		await applyRpcSetting(context, { key: "toolStyle", scope: "global", value: "boxed" });
+		expect(manager.getToolStyle()).toBe("boxed");
+
+		await expect(
+			applyRpcSetting(context, { key: "compaction.keepRecentTokens", scope: "global", value: 0 }),
+		).rejects.toMatchObject({ code: "out_of_range" });
+		await expect(
+			applyRpcSetting(context, { key: "toolStyle", scope: "project", value: "boxed" }),
+		).rejects.toMatchObject({ code: "scope_not_supported" });
+		await expect(
+			applyRpcSetting(context, { key: "toolStyle", scope: "global", value: "fancy" }),
+		).rejects.toMatchObject({
+			code: "invalid_option",
+		});
 	});
 });

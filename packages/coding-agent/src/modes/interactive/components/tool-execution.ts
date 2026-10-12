@@ -1,18 +1,57 @@
-import { Box, type Component, Container, getCapabilities, Image, Spacer, Text, type TUI } from "@zykairotis/ice-tui";
+import {
+	Box,
+	type Component,
+	Container,
+	getCapabilities,
+	Image,
+	Spacer,
+	Text,
+	type TUI,
+	truncateToWidth,
+	wrapTextWithAnsi,
+} from "@zykairotis/ice-tui";
 import type { ToolDefinition, ToolRenderContext } from "../../../core/extensions/types.ts";
 import { createAllToolDefinitions, type ToolName } from "../../../core/tools/index.ts";
 import { getTextOutput as getRenderedTextOutput } from "../../../core/tools/render-utils.ts";
+import { stripAnsi } from "../../../utils/ansi.ts";
 import { convertToPng } from "../../../utils/image-convert.ts";
 import { createDefaultAppearance } from "../appearance/appearance-defaults.ts";
 import type { ToolAppearance } from "../appearance/appearance-types.ts";
 import { applyTextPresentation, toolStateBackground } from "../appearance/text-presentation.ts";
+import { sym } from "../theme/symbols.ts";
 import { theme } from "../theme/theme.ts";
+import { renderDiff } from "./diff.ts";
+import { COMPACT_TOOL_MAX_WIDTH, resultTextLines, summarizeToolResult } from "./tool-summary.ts";
+import { expandHint, linkToolToggle, linkToolToggleLine } from "./tool-toggle-link.ts";
 
 export interface ToolExecutionOptions {
 	showImages?: boolean;
 	imageWidthCells?: number;
 	/** Optional appearance override; defaults reproduce current rendering. */
 	toolsAppearance?: ToolAppearance;
+	/**
+	 * Render as a bullet row with a one-line outcome under a gutter instead of a
+	 * padded background box. Full renderer output appears only when expanded.
+	 */
+	compact?: boolean;
+}
+
+export type ToolExecutionState = "pending" | "success" | "error";
+
+/** Collapsed compact rows: live tail while running, head on error or completion, renderer preview otherwise. */
+const COMPACT_RUNNING_TAIL_LINES = 3;
+const COMPACT_ERROR_HEAD_LINES = 5;
+const COMPACT_OUTPUT_HEAD_LINES = 3;
+const COMPACT_PREVIEW_LINES = 5;
+const COMPACT_DIFF_PREVIEW_LINES = 14;
+
+function trimBlankLines(lines: string[]): string[] {
+	const isBlank = (line: string) => stripAnsi(line).trim() === "";
+	let start = 0;
+	let end = lines.length;
+	while (start < end && isBlank(lines[start]!)) start++;
+	while (end > start && isBlank(lines[end - 1]!)) end--;
+	return lines.slice(start, end);
 }
 
 export class ToolExecutionComponent extends Container {
@@ -26,6 +65,8 @@ export class ToolExecutionComponent extends Container {
 	private imageSpacers: Spacer[] = [];
 	private toolName: string;
 	private toolCallId: string;
+	/** The cell a click on this row toggles: itself, or the group that lays it out. */
+	private toggleId: string;
 	private args: any;
 	private expanded = false;
 	private showImages: boolean;
@@ -45,6 +86,10 @@ export class ToolExecutionComponent extends Container {
 	};
 	private convertedImages: Map<number, { data: string; mimeType: string }> = new Map();
 	private hideComponent = false;
+	private readonly compact: boolean;
+	private leadingSpacer = true;
+	/** Lines of a finished cell, reused until a state change; fullscreen scrolling re-renders every cell per frame. */
+	private renderCache?: { width: number; lines: string[] };
 
 	constructor(
 		toolName: string,
@@ -58,6 +103,7 @@ export class ToolExecutionComponent extends Container {
 		super();
 		this.toolName = toolName;
 		this.toolCallId = toolCallId;
+		this.toggleId = toolCallId;
 		this.args = args;
 		this.toolDefinition = toolDefinition;
 		this.builtInToolDefinition = createAllToolDefinitions(cwd)[toolName as ToolName];
@@ -66,6 +112,7 @@ export class ToolExecutionComponent extends Container {
 		this.toolsAppearance = options.toolsAppearance ?? null;
 		this.ui = ui;
 		this.cwd = cwd;
+		this.compact = options.compact ?? false;
 
 		this.addChild(new Spacer(1));
 
@@ -257,9 +304,178 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	getToolCallId(): string {
+		return this.toolCallId;
+	}
+
+	setToggleId(id: string): void {
+		this.toggleId = id;
+		this.renderCache = undefined;
+	}
+
+	getToolName(): string {
+		return this.toolName;
+	}
+
+	getArgs(): unknown {
+		return this.args;
+	}
+
+	getState(): ToolExecutionState {
+		return this.isPartial ? "pending" : this.result?.isError ? "error" : "success";
+	}
+
+	/** Tools with renderShell "self" draw their own framing and never merge into compact groups. */
+	rendersOwnShell(): boolean {
+		return this.hasRendererDefinition() && this.getRenderShell() === "self";
+	}
+
+	/** Grouped members omit the blank line that separates standalone transcript items. */
+	setLeadingSpacer(enabled: boolean): void {
+		this.leadingSpacer = enabled;
+		this.renderCache = undefined;
+	}
+
+	/** State-specific glyph: pending arrow, completed check, or failure cross. */
+	renderBullet(): string {
+		const state = this.getState();
+		const color = state === "error" ? "error" : state === "success" ? "success" : "muted";
+		return theme.fg(color, sym(state === "error" ? "error" : state === "success" ? "toolSuccess" : "toolPending"));
+	}
+
+	/** Diff text of a finished edit, when the result carries one. */
+	private getEditDiff(): string | undefined {
+		const details = this.result?.details;
+		return details && typeof details === "object" && "diff" in details && typeof details.diff === "string"
+			? details.diff
+			: undefined;
+	}
+
+	/** Call title lines, without bullet or body. Shell calls read "Ran <command>", edits "Edited <path> (+a -r)". */
+	renderTitleLines(width: number): string[] {
+		const editPath =
+			this.toolName === "edit" && this.args && typeof this.args === "object" && "path" in this.args
+				? this.args.path
+				: undefined;
+		if (this.compact && typeof editPath === "string") {
+			const diff = this.getEditDiff();
+			const verb = this.toolTitle(this.isPartial ? "Edit" : this.result?.isError ? "Edit failed" : "Edited");
+			const stats =
+				diff && this.result ? ` ${theme.fg("dim", `(${summarizeToolResult("edit", this.result)})`)}` : "";
+			return [
+				truncateToWidth(`${verb} ${theme.fg("toolTitle", editPath)}${stats}`, Math.max(1, width), sym("ellipsis")),
+			];
+		}
+		const command =
+			this.toolName === "bash" && this.args && typeof this.args === "object" && "command" in this.args
+				? this.args.command
+				: undefined;
+		if (this.compact && typeof command === "string" && command.trim()) {
+			const [firstLine = "", ...rest] = command.trim().split("\n");
+			const verb = this.toolTitle(this.isPartial && this.executionStarted ? "Running" : "Ran");
+			if (this.expanded) {
+				return wrapTextWithAnsi(`${verb} ${theme.fg("toolTitle", command.trim())}`, Math.max(1, width));
+			}
+			const text = rest.length > 0 ? `${firstLine} ${sym("ellipsis")}` : firstLine;
+			return [truncateToWidth(`${verb} ${theme.fg("toolTitle", text)}`, Math.max(1, width), sym("ellipsis"))];
+		}
+		const component = this.callRendererComponent ?? this.createCallFallback();
+		const lines = component.render(Math.max(1, width));
+		return lines.length > 0 ? lines : [this.toolTitle(this.toolName)];
+	}
+
+	/**
+	 * Output lines for a collapsed row: live tail while running, head on error,
+	 * the first output lines for shell commands, otherwise the tool's own
+	 * collapsed renderer preview (edit diffs, subagent status) capped in height.
+	 */
+	renderCollapsedBodyLines(width: number): string[] {
+		if (!this.result) return [];
+		const lines = resultTextLines(this.result);
+		const dim = (text: string) => theme.fg("dim", text);
+		const more = (hidden: number) =>
+			linkToolToggleLine(dim(`${sym("ellipsis")} +${hidden} lines (${expandHint()} to expand)`), this.toggleId);
+		if (this.isPartial) {
+			const tail = lines.slice(-COMPACT_RUNNING_TAIL_LINES);
+			const hidden = lines.length - tail.length;
+			return [...(hidden > 0 ? [dim(`${sym("ellipsis")} +${hidden} lines`)] : []), ...tail.map(dim)];
+		}
+		if (this.result.isError) {
+			const head = lines.slice(0, COMPACT_ERROR_HEAD_LINES);
+			const hidden = lines.length - head.length;
+			return [...head.map((line) => theme.fg("error", line)), ...(hidden > 0 ? [more(hidden)] : [])];
+		}
+		const diff = this.toolName === "edit" ? this.getEditDiff() : undefined;
+		if (diff) {
+			const diffLines = trimBlankLines(renderDiff(diff, { width }).split("\n"));
+			return diffLines.length > COMPACT_DIFF_PREVIEW_LINES
+				? [...diffLines.slice(0, COMPACT_DIFF_PREVIEW_LINES), more(diffLines.length - COMPACT_DIFF_PREVIEW_LINES)]
+				: diffLines;
+		}
+		const details = this.result.details;
+		if (details && typeof details === "object" && "backgroundTaskId" in details) {
+			return [dim(summarizeToolResult(this.toolName, this.result))];
+		}
+		if (this.toolName !== "bash" && this.resultRendererComponent) {
+			const preview = trimBlankLines(this.resultRendererComponent.render(Math.max(1, width)));
+			if (preview.length > 0) {
+				const limit =
+					this.toolName === "edit" || this.toolName === "write"
+						? COMPACT_DIFF_PREVIEW_LINES
+						: COMPACT_PREVIEW_LINES;
+				return preview.length > limit ? [...preview.slice(0, limit), more(preview.length - limit)] : preview;
+			}
+		}
+		if (lines.length === 0) return [dim(summarizeToolResult(this.toolName, this.result))];
+		const head = lines.slice(0, COMPACT_OUTPUT_HEAD_LINES);
+		return [...head.map(dim), ...(lines.length > head.length ? [more(lines.length - head.length)] : [])];
+	}
+
+	/** Bullet row, then the collapsed outcome (or the full result when expanded) under a gutter. */
+	renderCompact(width: number): string[] {
+		if (!this.expanded) width = Math.min(width, COMPACT_TOOL_MAX_WIDTH);
+		const lines: string[] = this.leadingSpacer ? [""] : [];
+		const titleLines = this.renderTitleLines(width - 2);
+		lines.push(`${this.renderBullet()} ${titleLines[0]}`, ...titleLines.slice(1).map((line) => `  ${line}`));
+
+		const bodyWidth = Math.max(1, width - 4);
+		const editDiff = this.toolName === "edit" ? this.getEditDiff() : undefined;
+		const body = trimBlankLines(
+			this.expanded && this.result && !this.result.isError && editDiff
+				? renderDiff(editDiff, { width: bodyWidth }).split("\n")
+				: this.expanded && this.result && this.toolName !== "edit"
+					? (this.resultRendererComponent?.render(bodyWidth) ??
+						resultTextLines(this.result).map((line) => this.toolOutput(line)))
+					: this.renderCollapsedBodyLines(bodyWidth),
+		);
+		body.forEach((line, index) => {
+			const prefix = index === 0 ? `  ${theme.fg("dim", sym("gutter"))} ` : "    ";
+			lines.push(prefix + truncateToWidth(line, bodyWidth, theme.fg("dim", sym("ellipsis"))));
+		});
+
+		if (this.expanded) {
+			for (const image of this.imageComponents) lines.push(...image.render(width));
+		}
+		return lines;
+	}
+
 	override render(width: number): string[] {
+		// Running cells redraw live output, so only finished cells are cached.
+		if (this.isPartial) return linkToolToggle(this.renderCell(width), this.toggleId);
+		if (this.renderCache?.width !== width) {
+			this.renderCache = { width, lines: linkToolToggle(this.renderCell(width), this.toggleId) };
+		}
+		return this.renderCache.lines;
+	}
+
+	private renderCell(width: number): string[] {
 		if (this.hideComponent) {
 			return [];
+		}
+
+		// Edit draws its own diff shell; compact mode renders the diff under the gutter instead.
+		if (this.compact && (!this.rendersOwnShell() || this.toolName === "edit")) {
+			return this.renderCompact(width);
 		}
 
 		if (this.hasRendererDefinition() && this.getRenderShell() === "self") {
@@ -290,6 +506,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private updateDisplay(): void {
+		this.renderCache = undefined;
 		const state = this.isPartial ? "pending" : this.result?.isError ? "error" : "success";
 		const bgFn = (text: string): string => this.toolBg(state, text);
 

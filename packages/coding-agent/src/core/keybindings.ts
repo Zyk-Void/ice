@@ -19,20 +19,38 @@ export interface AppKeybindings {
 	"app.model.cycleForward": true;
 	"app.model.cycleBackward": true;
 	"app.model.select": true;
+	"app.model.toggleFavorite": true;
 	"app.tools.expand": true;
+	"app.tools.collapse": true;
+	"app.tools.expandLast": true;
+	"app.notices.show": true;
+	"app.notices.dismiss": true;
+	"app.notices.clear": true;
+	"app.notices.copy": true;
+	"app.tasks.background": true;
+	"app.shells.open": true;
+	"app.shells.stop": true;
+	"app.shells.follow": true;
+	"app.shortcuts.show": true;
 	"app.subagents.attach": true;
-	"app.subagents.expand": true;
-	"app.subagents.inspect": true;
 	"app.subagents.open": true;
 	"app.subagents.parent": true;
 	"app.subagents.next": true;
 	"app.subagents.previous": true;
 	"app.subagents.takeControl": true;
+	"app.agents.hub": true;
+	"app.agents.stop": true;
+	"app.agents.delete": true;
+	"app.agents.approve": true;
+	"app.agents.deny": true;
+	"app.agents.approveSession": true;
+	"app.agents.nextApproval": true;
 	"app.thinking.toggle": true;
 	"app.session.toggleNamedFilter": true;
 	"app.editor.external": true;
 	"app.message.copy": true;
 	"app.message.followUp": true;
+	"app.message.sendNow": true;
 	"app.message.dequeue": true;
 	"app.clipboard.pasteImage": true;
 	"app.session.new": true;
@@ -91,15 +109,66 @@ export const KEYBINDINGS = {
 		description: "Cycle to previous model",
 	},
 	"app.model.select": { defaultKeys: "ctrl+l", description: "Open model selector" },
+	"app.model.toggleFavorite": { defaultKeys: "shift+f", description: "Toggle favorite in model selector" },
 	"app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output" },
+	"app.tools.collapse": { defaultKeys: "alt+o", description: "Collapse all tool output" },
+	"app.tools.expandLast": { defaultKeys: "shift+alt+o", description: "Toggle the newest tool call" },
+	"app.notices.show": { defaultKeys: "f2", description: "Show warnings and notices" },
+	"app.notices.dismiss": { defaultKeys: "d", description: "Notices panel: dismiss the selected notice" },
+	"app.notices.clear": {
+		defaultKeys: "x",
+		description: "Notices panel: dismiss every notice in the selected filter",
+	},
+	"app.notices.copy": { defaultKeys: "c", description: "Notices panel: copy the selected notice" },
+	"app.shortcuts.show": {
+		defaultKeys: "?",
+		description: "Show keyboard shortcuts (only when the editor is empty)",
+	},
+	"app.tasks.background": {
+		defaultKeys: "ctrl+b",
+		description: "Move a running subagent wait to the background (falls through when nothing can be backgrounded)",
+	},
+	"app.shells.open": {
+		defaultKeys: "down",
+		description:
+			"Open the Shells panel from an empty editor while background shells run (otherwise moves the cursor)",
+	},
+	"app.shells.stop": { defaultKeys: "x", description: "Shells panel: stop the selected background shell" },
+	"app.shells.follow": {
+		defaultKeys: "f",
+		description: "Shells panel: follow the selected shell's live output in the foreground",
+	},
 	"app.subagents.attach": { defaultKeys: "right", description: "Attach to live subagent" },
-	"app.subagents.expand": { defaultKeys: "space", description: "Expand subagent details" },
-	"app.subagents.inspect": { defaultKeys: "ctrl+enter", description: "Inspect durable subagent job" },
-	"app.subagents.open": { defaultKeys: "ctrl+shift+a", description: "Open subagent chooser" },
-	"app.subagents.parent": { defaultKeys: "alt+left", description: "Return to parent session" },
-	"app.subagents.next": { defaultKeys: "alt+right", description: "Show next subagent view" },
-	"app.subagents.previous": { defaultKeys: "shift+alt+left", description: "Show previous subagent view" },
+	"app.subagents.open": { defaultKeys: "ctrl+shift+a", description: "Open the Agent Hub" },
+	"app.subagents.parent": { defaultKeys: "shift+alt+left", description: "Return to the main agent view" },
+	"app.subagents.next": {
+		defaultKeys: "alt+right",
+		description: "Show the next agent view (only while subagents exist and the editor is empty)",
+	},
+	"app.subagents.previous": {
+		defaultKeys: "alt+left",
+		description: "Show the previous agent view (only while subagents exist and the editor is empty)",
+	},
 	"app.subagents.takeControl": { defaultKeys: "ctrl+shift+enter", description: "Take control of live subagent" },
+	"app.agents.hub": {
+		defaultKeys: "left",
+		description: "Open the Agent Hub from an empty editor while subagents exist; closes it inside the Hub",
+	},
+	"app.agents.stop": { defaultKeys: "s", description: "Agent Hub: stop the selected subagent's current turn" },
+	"app.agents.delete": { defaultKeys: "shift+d", description: "Agent Hub: delete the selected stopped subagent" },
+	"app.agents.approve": {
+		defaultKeys: "y",
+		description: "Agent Hub: approve the selected pending subagent request once",
+	},
+	"app.agents.deny": { defaultKeys: "n", description: "Agent Hub: deny the selected pending subagent request" },
+	"app.agents.approveSession": {
+		defaultKeys: "a",
+		description: "Agent Hub: always allow the selected request's rule for that subagent",
+	},
+	"app.agents.nextApproval": {
+		defaultKeys: "tab",
+		description: "Agent Hub: select the next pending subagent request and its subagent",
+	},
 
 	"app.thinking.toggle": {
 		defaultKeys: "ctrl+t",
@@ -120,6 +189,10 @@ export const KEYBINDINGS = {
 	"app.message.followUp": {
 		defaultKeys: "alt+enter",
 		description: "Queue follow-up message",
+	},
+	"app.message.sendNow": {
+		defaultKeys: "ctrl+enter",
+		description: "Send now: interrupt the current turn (running commands and subagents keep going in the background)",
 	},
 	"app.message.dequeue": {
 		defaultKeys: "alt+up",
@@ -268,6 +341,7 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	toggleSessionNamedFilter: "app.session.toggleNamedFilter",
 	externalEditor: "app.editor.external",
 	followUp: "app.message.followUp",
+	sendNow: "app.message.sendNow",
 	dequeue: "app.message.dequeue",
 	pasteImage: "app.clipboard.pasteImage",
 	newSession: "app.session.new",

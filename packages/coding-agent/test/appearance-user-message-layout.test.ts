@@ -44,6 +44,16 @@ describe("user message layout width invariant (F0)", () => {
 		}
 	}
 
+	test("default user-message padding keeps text centered in its background row", () => {
+		const appearance = createDefaultAppearance().userMessage;
+		expect(appearance.paddingY).toBe(0);
+		const centered = renderWith(appearance, 30);
+		const tight = renderWith({ ...appearance, paddingY: 0 }, 30);
+		expect(centered).toEqual(tight);
+		const padded = renderWith({ ...appearance, paddingY: 1 }, 30);
+		expect(padded).toHaveLength(centered.length + 2);
+	});
+
 	test("padding variants preserve the width invariant", () => {
 		for (const paddingX of [0, 1, 2, 4]) {
 			const lines = renderWith(

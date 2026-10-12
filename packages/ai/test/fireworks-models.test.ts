@@ -18,21 +18,21 @@ afterEach(() => {
 });
 
 describe("Fireworks models", () => {
-	it("registers the default Kimi K2.6 model via Anthropic-compatible Messages API", () => {
-		const model = getModel("fireworks", "accounts/fireworks/models/kimi-k2p6");
+	it("registers the GLM 5.3 model via Anthropic-compatible Messages API", () => {
+		const model = getModel("fireworks", "accounts/fireworks/models/glm-5p3");
 
 		expect(model).toBeDefined();
 		expect(model.api).toBe("anthropic-messages");
 		expect(model.provider).toBe("fireworks");
 		expect(model.baseUrl).toBe("https://api.fireworks.ai/inference");
 		expect(model.reasoning).toBe(true);
-		expect(model.input).toEqual(["text", "image"]);
-		expect(model.contextWindow).toBe(262000);
-		expect(model.maxTokens).toBe(262000);
+		expect(model.input).toEqual(["text"]);
+		expect(model.contextWindow).toBe(1048573);
+		expect(model.maxTokens).toBe(262144);
 		expect(model.cost).toEqual({
-			input: 0.95,
-			output: 4,
-			cacheRead: 0.16,
+			input: 1.4,
+			output: 4.4,
+			cacheRead: 0.26,
 			cacheWrite: 0,
 		});
 	});
@@ -46,9 +46,9 @@ describe("Fireworks models", () => {
 		expect(model?.input).toEqual(["text"]);
 	});
 
-	it("aligns GLM 5.2 Fast with GLM 5.2's OpenAI-compatible config", () => {
-		const base = getModel("fireworks", "accounts/fireworks/models/glm-5p2");
-		const fast = getModel("fireworks", "accounts/fireworks/routers/glm-5p2-fast");
+	it("aligns Kimi K3 Fast with Kimi K3's OpenAI-compatible config", () => {
+		const base = getModel("fireworks", "accounts/fireworks/models/kimi-k3");
+		const fast = getModel("fireworks", "accounts/fireworks/routers/kimi-k3-fast");
 
 		expect(fast.api).toBe(base.api);
 		expect(fast.baseUrl).toBe(base.baseUrl);
@@ -113,7 +113,7 @@ describe("Fireworks models", () => {
 	});
 
 	it("sets Fireworks-specific compat for session affinity and unsupported tool fields", () => {
-		const model = getModel("fireworks", "accounts/fireworks/models/kimi-k2p6");
+		const model = getModel("fireworks", "accounts/fireworks/models/glm-5p3");
 
 		expect(model.compat).toBeDefined();
 		expect(model.compat?.sendSessionAffinityHeaders).toBe(true);

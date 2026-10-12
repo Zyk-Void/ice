@@ -298,6 +298,6 @@ ice --exclude-tools ask_question
 
 Ice keeps the core small and pushes workflow-specific behavior into extensions, skills, prompt templates, and packages.
 
-It intentionally does not include built-in MCP, sub-agents, permission popups, plan mode, to-dos, or background bash. You can build or install those workflows as extensions or packages, or use external tools such as containers and tmux.
+The upstream Ice core intentionally leaves workflows such as MCP, subagents, permission prompts, plan mode, to-dos, and background bash to extensions or packages. This statement describes the core, not the full ICE distribution: the `ice` launcher adds ICE Subagents V2 and guarded plan/build modes. MCP and other external effects remain explicitly gated. See [Subagents V2](subagents-v2.md) and [Security](security.md) for the ICE-specific behavior and limits.
 
-For the full rationale, read the [blog post](https://mariozechner.at/posts/2025-11-30-ice-coding-agent/).
+For the upstream core rationale, read the [blog post](https://mariozechner.at/posts/2025-11-30-ice-coding-agent/).

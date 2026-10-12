@@ -22,6 +22,20 @@ Ice has two summarization mechanisms:
 
 Both use the same structured summary format and track file operations cumulatively. Compaction and branch-summary requests use fresh routing session IDs and, where supported by the provider, disable prompt-cache writes because these one-off prompts are unlikely to be reused.
 
+### Generated Summary Validation
+
+Native summarization requests strip tool definitions and tool selection without mutating the caller's context or options. History, split-turn, and branch summarization accept only a completed response (`stopReason: "stop"`) with nonblank text and no tool-call blocks. Truncated (`"length"`), tool-using, empty, errored, and aborted responses are not saved as summaries. A cancellation observed after the provider returns is also treated as aborted. Validation failures are not automatically retried; configured transient provider-error retries remain separate.
+
+This validates completion and content shape, not factual accuracy. Extension-provided summaries bypass native generation and remain the extension's responsibility.
+
+### Cancellation and Navigation Ownership
+
+Manual and automatic compaction retain the existing single compaction lock. Each compaction or tree-navigation operation owns a local abort controller across authentication, extension hooks, and provider requests. Authentication receives the same signal; cancellation is rechecked after awaited work and before changing context. Custom stream authentication fallback cannot swallow cancellation.
+
+Tree navigation is rejected while compaction or another tree navigation is active. Compaction also refuses to start during branch summarization. Cancelling an awaiting tree hook or authentication step leaves the leaf unchanged and writes no summary. Automatic compaction cancellation during start callbacks stops hooks/provider dispatch; cancellation during post-save hooks or completion events prevents retry/continuation. A checkpoint already saved before cancellation remains in history—cancellation is not rollback.
+
+These guards cover native operation entry points, not arbitrary direct mutations of `SessionManager` by extensions. They do not establish multi-process session-file locking.
+
 ## Compaction
 
 ### When It Triggers

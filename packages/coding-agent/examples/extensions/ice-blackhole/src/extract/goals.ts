@@ -55,7 +55,8 @@ export const extractGoals = (blocks: NormalizedBlock[]): string[] => {
 		if (b.kind !== "user") continue;
 		const rawLines = nonEmptyLines(b.text);
 		const truncated = truncateAtTemplate(rawLines);
-		const lines = collapseSkillLines(truncated.filter(isSubstantiveGoal))
+		const lines = collapseSkillLines(truncated)
+			.filter(isSubstantiveGoal)
 			.map(stripLeadingBullet)
 			.filter((l: string) => l.length > 5);
 		if (lines.length === 0) continue;
@@ -77,11 +78,14 @@ export const extractGoals = (blocks: NormalizedBlock[]): string[] => {
 
 	// Only emit the [Scope change] marker when we actually captured bullets.
 	if (latestScopeChange && latestScopeChange.length > 0) {
-		goals.push("[Scope change]");
-		for (const line of latestScopeChange) {
-			goals.push(line + indexSuffix(latestScopeIndex));
+		const changeItems = ["[Scope change]", ...latestScopeChange.map((line) => line + indexSuffix(latestScopeIndex))];
+		if (goals.length + changeItems.length > 8) {
+			goals.splice(8 - changeItems.length);
 		}
+		goals.push(...changeItems);
 	}
 
-	return goals.slice(0, 8);
+	const result = goals.slice(0, 8);
+	if (result[result.length - 1] === "[Scope change]") result.pop();
+	return result;
 };

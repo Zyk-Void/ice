@@ -122,4 +122,36 @@ describe("Input Event", () => {
 		r = await createRunner(`export default p => p.on("input", async () => {});`);
 		expect(r.hasHandlers("input")).toBe(true);
 	});
+
+	it("exposes the running prompt-blocking handler and reports slow ones", async () => {
+		const r = await createRunner(
+			`export default p => {
+				p.on("input", async () => { globalThis.testVar = "input-running"; });
+				p.on("before_agent_start", () => new Promise((resolve) => { globalThis.release = resolve; }));
+			};`,
+		);
+		const slow: Array<{ event: string; durationMs: number }> = [];
+		r.onSlowHandler(({ event, durationMs }) => slow.push({ event, durationMs }));
+		expect(r.getActiveHandler()).toBeUndefined();
+
+		await r.emitInput("x", undefined, "interactive");
+		expect(r.getActiveHandler()).toBeUndefined();
+
+		let now = 1_000;
+		const realNow = Date.now;
+		Date.now = () => now;
+		try {
+			const pending = r.emitBeforeAgentStart("x", undefined, "system", {} as never);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			expect(r.getActiveHandler()).toMatchObject({ event: "before_agent_start", startedAt: 1_000 });
+			expect(r.getActiveHandler()?.extensionPath).toMatch(/e0\.ts$/);
+			now = 2_500;
+			(globalThis as any).release();
+			await pending;
+		} finally {
+			Date.now = realNow;
+		}
+		expect(r.getActiveHandler()).toBeUndefined();
+		expect(slow).toEqual([{ event: "before_agent_start", durationMs: 1_500 }]);
+	});
 });

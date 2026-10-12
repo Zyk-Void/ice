@@ -62,6 +62,7 @@ This is a test skill.
 			getAppendSystemPrompt: () => [],
 			getAppendSystemPromptSources: () => [],
 			extendResources: () => {},
+			refreshSkillsIfChanged: () => false,
 			reload: async () => {},
 		};
 
@@ -97,6 +98,7 @@ This is a test skill.
 			getAppendSystemPrompt: () => [],
 			getAppendSystemPromptSources: () => [],
 			extendResources: () => {},
+			refreshSkillsIfChanged: () => false,
 			reload: async () => {},
 		};
 

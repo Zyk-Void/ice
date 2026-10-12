@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -14,6 +14,7 @@ import {
 	enqueuePendingRemember,
 	extractMessageText,
 	loadIceCogneeConfig,
+	MAX_TRACES_PER_TURN,
 	noteCircuitFailure,
 	PROJECT_DATASET_SENTINEL,
 	readPendingRemember,
@@ -26,10 +27,15 @@ import {
 	shouldOwnCompactionSummary,
 	truncateForCapture,
 	updatePendingRememberState,
+	writePrivateFileAtomic,
 } from "../src/ice-cognee.ts";
 import { type CogneeClientConfig, CogneeError, createCogneeClient } from "../src/ice-cognee-client.ts";
 import { parseEnvFile } from "../src/ice-cognee-env.ts";
-import { readCogneeObservations } from "../src/ice-cognee-observer.ts";
+import {
+	appendCogneeObservation,
+	MAX_OBSERVATION_FILE_BYTES,
+	readCogneeObservations,
+} from "../src/ice-cognee-observer.ts";
 
 function config(overrides: Partial<CogneeClientConfig> = {}): CogneeClientConfig {
 	return {
@@ -263,6 +269,18 @@ describe("ice-cognee state helpers", () => {
 			expect(await enqueuePendingRemember(directory, first, 1)).toBe(true);
 			expect(await enqueuePendingRemember(directory, second, 1)).toBe(false);
 			expect(await readPendingRemember(directory)).toEqual([first]);
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("removes the temporary file when an atomic write fails", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "ice-cognee-atomic-"));
+		try {
+			// A directory at the target makes rename fail after the temporary file exists.
+			mkdirSync(join(directory, "target.json"));
+			await expect(writePrivateFileAtomic(join(directory, "target.json"), "{}\n")).rejects.toThrow();
+			expect(readdirSync(directory)).toEqual(["target.json"]);
 		} finally {
 			rmSync(directory, { recursive: true, force: true });
 		}
@@ -877,8 +895,79 @@ describe("ice-cognee extension hooks", () => {
 			expect(JSON.stringify(traceBody)).not.toContain("output-secret");
 			expect(JSON.stringify(traceBody)).toContain("[REDACTED]");
 			expect(cogneeSessionId("session-1")).toBe("ice_session-1");
+			expect(cogneeSessionId("019a3c7e-5b2f-7d10-9a1e-3f2c8d4b6e01")).toBe(
+				"ice_019a3c7e-5b2f-7d10-9a1e-3f2c8d4b6e01",
+			);
+			// Ids that sanitizing or truncating would merge stay distinct.
+			expect(cogneeSessionId("a/b")).not.toBe(cogneeSessionId("a:b"));
+			expect(cogneeSessionId(`${"x".repeat(130)}1`)).not.toBe(cogneeSessionId(`${"x".repeat(130)}2`));
+			expect(cogneeSessionId("y".repeat(300)).length).toBeLessThanOrEqual(124);
 			expect(extractMessageText({ role: "assistant", content: [{ type: "text", text: "hi" }] })).toBe("hi");
 			expect(truncateForCapture("x".repeat(20), 10)).toContain("…[truncated]");
+		} finally {
+			rmSync(storageDir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("ice-cognee capture bounds", () => {
+	it("caps tool traces per prompt and resets the cap on the next prompt", async () => {
+		const storageDir = mkdtempSync(join(tmpdir(), "ice-cognee-trace-cap-"));
+		try {
+			const runtime = extensionHookFixture(storageDir);
+			await runtime.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, runtime.ctx);
+			const traces = () =>
+				runtime.requestBodies.filter(
+					(request) => request.url.includes("/remember/entry") && request.body?.includes('"trace"'),
+				).length;
+			const runTurn = async (prompt: string, tools: number) => {
+				await runtime.handlers.get("before_agent_start")?.({ type: "before_agent_start", prompt }, runtime.ctx);
+				for (let i = 0; i < tools; i++) {
+					await runtime.handlers.get("tool_result")?.(
+						{
+							type: "tool_result",
+							toolCallId: `${prompt}-${i}`,
+							toolName: "read",
+							input: { path: `f${i}` },
+							content: [{ type: "text", text: "x" }],
+							isError: false,
+						},
+						runtime.ctx,
+					);
+				}
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			};
+			await runTurn("first", MAX_TRACES_PER_TURN + 5);
+			expect(traces()).toBe(MAX_TRACES_PER_TURN);
+			await runTurn("second", 2);
+			expect(traces()).toBe(MAX_TRACES_PER_TURN + 2);
+		} finally {
+			rmSync(storageDir, { recursive: true, force: true });
+		}
+	});
+
+	it("rotates the observation log and still shows recent events after rotation", async () => {
+		const storageDir = mkdtempSync(join(tmpdir(), "ice-cognee-observe-rotate-"));
+		try {
+			const event = (id: string) => ({
+				id,
+				at: "2026-10-10T00:00:00.000Z",
+				operation: "recall" as const,
+				phase: "started" as const,
+			});
+			const filler = `${JSON.stringify(event("old"))}\n`;
+			writeFileSync(
+				join(storageDir, "observations.jsonl"),
+				filler.repeat(Math.ceil(MAX_OBSERVATION_FILE_BYTES / filler.length)),
+			);
+			await appendCogneeObservation(storageDir, event("trigger"));
+			expect(existsSync(join(storageDir, "observations.jsonl.1"))).toBe(true);
+			expect(existsSync(join(storageDir, "observations.jsonl"))).toBe(false);
+			await appendCogneeObservation(storageDir, event("fresh"));
+			const events = await readCogneeObservations(storageDir);
+			expect(events.length).toBe(500);
+			expect(events.at(-1)?.id).toBe("fresh");
+			expect(events.at(-2)?.id).toBe("trigger");
 		} finally {
 			rmSync(storageDir, { recursive: true, force: true });
 		}
@@ -913,6 +1002,35 @@ describe("ice-cognee lifecycle regressions", () => {
 			releaseHealth(new Response("ok", { status: 200 }));
 			await waitFor(() => runtime.notifications.some((message) => message.includes("Cognee Memory Connected")));
 			expect(runtime.statuses.at(-1)).toContain("cognee:ice ok");
+		} finally {
+			rmSync(storageDir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps remembering after repeated recall failures open the recall breaker", async () => {
+		const storageDir = mkdtempSync(join(tmpdir(), "ice-cognee-split-circuit-"));
+		const calls: string[] = [];
+		try {
+			const runtime = extensionHookFixture(storageDir, false, {}, async (input) => {
+				const url = String(input);
+				calls.push(url);
+				if (url.endsWith("/recall")) return new Response("down", { status: 500 });
+				return new Response(null, { status: 202 });
+			});
+			await runtime.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, runtime.ctx);
+			for (const prompt of ["first", "second", "third", "fourth"]) {
+				await runtime.handlers.get("before_agent_start")?.(
+					{ type: "before_agent_start", prompt, systemPrompt: "sys" },
+					runtime.ctx,
+				);
+			}
+			// The fourth prompt is skipped by the open recall breaker.
+			expect(calls.filter((url) => url.endsWith("/recall"))).toHaveLength(3);
+			await runtime.handlers.get("session_compact")?.(
+				{ type: "session_compact", compactionEntry: { summary: "compact summary" }, reason: "manual" },
+				runtime.ctx,
+			);
+			await waitFor(() => calls.some((url) => url.endsWith("/remember")));
 		} finally {
 			rmSync(storageDir, { recursive: true, force: true });
 		}

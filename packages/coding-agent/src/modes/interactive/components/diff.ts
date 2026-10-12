@@ -1,4 +1,6 @@
+import { truncateToWidth, visibleWidth } from "@zykairotis/ice-tui";
 import * as Diff from "diff";
+import { createDefaultAppearance } from "../appearance/appearance-defaults.ts";
 import type { DiffAppearance } from "../appearance/appearance-types.ts";
 import { applyTextPresentation } from "../appearance/text-presentation.ts";
 import { theme } from "../theme/theme.ts";
@@ -13,6 +15,48 @@ function diffStyle(kind: keyof DiffAppearance, text: string): string {
 	if (activeDiffAppearance) return applyTextPresentation(activeDiffAppearance[kind], text);
 	const token = kind === "added" ? "toolDiffAdded" : kind === "removed" ? "toolDiffRemoved" : "toolDiffContext";
 	return theme.fg(token, text);
+}
+
+type DiffKind = "added" | "removed" | "context";
+
+const DEFAULT_DIFF_APPEARANCE = createDefaultAppearance().diff;
+
+/** A user-customized diff appearance styles whole rows itself, as before. */
+function customizedAppearance(): DiffAppearance | undefined {
+	return activeDiffAppearance && JSON.stringify(activeDiffAppearance) !== JSON.stringify(DEFAULT_DIFF_APPEARANCE)
+		? activeDiffAppearance
+		: undefined;
+}
+
+/** Row background for a changed line; undefined for context, customized appearances, and non-hex themes. */
+function rowBackground(kind: DiffKind): string | undefined {
+	if (kind === "context" || customizedAppearance()) return undefined;
+	return theme.getDiffBgAnsi(kind, "line");
+}
+
+/** Mark a changed word: a stronger tint on tinted rows, inverse video otherwise. */
+function highlightWord(kind: "added" | "removed", text: string): string {
+	const row = rowBackground(kind);
+	const word = theme.getDiffBgAnsi(kind, "word");
+	return row && word ? `${word}${text}${row}` : theme.inverse(text);
+}
+
+/**
+ * One diff row: a gutter with the line number and sign, then the content. Changed rows on
+ * hex themes get a tinted background across `width` (or the content when no width is given).
+ */
+function renderRow(kind: DiffKind, lineNum: string, content: string, width: number | undefined): string {
+	const sign = kind === "added" ? "+" : kind === "removed" ? "-" : " ";
+	const custom = customizedAppearance();
+	if (custom) return diffStyle(kind, `${lineNum} ${sign} ${content}`);
+	const gutterToken = kind === "added" ? "toolDiffAdded" : kind === "removed" ? "toolDiffRemoved" : "dim";
+	const gutter = theme.fg(gutterToken, `${lineNum} ${sign} `);
+	const row = rowBackground(kind);
+	if (!row) return gutter + diffStyle(kind, content);
+	let line = gutter + content;
+	if (width !== undefined) line = truncateToWidth(line, width, "…");
+	const padding = width === undefined ? 0 : Math.max(0, width - visibleWidth(line));
+	return `${row}${line}${row}${" ".repeat(padding)}\x1b[49m`;
 }
 
 /**
@@ -33,7 +77,7 @@ function replaceTabs(text: string): string {
 }
 
 /**
- * Compute word-level diff and render with inverse on changed parts.
+ * Compute word-level diff and highlight the changed parts.
  * Uses diffWords which groups whitespace with adjacent words for cleaner highlighting.
  * Strips leading whitespace from inverse to avoid highlighting indentation.
  */
@@ -56,7 +100,7 @@ function renderIntraLineDiff(oldContent: string, newContent: string): { removedL
 				isFirstRemoved = false;
 			}
 			if (value) {
-				removedLine += theme.inverse(value);
+				removedLine += highlightWord("removed", value);
 			}
 		} else if (part.added) {
 			let value = part.value;
@@ -68,7 +112,7 @@ function renderIntraLineDiff(oldContent: string, newContent: string): { removedL
 				isFirstAdded = false;
 			}
 			if (value) {
-				addedLine += theme.inverse(value);
+				addedLine += highlightWord("added", value);
 			}
 		} else {
 			removedLine += part.value;
@@ -82,15 +126,16 @@ function renderIntraLineDiff(oldContent: string, newContent: string): { removedL
 export interface RenderDiffOptions {
 	/** File path (unused, kept for API compatibility) */
 	filePath?: string;
+	/** Pad tinted rows to this width (and truncate longer ones) so the background spans the view. */
+	width?: number;
 }
 
 /**
- * Render a diff string with colored lines and intra-line change highlighting.
- * - Context lines: dim/gray
- * - Removed lines: red, with inverse on changed tokens
- * - Added lines: green, with inverse on changed tokens
+ * Render a diff string: a line-number/sign gutter, tinted rows for added and removed lines,
+ * and a stronger tint on changed words of a single-line modification.
  */
-export function renderDiff(diffText: string, _options: RenderDiffOptions = {}): string {
+export function renderDiff(diffText: string, options: RenderDiffOptions = {}): string {
+	const { width } = options;
 	const lines = diffText.split("\n");
 	const result: string[] = [];
 
@@ -135,24 +180,24 @@ export function renderDiff(diffText: string, _options: RenderDiffOptions = {}): 
 					replaceTabs(added.content),
 				);
 
-				result.push(diffStyle("removed", `-${removed.lineNum} ${removedLine}`));
-				result.push(diffStyle("added", `+${added.lineNum} ${addedLine}`));
+				result.push(renderRow("removed", removed.lineNum, removedLine, width));
+				result.push(renderRow("added", added.lineNum, addedLine, width));
 			} else {
 				// Show all removed lines first, then all added lines
 				for (const removed of removedLines) {
-					result.push(diffStyle("removed", `-${removed.lineNum} ${replaceTabs(removed.content)}`));
+					result.push(renderRow("removed", removed.lineNum, replaceTabs(removed.content), width));
 				}
 				for (const added of addedLines) {
-					result.push(diffStyle("added", `+${added.lineNum} ${replaceTabs(added.content)}`));
+					result.push(renderRow("added", added.lineNum, replaceTabs(added.content), width));
 				}
 			}
 		} else if (parsed.prefix === "+") {
 			// Standalone added line
-			result.push(diffStyle("added", `+${parsed.lineNum} ${replaceTabs(parsed.content)}`));
+			result.push(renderRow("added", parsed.lineNum, replaceTabs(parsed.content), width));
 			i++;
 		} else {
 			// Context line
-			result.push(diffStyle("context", ` ${parsed.lineNum} ${replaceTabs(parsed.content)}`));
+			result.push(renderRow("context", parsed.lineNum, replaceTabs(parsed.content), width));
 			i++;
 		}
 	}

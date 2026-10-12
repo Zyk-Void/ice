@@ -119,6 +119,16 @@ Do not modify `agent_references/`, add a competing planner/controller/agent loop
 - For ad-hoc scripts, `write` them to a temp file (e.g. `/tmp`), run, edit if needed, remove when done. Don't embed multi-line scripts in `bash` commands.
 - Never commit unless the user asks.
 
+## Local Curax ICE Snapshots
+
+When a user requests rebuilding/updating local ICE or delivering runtime changes to Curax, verify the affected code and rebuild the changed runtime packages first. Then publish a snapshot from this worktree's root:
+
+```bash
+corepack npm@12.0.2 run build:curax-snapshot -- --out /home/mewtwo/.local/share/curax/ice-snapshots
+```
+
+The snapshot command packages existing `dist` output; it does not compile source. Completion requires the extracted-runtime smoke checks to pass and `current.json` to point to the new artifact with its SHA-256. Report the manifest path and whether Curax needs restarting. Curax selects this `current.json` in Settings → Runtime → Choose snapshot; ordinary ICE builds do not update Curax automatically. Retain earlier immutable artifacts for rollback. Keep normal test/check runs, user settings, running Curax processes, and Curax AppImage packaging separate unless the user requests those actions.
+
 ## Dependency and Install Security
 
 - Treat npm dep and lockfile changes as reviewed code. Direct external deps stay pinned to exact versions.

@@ -80,6 +80,8 @@ const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
 	"app.model.cycleBackward",
 	"app.model.select",
 	"app.tools.expand",
+	"app.tools.collapse",
+	"app.tools.expandLast",
 	"app.thinking.toggle",
 	"app.editor.external",
 	"app.message.copy",
@@ -161,6 +163,18 @@ type RunnerEmitResult<TEvent extends RunnerEmitEvent> = TEvent extends { type: "
 				: undefined;
 
 export type ExtensionErrorListener = (error: ExtensionError) => void;
+
+/** A handler for a prompt-blocking event (`input`, `before_agent_start`) that is still running. */
+export interface ActiveExtensionHandler {
+	extensionPath: string;
+	event: "input" | "before_agent_start";
+	startedAt: number;
+}
+
+export type SlowExtensionHandlerListener = (handler: ActiveExtensionHandler & { durationMs: number }) => void;
+
+/** Prompt-blocking handlers at or above this duration are reported to slow-handler listeners. */
+export const SLOW_EXTENSION_HANDLER_MS = 1000;
 
 export type NewSessionHandler = (options?: {
 	parentSession?: string;
@@ -276,6 +290,8 @@ export class ExtensionRunner {
 	private sessionManager: SessionManager;
 	private modelRegistry: ModelRegistry;
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
+	private slowHandlerListeners = new Set<SlowExtensionHandlerListener>();
+	private activeHandler: ActiveExtensionHandler | undefined;
 	private getModel: () => Model<any> | undefined = () => undefined;
 	private getScopedModels: () => readonly ScopedModel[] = () => [];
 	private getSettingsManager: () => SettingsManager | undefined = () => undefined;
@@ -552,6 +568,7 @@ export class ExtensionRunner {
 		if (!this.staleMessage) {
 			this.staleMessage = message;
 			this.runtime.invalidate(message);
+			for (const extension of this.extensions) extension.dispose?.();
 		}
 	}
 
@@ -569,6 +586,34 @@ export class ExtensionRunner {
 	emitError(error: ExtensionError): void {
 		for (const listener of this.errorListeners) {
 			listener(error);
+		}
+	}
+
+	/** The prompt-blocking handler running now, so the UI can say what a submitted prompt is waiting on. */
+	getActiveHandler(): ActiveExtensionHandler | undefined {
+		return this.activeHandler;
+	}
+
+	onSlowHandler(listener: SlowExtensionHandlerListener): () => void {
+		this.slowHandlerListeners.add(listener);
+		return () => this.slowHandlerListeners.delete(listener);
+	}
+
+	private async runPromptBlockingHandler<T>(
+		extensionPath: string,
+		event: ActiveExtensionHandler["event"],
+		run: () => T | Promise<T>,
+	): Promise<T> {
+		const active: ActiveExtensionHandler = { extensionPath, event, startedAt: Date.now() };
+		this.activeHandler = active;
+		try {
+			return await run();
+		} finally {
+			if (this.activeHandler === active) this.activeHandler = undefined;
+			const durationMs = Date.now() - active.startedAt;
+			if (durationMs >= SLOW_EXTENSION_HANDLER_MS) {
+				for (const listener of this.slowHandlerListeners) listener({ ...active, durationMs });
+			}
 		}
 	}
 
@@ -981,10 +1026,31 @@ export class ExtensionRunner {
 
 			for (const handler of handlers) {
 				try {
-					const handlerResult = await handler(event, ctx);
-					if (handlerResult) {
-						return handlerResult as UserBashEventResult;
+					const handlerResult: unknown = await handler(event, ctx);
+					if (handlerResult === undefined) continue;
+					if (handlerResult === null || typeof handlerResult !== "object") {
+						throw new Error("user_bash handlers must return undefined, operations, or a BashResult");
 					}
+					const result = handlerResult as UserBashEventResult;
+					if (result.operations !== undefined && typeof result.operations?.exec !== "function") {
+						throw new Error("user_bash operations must provide an exec function");
+					}
+					if (
+						result.result !== undefined &&
+						(result.result === null ||
+							typeof result.result !== "object" ||
+							typeof result.result.output !== "string" ||
+							(result.result.exitCode !== undefined && !Number.isFinite(result.result.exitCode)) ||
+							typeof result.result.cancelled !== "boolean" ||
+							typeof result.result.truncated !== "boolean" ||
+							(result.result.fullOutputPath !== undefined && typeof result.result.fullOutputPath !== "string"))
+					) {
+						throw new Error("user_bash result must be a valid BashResult");
+					}
+					if (result.operations === undefined && result.result === undefined) {
+						throw new Error("user_bash response must provide operations or a result");
+					}
+					return result;
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
@@ -994,6 +1060,7 @@ export class ExtensionRunner {
 						error: message,
 						stack,
 					});
+					throw new Error(`User Bash routing failed (${ext.path}): ${message}`, { cause: err });
 				}
 			}
 		}
@@ -1002,6 +1069,8 @@ export class ExtensionRunner {
 	}
 
 	async emitContext(messages: AgentMessage[]): Promise<AgentMessage[]> {
+		// The defensive clone below costs a full-history copy per model call; skip it when nobody listens.
+		if (!this.hasHandlers("context")) return messages;
 		const ctx = this.createContext();
 		let currentMessages = structuredClone(messages);
 
@@ -1129,7 +1198,9 @@ export class ExtensionRunner {
 						systemPrompt: currentSystemPrompt,
 						systemPromptOptions,
 					};
-					const handlerResult = await handler(event, ctx);
+					const handlerResult = await this.runPromptBlockingHandler(ext.path, "before_agent_start", () =>
+						handler(event, ctx),
+					);
 
 					if (handlerResult) {
 						const result = handlerResult as BeforeAgentStartEventResult;
@@ -1233,7 +1304,9 @@ export class ExtensionRunner {
 						source,
 						streamingBehavior,
 					};
-					const result = (await handler(event, ctx)) as InputEventResult | undefined;
+					const result = (await this.runPromptBlockingHandler(ext.path, "input", () => handler(event, ctx))) as
+						| InputEventResult
+						| undefined;
 					if (result?.action === "handled") return result;
 					if (result?.action === "transform") {
 						currentText = result.text;

@@ -1,0 +1,2969 @@
+[
+  {
+    "file": "packages/ai/CHANGELOG.md",
+    "local": "packages/ai/CHANGELOG.md",
+    "status": "partial/divergent",
+    "commits": [
+      "20038712 Add [Unreleased] section for next cycle",
+      "cd32f772 Release v1.0.2",
+      "750105c8 docs(ai,coding-agent): move #9776 changelog entries to Unreleased",
+      "76dfb88f feat(ai): add per-thinking-level sampling parameters (#9776)",
+      "4c6fb7cf Add [Unreleased] section for next cycle",
+      "a7229ddc Release v1.0.1",
+      "4215d4d6 docs(ai,coding-agent): audit changelog entries since v1.0.0",
+      "69f0be6f fix(ai): drop stale thinking blocks on Bedrock Claude replays",
+      "4665fafb fix(ai): keep models.dev pricing tiers for Amazon Bedrock models",
+      "eeac84ca fix(ai): fail Sign in with ChatGPT when the callback port is taken",
+      "221cbcb0 docs(ai,coding-agent): document Cloudflare Clef classifiers",
+      "c10bfb0d fix(ai): use dashed Claude model IDs for Cloudflare AI Gateway",
+      "b271b0a5 feat(ai): define Anthropic mid-conversation tools inline",
+      "3874b3e9 fix(ai): retry \"Selected model is at capacity\" provider errors",
+      "86dfceec Add [Unreleased] section for next cycle",
+      "a13d35a7 Release v1.0.0",
+      "bc2d8dc1 fix(ai): drop mismatched item ids when replaying grammar tool calls",
+      "92fc452c docs: audit changelogs and add new features for next release",
+      "233f1744 fix(ai): use color Pi logo on OAuth pages",
+      "955cc666 Add [Unreleased] section for next cycle",
+      "005af57d Release v0.99.2",
+      "002c183e docs(ai,coding-agent): audit unreleased changelog entries",
+      "2bbfcca4 fix(ai): use exponential backoff when Retry-After is unparseable",
+      "295cc72b fix(ai): send Anthropic tools non-strict when schema has rejected keywords",
+      "3dd803d7 fix(ai): detect Z.AI CN endpoint context overflow errors",
+      "ba7d5fbe feat(ai,durable): add lightweight pi-ai/models entry and avoid TypeBox in durable",
+      "6a4af07d Add [Unreleased] section for next cycle",
+      "d86654ab Release v0.99.1",
+      "12c416e1 feat(ai,coding-agent): add GPT-6.1 Sol and make it the Codex default",
+      "312184ed Add [Unreleased] section for next cycle",
+      "4b060d3a Release v0.99.0",
+      "f81cf552 docs: audit changelogs for 0.99.0",
+      "89a5c7bd feat(ai): report token usage and cost for System One classify results",
+      "33e20335 feat(ai): expose Jev on Vercel AI Gateway and OpenCode Zen",
+      "4df15743 feat(ai,coding-agent): share OAuth callback server and sign-in page",
+      "1b2aa0ca fix(ai): reject unfinished Responses tool calls instead of running them",
+      "c90d9ea5 feat(ai,coding-agent): add Claude Sonnet 5.5 support",
+      "c1449660 fix(ai): allow empty thinking signatures for OpenCode qwen3.8-flash",
+      "dc84c1ac fix(ai): send requested thinking level to Mistral reasoning models",
+      "a6ca8610 fix(ai): price OpenAI Fast mode service tier like priority",
+      "8930b9ec fix(ai): ignore empty Mistral content deltas",
+      "c01f687e fix(ai): apply model samplingParams in direct stream()/complete() calls",
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "667fc3dd fix(ai): price Vercel AI Gateway 1-hour cache writes correctly",
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "a8ed4977 Add [Unreleased] section for next cycle",
+      "f07218c4 Release v0.87.1",
+      "27c072e9 feat(ai,coding-agent): add new Copilot models",
+      "db91e033 feat(ai,coding-agent): add GPT-6 Sol and Luna support",
+      "3a624b82 fix(ai): update reported Claude Code version",
+      "b4588f26 feat(ai,coding-agent): add Claude Opus 5.5 support",
+      "1a584a7a feat(ai,coding-agent): add Grok 4.7 support",
+      "1b6ddca8 fix(ai): omit empty text parts from multimodal user messages",
+      "4c8eb393 Add [Unreleased] section for next cycle",
+      "16787ad5 Release v0.87.0",
+      "890f9208 fix(ai): default unknown providers to non-strict tools (closes #9816)",
+      "f5c94648 feat(ai,coding-agent): add image input limits (closes #9631)",
+      "19451acc Add [Unreleased] section for next cycle",
+      "13cbf77d Release v0.86.1",
+      "68f98022 docs: audit Cerebras fix changelog entries",
+      "0e283203 fix(ai): detect z.ai prompt-too-long errors",
+      "ee2df312 docs: audit post-release changelog entries",
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)",
+      "50d766cb Add [Unreleased] section for next cycle",
+      "ecac0a9c Release v0.86.0",
+      "12032deb docs: complete unreleased changelog audit",
+      "eba61987 docs: audit unreleased changelogs",
+      "4d38031f feat(ai): ship Radius model catalog",
+      "661619e8 fix(ai): scope bodyless overflow errors to Cerebras",
+      "bb0f4aa6 fix(ai): preserve DeepSeek V4 effort metadata",
+      "16292398 fix(coding-agent): send forced system prompts without recording them",
+      "3955b27a fix(ai): preserve Vercel AI Gateway unsigned thinking",
+      "e98f287e fix(ai): retry Azure peak-load capacity errors",
+      "e5d18382 fix(ai): retry Cloudflare 520 responses",
+      "1283afd0 fix(ai): preserve thinking replay through renamed Anthropic models",
+      "16235fd9 fix(ai): avoid unsupported Gemini thinking levels",
+      "e4c75a73 fix(coding-agent): replace the system prompt when a handler forces it",
+      "6671c604 fix(ai): send Baseten session affinity headers",
+      "8a7b0c03 fix(ai): price Bedrock one-hour cache writes",
+      "0c7bb7c5 fix(ai): identify Responses error providers",
+      "d92eb8d4 feat(ai): enable Fireworks Messages deferred tool loading",
+      "4bd3f48d fix(ai): enable GLM-5.2 reasoning on Mistral",
+      "2e6fe2f9 fix(ai): remove retired GPT-5.4 Codex models",
+      "12f59336 fix(ai): update DeepSeek Flash catalog",
+      "bbb61e34 fix(ai): send OpenRouter session affinity headers by default",
+      "6b94ae2e fix(ai): preserve Fireworks thinking and native effort levels",
+      "e86102f1 fix(ai): send Codex Off reasoning effort",
+      "c37b0e03 fix: cap agent retry backoff",
+      "561a2e06 fix(ai): send OpenCode session header",
+      "96617628 fix(ai): use reasoning_effort for reasoning-capable mistral-medium-* models",
+      "b2602be7 fix(ai): optimize EventStream queue",
+      "da840b62 Add [Unreleased] section for next cycle",
+      "d981de12 Release v0.85.1",
+      "1a46b923 docs: audit changelogs for v0.85.1",
+      "17de82d7 feat(ai): add GPT-6 Astra support",
+      "dd7e816b Add [Unreleased] section for next cycle",
+      "107d79f1 Release v0.85.0",
+      "1148f795 docs: audit unreleased changelogs",
+      "265a3339 fix(ai): add Qwen3.8 Flash to individual token plan",
+      "64eeb82a fix(ai): process unterminated Codex SSE terminal events",
+      "bf157122 fix(ai): remove unnecessary Chord dependency",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort",
+      "69afa105 fix(ai): route GitHub Copilot Fable 5 through Anthropic Messages",
+      "853a80d2 Add [Unreleased] section for next cycle",
+      "b79e4cc8 Release v0.84.4",
+      "bba6be97 docs: audit unreleased changelogs",
+      "6c87d9a0 fix(ai): merge indexed Mistral tool call chunks",
+      "938109e7 chore: changelog entries",
+      "6b36eb59 fix(coding-agent): remove explicit tool choice from compaction calls",
+      "fe37e9f9 fix(ai): omit tool_choice without tools closes #8607",
+      "650e7a61 fix(ai): derive OpenRouter reasoning controls (#8614)",
+      "31d4ed58 Add [Unreleased] section for next cycle",
+      "4e58f324 Release v0.84.3",
+      "7623e8a0 docs: audit unreleased changelogs",
+      "4ca636c5 feat(ai): opeani completions reasoning details (#8246)",
+      "55b0db4d fix(ai): prevent copilot policy login rate limits (#8254)",
+      "4809c2ab fix(ai): anthropic fallback usage (#8319)",
+      "59a71b23 Revert \"fix(ai): anthropic fallback usage (#8308)\" (#8313)",
+      "a6c6f801 fix(ai): anthropic fallback usage (#8308)",
+      "e5dde9a7 feat(ai): add simple tool choice option",
+      "9117326b fix(ai): forward Azure Responses tool choice",
+      "6db110e6 fix(ai): add Qwen Token Plan Individual DeepSeek V4 Pro 0813",
+      "87205484 fix(ai): use Chinese ZAI Coding Plan catalog",
+      "0e4d4954 fix(ai,coding-agent): remove deprecated Xiaomi models",
+      "10acee60 fix(ai): bedrock response to include smithy headers (#8243)",
+      "af2c3522 fix(ai): honor Google thinking level maps",
+      "d3ab2af9 fix: track kimi cached tokens (#8119)",
+      "0e0021fb Add [Unreleased] section for next cycle",
+      "914cf147 Release v0.84.2",
+      "d10c974b docs: audit changelogs since v0.84.1",
+      "5093641a fix(ai): preserve Google length stops with tool calls",
+      "9d2ec7ff fix(ai): use pi user agent for Kimi Coding requests",
+      "b3edf017 fix(ai): bound Copilot policy update concurrency",
+      "7915cdac feat(ai): add strict tool schema conversion",
+      "c185d412 fix(ai): send max_tokens to DeepSeek APIs",
+      "9dd90a49 fix(ai): replace Mistral SDK with native transport",
+      "e47b8e37 feat(ai): use additional_tools for deferred tools",
+      "02bd2d1c fix(ai): preserve Responses tool-call namespaces",
+      "fe10558e fix(ai): retry upstream request buffer failures",
+      "310411ba Add [Unreleased] section for next cycle",
+      "53fa77cc Release v0.84.1",
+      "6ba4d23e docs: audit changelogs since v0.84.0",
+      "38e8f281 Add [Unreleased] section for next cycle",
+      "a5f43bf8 Release v0.84.0",
+      "b9497c8c fix(ai): correct Fireworks GLM prompt caching, closes #7676",
+      "b0bd0ff9 fix(coding-agent): only label known subscriptions in footer",
+      "6b461b75 feat: extract telemetry package",
+      "db48124e docs: audit unreleased changelogs",
+      "04d6447f feat: add typed telemetry contracts"
+    ]
+  },
+  {
+    "file": "packages/ai/README.md",
+    "local": "packages/ai/README.md",
+    "status": "partial/divergent",
+    "commits": [
+      "4812cb26 feat(ai): add Cloudflare Clef classifiers to Workers AI (#10316)",
+      "b271b0a5 feat(ai): define Anthropic mid-conversation tools inline",
+      "ba7d5fbe feat(ai,durable): add lightweight pi-ai/models entry and avoid TypeBox in durable",
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider",
+      "89a5c7bd feat(ai): report token usage and cost for System One classify results",
+      "33e20335 feat(ai): expose Jev on Vercel AI Gateway and OpenCode Zen",
+      "04efdfc3 feat(ai): Discount jev (#10119)",
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "1a584a7a feat(ai,coding-agent): add Grok 4.7 support",
+      "890f9208 fix(ai): default unknown providers to non-strict tools (closes #9816)",
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)",
+      "4d38031f feat(ai): ship Radius model catalog",
+      "16292398 fix(coding-agent): send forced system prompts without recording them",
+      "e4c75a73 fix(coding-agent): replace the system prompt when a handler forces it",
+      "9e05370b Mid conversation system messages (#9548)",
+      "f9bcd351 docs(ai): document Codex WebSocket cleanup",
+      "bbb61e34 fix(ai): send OpenRouter session affinity headers by default",
+      "8b5899dc fix(ai): restore stream compatibility",
+      "5c6655e7 fix(agent): make durable assistant framing burst-safe",
+      "b2374126 feat(ai): generalize openai-completions thinking token budget fields (#8275)",
+      "a829de0a feat(ai): add assistant message frame reducer",
+      "70e878d4 feat(ai): route xAI models through Responses and default to Grok 4.6 (#8124)",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/package.json",
+    "local": "packages/ai/package.json",
+    "status": "partial/divergent",
+    "commits": [
+      "cd32f772 Release v1.0.2",
+      "a7229ddc Release v1.0.1",
+      "b271b0a5 feat(ai): define Anthropic mid-conversation tools inline",
+      "a13d35a7 Release v1.0.0",
+      "005af57d Release v0.99.2",
+      "ba7d5fbe feat(ai,durable): add lightweight pi-ai/models entry and avoid TypeBox in durable",
+      "d86654ab Release v0.99.1",
+      "4b060d3a Release v0.99.0",
+      "8eb2bccf fix: bump vitest to 4.1.11 and gondolin's undici to 6.29.0",
+      "ab30693d fix(ai): upgrade openai SDK to 7.19.0 (#10044)",
+      "ca7460d1 feat: build with TypeScript 7 and run sources with plain node",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "f07218c4 Release v0.87.1",
+      "16787ad5 Release v0.87.0",
+      "13cbf77d Release v0.86.1",
+      "ecac0a9c Release v0.86.0",
+      "4a6ed019 fix(coding-agent): update runtime dependencies (#9341)",
+      "d981de12 Release v0.85.1",
+      "107d79f1 Release v0.85.0",
+      "bf157122 fix(ai): remove unnecessary Chord dependency",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort",
+      "34dc9d05 feat: move facet services into Chord",
+      "b79e4cc8 Release v0.84.4",
+      "5507d76e feat(agent,ai): add narrow subpath exports so clients skip the barrel",
+      "4e58f324 Release v0.84.3",
+      "f8f03460 fix: reduce workspace dependency tree",
+      "209bc7b9 fix(ai): remove unused opentelemetry dependency",
+      "914cf147 Release v0.84.2",
+      "9dd90a49 fix(ai): replace Mistral SDK with native transport",
+      "e47b8e37 feat(ai): use additional_tools for deferred tools",
+      "53fa77cc Release v0.84.1",
+      "a5f43bf8 Release v0.84.0",
+      "6b461b75 feat: extract telemetry package",
+      "04d6447f feat: add typed telemetry contracts"
+    ]
+  },
+  {
+    "file": "packages/ai/scripts/generate-image-models.ts",
+    "local": "packages/ai/scripts/generate-image-models.ts",
+    "status": "deleted-upstream",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/scripts/generate-models.ts",
+    "local": "packages/ai/scripts/generate-models.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "c71a496f feat(coding-agent): add Nix flake (#9137)",
+      "4665fafb fix(ai): keep models.dev pricing tiers for Amazon Bedrock models",
+      "4812cb26 feat(ai): add Cloudflare Clef classifiers to Workers AI (#10316)",
+      "c10bfb0d fix(ai): use dashed Claude model IDs for Cloudflare AI Gateway",
+      "28eaccb8 fix(ai): update Together DeepSeek V4 Pro model ID (#10336)",
+      "12c416e1 feat(ai,coding-agent): add GPT-6.1 Sol and make it the Codex default",
+      "89a5c7bd feat(ai): report token usage and cost for System One classify results",
+      "33e20335 feat(ai): expose Jev on Vercel AI Gateway and OpenCode Zen",
+      "c90d9ea5 feat(ai,coding-agent): add Claude Sonnet 5.5 support",
+      "c1449660 fix(ai): allow empty thinking signatures for OpenCode qwen3.8-flash",
+      "dc84c1ac fix(ai): send requested thinking level to Mistral reasoning models",
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "fde38ed7 fix(ai): stabilize Copilot Claude Opus 5.5 effort levels",
+      "b7f4b05c fix(ai): stabilize Claude Opus 5.5 effort levels",
+      "27c072e9 feat(ai,coding-agent): add new Copilot models",
+      "db91e033 feat(ai,coding-agent): add GPT-6 Sol and Luna support",
+      "b4588f26 feat(ai,coding-agent): add Claude Opus 5.5 support",
+      "1a584a7a feat(ai,coding-agent): add Grok 4.7 support",
+      "890f9208 fix(ai): default unknown providers to non-strict tools (closes #9816)",
+      "f5c94648 feat(ai,coding-agent): add image input limits (closes #9631)",
+      "af7359b9 fix(ai): exclude Cerebras from supportsStrictMode (#9804)",
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)",
+      "c596d09d feat(coding-agent): add prompt cache warming (#9668)",
+      "4d38031f feat(ai): ship Radius model catalog",
+      "e4ce7b44 fix(ai): update Kimi model catalog source",
+      "bb0f4aa6 fix(ai): preserve DeepSeek V4 effort metadata",
+      "3955b27a fix(ai): preserve Vercel AI Gateway unsigned thinking",
+      "aa50fe77 fix(ai): derive Google thinking levels from models.dev",
+      "9e05370b Mid conversation system messages (#9548)",
+      "6671c604 fix(ai): send Baseten session affinity headers",
+      "d92eb8d4 feat(ai): enable Fireworks Messages deferred tool loading",
+      "2e6fe2f9 fix(ai): remove retired GPT-5.4 Codex models",
+      "12f59336 fix(ai): update DeepSeek Flash catalog",
+      "bbb61e34 fix(ai): send OpenRouter session affinity headers by default",
+      "6b94ae2e fix(ai): preserve Fireworks thinking and native effort levels",
+      "7d8ab31a fix(ai): route Copilot GPT models through Responses (#9253)",
+      "17de82d7 feat(ai): add GPT-6 Astra support",
+      "0dbf2b76 fix(ai): remove Grok Build 0.1 from built-in xAI model catalog (#9093)",
+      "265a3339 fix(ai): add Qwen3.8 Flash to individual token plan",
+      "22940a62 fix(ai): keep Baseten GLM-5.2 text-only (#8293)",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort",
+      "1e4fbe38 fix(ai): use completions API for all Fireworks GLM models",
+      "69afa105 fix(ai): route GitHub Copilot Fable 5 through Anthropic Messages",
+      "7ddbac28 fix(ai): keep cloudflare ai gateway workers-ai models when models.dev drops them",
+      "587be985 feat(ai): add deepseek-v4-flash-vision-exp",
+      "650e7a61 fix(ai): derive OpenRouter reasoning controls (#8614)",
+      "e8c632ef fix(ai): cloudflare gateway type, include workers",
+      "3de00332 fix(ai): derive Z.AI reasoning effort metadata",
+      "ed867e90 fix(ai): fallback cost not via stream options (#8352)",
+      "4809c2ab fix(ai): anthropic fallback usage (#8319)",
+      "b2374126 feat(ai): generalize openai-completions thinking token budget fields (#8275)",
+      "eb1f87fa fix(coding-agent/ai): anthropic refusal error and fallbacks (#8258)",
+      "6db110e6 fix(ai): add Qwen Token Plan Individual DeepSeek V4 Pro 0813",
+      "87205484 fix(ai): use Chinese ZAI Coding Plan catalog",
+      "0e4d4954 fix(ai,coding-agent): remove deprecated Xiaomi models",
+      "86d001d3 fix(ai): expose low thinking level for DeepSeek V4 Flash on opencode/opencode-go (#8181)",
+      "70e878d4 feat(ai): route xAI models through Responses and default to Grok 4.6 (#8124)",
+      "9d2ec7ff fix(ai): use pi user agent for Kimi Coding requests",
+      "2f8b4b42 fix(ai): expose low reasoning effort for native DeepSeek V4 Flash (#7807)",
+      "b647d187 fix(ai): detect DeepSeek base URLs case-insensitively (#7933)",
+      "75c7fd66 fix(ai): declare Cloudflare Responses strict tools (#7934)",
+      "c185d412 fix(ai): send max_tokens to DeepSeek APIs",
+      "e47b8e37 feat(ai): use additional_tools for deferred tools",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)",
+      "b9497c8c fix(ai): correct Fireworks GLM prompt caching, closes #7676",
+      "2f7f75a2 fix(ai): replace qwen3.8-max-preview with qwen3.8-max on token plan (#7670)"
+    ]
+  },
+  {
+    "file": "packages/ai/scripts/hydrate-model-catalog.ts",
+    "local": "packages/ai/scripts/hydrate-model-catalog.ts",
+    "status": "missing",
+    "commits": [
+      "c71a496f feat(coding-agent): add Nix flake (#9137)"
+    ]
+  },
+  {
+    "file": "packages/ai/scripts/model-data.ts",
+    "local": "packages/ai/scripts/model-data.ts",
+    "status": "base",
+    "commits": [
+      "c71a496f feat(coding-agent): add Nix flake (#9137)",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/scripts/openrouter-catalog.ts",
+    "local": "packages/ai/scripts/openrouter-catalog.ts",
+    "status": "missing",
+    "commits": [
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/scripts/openrouter-reasoning-options.ts",
+    "local": "packages/ai/scripts/openrouter-reasoning-options.ts",
+    "status": "missing",
+    "commits": [
+      "650e7a61 fix(ai): derive OpenRouter reasoning controls (#8614)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/anthropic-messages.ts",
+    "local": "packages/ai/src/api/anthropic-messages.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "b271b0a5 feat(ai): define Anthropic mid-conversation tools inline",
+      "a9424cd4 feat(ai): Anthropic workload identity federation (#10242)",
+      "295cc72b fix(ai): send Anthropic tools non-strict when schema has rejected keywords",
+      "667fc3dd fix(ai): price Vercel AI Gateway 1-hour cache writes correctly",
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "3a624b82 fix(ai): update reported Claude Code version",
+      "1283afd0 fix(ai): preserve thinking replay through renamed Anthropic models",
+      "9e05370b Mid conversation system messages (#9548)",
+      "bbb61e34 fix(ai): send OpenRouter session affinity headers by default",
+      "8b5899dc fix(ai): restore stream compatibility",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort",
+      "96317e50 fix(ai): bump claude code user agent version",
+      "5c6655e7 fix(agent): make durable assistant framing burst-safe",
+      "87af49de Add pi user-agent to most api adapters (#8361)",
+      "ed867e90 fix(ai): fallback cost not via stream options (#8352)",
+      "4809c2ab fix(ai): anthropic fallback usage (#8319)",
+      "59a71b23 Revert \"fix(ai): anthropic fallback usage (#8308)\" (#8313)",
+      "a6c6f801 fix(ai): anthropic fallback usage (#8308)",
+      "e5dde9a7 feat(ai): add simple tool choice option",
+      "eb1f87fa fix(coding-agent/ai): anthropic refusal error and fallbacks (#8258)",
+      "9d2ec7ff fix(ai): use pi user agent for Kimi Coding requests",
+      "7915cdac feat(ai): add strict tool schema conversion"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/azure-openai-responses.ts",
+    "local": "packages/ai/src/api/azure-openai-responses.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "76dfb88f feat(ai): add per-thinking-level sampling parameters (#9776)",
+      "c01f687e fix(ai): apply model samplingParams in direct stream()/complete() calls",
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "8b5899dc fix(ai): restore stream compatibility",
+      "5c6655e7 fix(agent): make durable assistant framing burst-safe",
+      "87af49de Add pi user-agent to most api adapters (#8361)",
+      "e5dde9a7 feat(ai): add simple tool choice option",
+      "9117326b fix(ai): forward Azure Responses tool choice"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/bedrock-converse-stream.ts",
+    "local": "packages/ai/src/api/bedrock-converse-stream.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "69f0be6f fix(ai): drop stale thinking blocks on Bedrock Claude replays",
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "cf8d5fac feat(agent): add Pico storage foundation",
+      "9e05370b Mid conversation system messages (#9548)",
+      "8a7b0c03 fix(ai): price Bedrock one-hour cache writes",
+      "d57e531f fix(ai): round-trip Bedrock redacted reasoning (#8314)",
+      "e5dde9a7 feat(ai): add simple tool choice option",
+      "10acee60 fix(ai): bedrock response to include smithy headers (#8243)",
+      "7915cdac feat(ai): add strict tool schema conversion",
+      "98145a6c fix(ai): sanitize empty Bedrock tool argument keys (#7882)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/cloudflare-ai-binding.ts",
+    "local": "packages/ai/src/api/cloudflare-ai-binding.ts",
+    "status": "missing",
+    "commits": [
+      "55adba4f Replace the AI Gateway binding shim with a plain binding fetch (#8287)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/cloudflare-workers-ai-system-one.lazy.ts",
+    "local": "packages/ai/src/api/cloudflare-workers-ai-system-one.lazy.ts",
+    "status": "missing",
+    "commits": [
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/cloudflare-workers-ai-system-one.ts",
+    "local": "packages/ai/src/api/cloudflare-workers-ai-system-one.ts",
+    "status": "missing",
+    "commits": [
+      "4812cb26 feat(ai): add Cloudflare Clef classifiers to Workers AI (#10316)",
+      "89a5c7bd feat(ai): report token usage and cost for System One classify results",
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/cloudflare.ts",
+    "local": "packages/ai/src/api/cloudflare.ts",
+    "status": "base",
+    "commits": [
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/constrained-sampling.ts",
+    "local": "packages/ai/src/api/constrained-sampling.ts",
+    "status": "base",
+    "commits": [
+      "295cc72b fix(ai): send Anthropic tools non-strict when schema has rejected keywords",
+      "7915cdac feat(ai): add strict tool schema conversion"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/google-generative-ai.ts",
+    "local": "packages/ai/src/api/google-generative-ai.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "16235fd9 fix(ai): avoid unsupported Gemini thinking levels",
+      "9e05370b Mid conversation system messages (#9548)",
+      "8b5899dc fix(ai): restore stream compatibility",
+      "5c6655e7 fix(agent): make durable assistant framing burst-safe",
+      "87af49de Add pi user-agent to most api adapters (#8361)",
+      "e5dde9a7 feat(ai): add simple tool choice option",
+      "af2c3522 fix(ai): honor Google thinking level maps",
+      "5093641a fix(ai): preserve Google length stops with tool calls",
+      "7915cdac feat(ai): add strict tool schema conversion"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/google-shared.ts",
+    "local": "packages/ai/src/api/google-shared.ts",
+    "status": "base",
+    "commits": [
+      "16235fd9 fix(ai): avoid unsupported Gemini thinking levels",
+      "9e05370b Mid conversation system messages (#9548)",
+      "ceea48f5 Revert \"fix(ci): Fix a broken test\"",
+      "71dca871 fix(ci): Fix a broken test",
+      "4a6ed019 fix(coding-agent): update runtime dependencies (#9341)",
+      "af2c3522 fix(ai): honor Google thinking level maps",
+      "7915cdac feat(ai): add strict tool schema conversion"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/google-vertex.ts",
+    "local": "packages/ai/src/api/google-vertex.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "16235fd9 fix(ai): avoid unsupported Gemini thinking levels",
+      "9e05370b Mid conversation system messages (#9548)",
+      "87af49de Add pi user-agent to most api adapters (#8361)",
+      "e5dde9a7 feat(ai): add simple tool choice option",
+      "af2c3522 fix(ai): honor Google thinking level maps",
+      "5093641a fix(ai): preserve Google length stops with tool calls",
+      "7915cdac feat(ai): add strict tool schema conversion"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/llama-cpp-classify.lazy.ts",
+    "local": "packages/ai/src/api/llama-cpp-classify.lazy.ts",
+    "status": "missing",
+    "commits": [
+      "04efdfc3 feat(ai): Discount jev (#10119)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/llama-cpp-classify.ts",
+    "local": "packages/ai/src/api/llama-cpp-classify.ts",
+    "status": "missing",
+    "commits": [
+      "04efdfc3 feat(ai): Discount jev (#10119)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/mistral-conversations.ts",
+    "local": "packages/ai/src/api/mistral-conversations.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "dc84c1ac fix(ai): send requested thinking level to Mistral reasoning models",
+      "8930b9ec fix(ai): ignore empty Mistral content deltas",
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "cf8d5fac feat(agent): add Pico storage foundation",
+      "9e05370b Mid conversation system messages (#9548)",
+      "4bd3f48d fix(ai): enable GLM-5.2 reasoning on Mistral",
+      "96617628 fix(ai): use reasoning_effort for reasoning-capable mistral-medium-* models",
+      "8b5899dc fix(ai): restore stream compatibility",
+      "6c87d9a0 fix(ai): merge indexed Mistral tool call chunks",
+      "5c6655e7 fix(agent): make durable assistant framing burst-safe",
+      "87af49de Add pi user-agent to most api adapters (#8361)",
+      "e5dde9a7 feat(ai): add simple tool choice option",
+      "7915cdac feat(ai): add strict tool schema conversion",
+      "9dd90a49 fix(ai): replace Mistral SDK with native transport"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/openai-codex-responses.ts",
+    "local": "packages/ai/src/api/openai-codex-responses.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "cf8d5fac feat(agent): add Pico storage foundation",
+      "9e05370b Mid conversation system messages (#9548)",
+      "e86102f1 fix(ai): send Codex Off reasoning effort",
+      "8b5899dc fix(ai): restore stream compatibility",
+      "64eeb82a fix(ai): process unterminated Codex SSE terminal events",
+      "5c6655e7 fix(agent): make durable assistant framing burst-safe",
+      "e5dde9a7 feat(ai): add simple tool choice option",
+      "9d2ec7ff fix(ai): use pi user agent for Kimi Coding requests",
+      "e47b8e37 feat(ai): use additional_tools for deferred tools",
+      "c3e7bc60 feat(ai): preserve Codex end_turn for debugging (#7766)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/openai-completions.ts",
+    "local": "packages/ai/src/api/openai-completions.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "76dfb88f feat(ai): add per-thinking-level sampling parameters (#9776)",
+      "ab30693d fix(ai): upgrade openai SDK to 7.19.0 (#10044)",
+      "c01f687e fix(ai): apply model samplingParams in direct stream()/complete() calls",
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "1b6ddca8 fix(ai): omit empty text parts from multimodal user messages",
+      "890f9208 fix(ai): default unknown providers to non-strict tools (closes #9816)",
+      "af7359b9 fix(ai): exclude Cerebras from supportsStrictMode (#9804)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "bbb61e34 fix(ai): send OpenRouter session affinity headers by default",
+      "8b5899dc fix(ai): restore stream compatibility",
+      "256f6302 feat(ai): add vllmPriority compat flag for vLLM scheduler priority (#9004)",
+      "7aab6c26 fix(ai): serialize thinking signature once (#8671)",
+      "6b36eb59 fix(coding-agent): remove explicit tool choice from compaction calls",
+      "fe37e9f9 fix(ai): omit tool_choice without tools closes #8607",
+      "c5ad7c1b fix(ai): concatenate openai completions reasoning deltas (#8605)",
+      "5c6655e7 fix(agent): make durable assistant framing burst-safe",
+      "b7bb00b9 fix(ai): retain reasoning details in thinking signature",
+      "4ca636c5 feat(ai): opeani completions reasoning details (#8246)",
+      "87af49de Add pi user-agent to most api adapters (#8361)",
+      "b2374126 feat(ai): generalize openai-completions thinking token budget fields (#8275)",
+      "e5dde9a7 feat(ai): add simple tool choice option",
+      "d3ab2af9 fix: track kimi cached tokens (#8119)",
+      "70e878d4 feat(ai): route xAI models through Responses and default to Grok 4.6 (#8124)",
+      "7915cdac feat(ai): add strict tool schema conversion",
+      "b647d187 fix(ai): detect DeepSeek base URLs case-insensitively (#7933)",
+      "c185d412 fix(ai): send max_tokens to DeepSeek APIs",
+      "d07889da feat(ai): support thinking_token_budget on openai-completions (#7638)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/openai-responses-shared.ts",
+    "local": "packages/ai/src/api/openai-responses-shared.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "bc2d8dc1 fix(ai): drop mismatched item ids when replaying grammar tool calls",
+      "1b2aa0ca fix(ai): reject unfinished Responses tool calls instead of running them",
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "8b5899dc fix(ai): restore stream compatibility",
+      "1a7bc80e feat: move service wire semantics into Chord",
+      "5c6655e7 fix(agent): make durable assistant framing burst-safe",
+      "7915cdac feat(ai): add strict tool schema conversion",
+      "e47b8e37 feat(ai): use additional_tools for deferred tools",
+      "02bd2d1c fix(ai): preserve Responses tool-call namespaces"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/openai-responses.ts",
+    "local": "packages/ai/src/api/openai-responses.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "76dfb88f feat(ai): add per-thinking-level sampling parameters (#9776)",
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider",
+      "a6ca8610 fix(ai): price OpenAI Fast mode service tier like priority",
+      "ab30693d fix(ai): upgrade openai SDK to 7.19.0 (#10044)",
+      "c01f687e fix(ai): apply model samplingParams in direct stream()/complete() calls",
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "0c7bb7c5 fix(ai): identify Responses error providers",
+      "17de82d7 feat(ai): add GPT-6 Astra support",
+      "8b5899dc fix(ai): restore stream compatibility",
+      "b8b873b9 fix(ai): add supportsMaxOutputTokens compat flag for openai-responses (#8941)",
+      "5c6655e7 fix(agent): make durable assistant framing burst-safe",
+      "87af49de Add pi user-agent to most api adapters (#8361)",
+      "e5dde9a7 feat(ai): add simple tool choice option",
+      "70e878d4 feat(ai): route xAI models through Responses and default to Grok 4.6 (#8124)",
+      "e47b8e37 feat(ai): use additional_tools for deferred tools"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/openrouter-images.lazy.ts",
+    "local": "packages/ai/src/api/openrouter-images.lazy.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/openrouter-images.ts",
+    "local": "packages/ai/src/api/openrouter-images.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/pi-messages.ts",
+    "local": "packages/ai/src/api/ice-messages.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "cf8d5fac feat(agent): add Pico storage foundation",
+      "9e05370b Mid conversation system messages (#9548)",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort",
+      "e5dde9a7 feat(ai): add simple tool choice option"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/simple-options.ts",
+    "local": "packages/ai/src/api/simple-options.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "76dfb88f feat(ai): add per-thinking-level sampling parameters (#9776)",
+      "c01f687e fix(ai): apply model samplingParams in direct stream()/complete() calls",
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "b2374126 feat(ai): generalize openai-completions thinking token budget fields (#8275)",
+      "d07889da feat(ai): support thinking_token_budget on openai-completions (#7638)",
+      "04d6447f feat: add typed telemetry contracts"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/system-one-shared.ts",
+    "local": "packages/ai/src/api/system-one-shared.ts",
+    "status": "missing",
+    "commits": [
+      "89a5c7bd feat(ai): report token usage and cost for System One classify results",
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/transform-messages.ts",
+    "local": "packages/ai/src/api/transform-messages.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/typesafe-system-one.lazy.ts",
+    "local": "packages/ai/src/api/typesafe-system-one.lazy.ts",
+    "status": "missing",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/api/typesafe-system-one.ts",
+    "local": "packages/ai/src/api/typesafe-system-one.ts",
+    "status": "missing",
+    "commits": [
+      "89a5c7bd feat(ai): report token usage and cost for System One classify results",
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/auth/helpers.ts",
+    "local": "packages/ai/src/auth/helpers.ts",
+    "status": "base",
+    "commits": [
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider",
+      "b0bd0ff9 fix(coding-agent): only label known subscriptions in footer"
+    ]
+  },
+  {
+    "file": "packages/ai/src/auth/oauth/anthropic.ts",
+    "local": "packages/ai/src/auth/oauth/anthropic.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "7a11fe1c feat(ai): add copy code login method to Anthropic OAuth (#10194)",
+      "4df15743 feat(ai,coding-agent): share OAuth callback server and sign-in page",
+      "b0bd0ff9 fix(coding-agent): only label known subscriptions in footer"
+    ]
+  },
+  {
+    "file": "packages/ai/src/auth/oauth/callback-server.ts",
+    "local": "packages/ai/src/auth/oauth/callback-server.ts",
+    "status": "missing",
+    "commits": [
+      "4df15743 feat(ai,coding-agent): share OAuth callback server and sign-in page"
+    ]
+  },
+  {
+    "file": "packages/ai/src/auth/oauth/device-code.ts",
+    "local": "packages/ai/src/auth/oauth/device-code.ts",
+    "status": "base",
+    "commits": [
+      "086c32e7 fix(ai): retry Copilot GET /models once on 429 during login"
+    ]
+  },
+  {
+    "file": "packages/ai/src/auth/oauth/github-copilot.ts",
+    "local": "packages/ai/src/auth/oauth/github-copilot.ts",
+    "status": "base",
+    "commits": [
+      "55b0db4d fix(ai): prevent copilot policy login rate limits (#8254)",
+      "086c32e7 fix(ai): retry Copilot GET /models once on 429 during login",
+      "d5278eaa fix(ai): enable Copilot model policies sequentially during login",
+      "b3edf017 fix(ai): bound Copilot policy update concurrency",
+      "b0bd0ff9 fix(coding-agent): only label known subscriptions in footer",
+      "14cc26e8 fix(ai): restore Copilot models from account policy (#7672)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/auth/oauth/kimi-coding.ts",
+    "local": "packages/ai/src/auth/oauth/kimi-coding.ts",
+    "status": "base",
+    "commits": [
+      "55b0db4d fix(ai): prevent copilot policy login rate limits (#8254)",
+      "b0bd0ff9 fix(coding-agent): only label known subscriptions in footer"
+    ]
+  },
+  {
+    "file": "packages/ai/src/auth/oauth/load.ts",
+    "local": "packages/ai/src/auth/oauth/load.ts",
+    "status": "base",
+    "commits": [
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider",
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/auth/oauth/meta.ts",
+    "local": "packages/ai/src/auth/oauth/meta.ts",
+    "status": "missing",
+    "commits": [
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/auth/oauth/openai-chatgpt.ts",
+    "local": "packages/ai/src/auth/oauth/openai-chatgpt.ts",
+    "status": "missing",
+    "commits": [
+      "eeac84ca fix(ai): fail Sign in with ChatGPT when the callback port is taken",
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider"
+    ]
+  },
+  {
+    "file": "packages/ai/src/auth/oauth/openai-codex.ts",
+    "local": "packages/ai/src/auth/oauth/openai-codex.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "4df15743 feat(ai,coding-agent): share OAuth callback server and sign-in page",
+      "b0bd0ff9 fix(coding-agent): only label known subscriptions in footer"
+    ]
+  },
+  {
+    "file": "packages/ai/src/auth/oauth/openrouter.ts",
+    "local": "packages/ai/src/auth/oauth/openrouter.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "4df15743 feat(ai,coding-agent): share OAuth callback server and sign-in page"
+    ]
+  },
+  {
+    "file": "packages/ai/src/auth/oauth/radius.ts",
+    "local": "packages/ai/src/auth/oauth/radius.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "4df15743 feat(ai,coding-agent): share OAuth callback server and sign-in page"
+    ]
+  },
+  {
+    "file": "packages/ai/src/auth/oauth/xai.ts",
+    "local": "packages/ai/src/auth/oauth/xai.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "b0bd0ff9 fix(coding-agent): only label known subscriptions in footer"
+    ]
+  },
+  {
+    "file": "packages/ai/src/auth/resolve.ts",
+    "local": "packages/ai/src/auth/resolve.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/auth/types.ts",
+    "local": "packages/ai/src/auth/types.ts",
+    "status": "base",
+    "commits": [
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider",
+      "b0bd0ff9 fix(coding-agent): only label known subscriptions in footer"
+    ]
+  },
+  {
+    "file": "packages/ai/src/bun-oauth.ts",
+    "local": "packages/ai/src/bun-oauth.ts",
+    "status": "base",
+    "commits": [
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider",
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/cli.ts",
+    "local": "packages/ai/src/cli.ts",
+    "status": "base",
+    "commits": [
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider"
+    ]
+  },
+  {
+    "file": "packages/ai/src/compat.ts",
+    "local": "packages/ai/src/compat.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/env-api-keys.ts",
+    "local": "packages/ai/src/env-api-keys.ts",
+    "status": "base",
+    "commits": [
+      "a9424cd4 feat(ai): Anthropic workload identity federation (#10242)",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/image-models.generated.ts",
+    "local": "packages/ai/src/image-models.generated.ts",
+    "status": "deleted-upstream",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "b7f4b05c fix(ai): stabilize Claude Opus 5.5 effort levels",
+      "bdee230f feat(ai): refresh generated image model catalog",
+      "fbc87d25 feat(ai): refresh generated image model catalog",
+      "5ce4afbd fix(ai): refresh generated image model catalog",
+      "914cf147 Release v0.84.2",
+      "a5f43bf8 Release v0.84.0"
+    ]
+  },
+  {
+    "file": "packages/ai/src/image-models.ts",
+    "local": "packages/ai/src/image-models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/images-api-registry.ts",
+    "local": "packages/ai/src/images-api-registry.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/images-models.ts",
+    "local": "packages/ai/src/images-models.ts",
+    "status": "deleted-upstream",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/images.ts",
+    "local": "packages/ai/src/images.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/index.ts",
+    "local": "packages/ai/src/index.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "8dab7028 Revert \"feat(coding-agent): add cache-friendly compaction primitives\"",
+      "cff1cf52 feat(coding-agent): add cache-friendly compaction primitives",
+      "af2c3522 fix(ai): honor Google thinking level maps",
+      "a829de0a feat(ai): add assistant message frame reducer",
+      "6b461b75 feat: extract telemetry package",
+      "04d6447f feat: add typed telemetry contracts"
+    ]
+  },
+  {
+    "file": "packages/ai/src/model-catalog.ts",
+    "local": "packages/ai/src/model-catalog.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/models-store.ts",
+    "local": "packages/ai/src/models-store.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/models.generated.ts",
+    "local": "packages/ai/src/models.generated.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)",
+      "4d38031f feat(ai): ship Radius model catalog",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/models.ts",
+    "local": "packages/ai/src/models.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "b37834b6 feat(agent): add durable retry and deferred polling"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/all.ts",
+    "local": "packages/ai/src/providers/all.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/amazon-bedrock.models.ts",
+    "local": "packages/ai/src/providers/amazon-bedrock.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/ant-ling.models.ts",
+    "local": "packages/ai/src/providers/ant-ling.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/anthropic.models.ts",
+    "local": "packages/ai/src/providers/anthropic.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/anthropic.ts",
+    "local": "packages/ai/src/providers/anthropic.ts",
+    "status": "base",
+    "commits": [
+      "a9424cd4 feat(ai): Anthropic workload identity federation (#10242)",
+      "b0bd0ff9 fix(coding-agent): only label known subscriptions in footer"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/azure-openai-responses.models.ts",
+    "local": "packages/ai/src/providers/azure-openai-responses.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/baseten.models.ts",
+    "local": "packages/ai/src/providers/baseten.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/cerebras.models.ts",
+    "local": "packages/ai/src/providers/cerebras.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/cloudflare-ai-gateway.models.ts",
+    "local": "packages/ai/src/providers/cloudflare-ai-gateway.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/cloudflare-ai-gateway.ts",
+    "local": "packages/ai/src/providers/cloudflare-ai-gateway.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "7ddbac28 fix(ai): keep cloudflare ai gateway workers-ai models when models.dev drops them",
+      "e8c632ef fix(ai): cloudflare gateway type, include workers"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/cloudflare-stream.ts",
+    "local": "packages/ai/src/providers/cloudflare-stream.ts",
+    "status": "base",
+    "commits": [
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/cloudflare-workers-ai.models.ts",
+    "local": "packages/ai/src/providers/cloudflare-workers-ai.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/cloudflare-workers-ai.ts",
+    "local": "packages/ai/src/providers/cloudflare-workers-ai.ts",
+    "status": "base",
+    "commits": [
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/deepseek.models.ts",
+    "local": "packages/ai/src/providers/deepseek.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/faux.ts",
+    "local": "packages/ai/src/providers/faux.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "f5c94648 feat(ai,coding-agent): add image input limits (closes #9631)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "86bac52f feat: add delta-backed replicated state"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/fireworks.models.ts",
+    "local": "packages/ai/src/providers/fireworks.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/github-copilot.models.ts",
+    "local": "packages/ai/src/providers/github-copilot.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/github-copilot.ts",
+    "local": "packages/ai/src/providers/github-copilot.ts",
+    "status": "base",
+    "commits": [
+      "b0bd0ff9 fix(coding-agent): only label known subscriptions in footer"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/google-vertex.models.ts",
+    "local": "packages/ai/src/providers/google-vertex.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/google.models.ts",
+    "local": "packages/ai/src/providers/google.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/groq.models.ts",
+    "local": "packages/ai/src/providers/groq.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/huggingface.models.ts",
+    "local": "packages/ai/src/providers/huggingface.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/images/register-builtins.ts",
+    "local": "packages/ai/src/providers/images/register-builtins.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/kimi-coding.models.ts",
+    "local": "packages/ai/src/providers/kimi-coding.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/kimi-coding.ts",
+    "local": "packages/ai/src/providers/kimi-coding.ts",
+    "status": "base",
+    "commits": [
+      "b0bd0ff9 fix(coding-agent): only label known subscriptions in footer"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/meta.models.ts",
+    "local": "packages/ai/src/providers/meta.models.ts",
+    "status": "missing",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/meta.ts",
+    "local": "packages/ai/src/providers/meta.ts",
+    "status": "missing",
+    "commits": [
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/minimax-cn.models.ts",
+    "local": "packages/ai/src/providers/minimax-cn.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/minimax.models.ts",
+    "local": "packages/ai/src/providers/minimax.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/mistral.models.ts",
+    "local": "packages/ai/src/providers/mistral.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/moonshotai-cn.models.ts",
+    "local": "packages/ai/src/providers/moonshotai-cn.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/moonshotai.models.ts",
+    "local": "packages/ai/src/providers/moonshotai.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/nvidia.models.ts",
+    "local": "packages/ai/src/providers/nvidia.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/openai-codex.models.ts",
+    "local": "packages/ai/src/providers/openai-codex.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/openai-codex.ts",
+    "local": "packages/ai/src/providers/openai-codex.ts",
+    "status": "base",
+    "commits": [
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider",
+      "b0bd0ff9 fix(coding-agent): only label known subscriptions in footer"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/openai.models.ts",
+    "local": "packages/ai/src/providers/openai.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/openai.ts",
+    "local": "packages/ai/src/providers/openai.ts",
+    "status": "base",
+    "commits": [
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/opencode-go.models.ts",
+    "local": "packages/ai/src/providers/opencode-go.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/opencode-go.ts",
+    "local": "packages/ai/src/providers/opencode-go.ts",
+    "status": "base",
+    "commits": [
+      "561a2e06 fix(ai): send OpenCode session header"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/opencode-headers.ts",
+    "local": "packages/ai/src/providers/opencode-headers.ts",
+    "status": "missing",
+    "commits": [
+      "561a2e06 fix(ai): send OpenCode session header"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/opencode.models.ts",
+    "local": "packages/ai/src/providers/opencode.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/opencode.ts",
+    "local": "packages/ai/src/providers/opencode.ts",
+    "status": "base",
+    "commits": [
+      "33e20335 feat(ai): expose Jev on Vercel AI Gateway and OpenCode Zen",
+      "561a2e06 fix(ai): send OpenCode session header"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/openrouter-images.ts",
+    "local": "packages/ai/src/providers/openrouter-images.ts",
+    "status": "deleted-upstream",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/openrouter.models.ts",
+    "local": "packages/ai/src/providers/openrouter.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/openrouter.ts",
+    "local": "packages/ai/src/providers/openrouter.ts",
+    "status": "base",
+    "commits": [
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/qwen-token-plan-cn.models.ts",
+    "local": "packages/ai/src/providers/qwen-token-plan-cn.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/qwen-token-plan-individual.models.ts",
+    "local": "packages/ai/src/providers/qwen-token-plan-individual.models.ts",
+    "status": "missing",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/qwen-token-plan-individual.ts",
+    "local": "packages/ai/src/providers/qwen-token-plan-individual.ts",
+    "status": "missing",
+    "commits": [
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/qwen-token-plan.models.ts",
+    "local": "packages/ai/src/providers/qwen-token-plan.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/radius.models.ts",
+    "local": "packages/ai/src/providers/radius.models.ts",
+    "status": "missing",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "4d38031f feat(ai): ship Radius model catalog"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/radius.ts",
+    "local": "packages/ai/src/providers/radius.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "4d38031f feat(ai): ship Radius model catalog"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/together.models.ts",
+    "local": "packages/ai/src/providers/together.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/typesafe.models.ts",
+    "local": "packages/ai/src/providers/typesafe.models.ts",
+    "status": "missing",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/typesafe.ts",
+    "local": "packages/ai/src/providers/typesafe.ts",
+    "status": "missing",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/vercel-ai-gateway.models.ts",
+    "local": "packages/ai/src/providers/vercel-ai-gateway.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/vercel-ai-gateway.ts",
+    "local": "packages/ai/src/providers/vercel-ai-gateway.ts",
+    "status": "base",
+    "commits": [
+      "33e20335 feat(ai): expose Jev on Vercel AI Gateway and OpenCode Zen"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/xai.models.ts",
+    "local": "packages/ai/src/providers/xai.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/xai.ts",
+    "local": "packages/ai/src/providers/xai.ts",
+    "status": "base",
+    "commits": [
+      "70e878d4 feat(ai): route xAI models through Responses and default to Grok 4.6 (#8124)",
+      "b0bd0ff9 fix(coding-agent): only label known subscriptions in footer"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/xiaomi-token-plan-ams.models.ts",
+    "local": "packages/ai/src/providers/xiaomi-token-plan-ams.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/xiaomi-token-plan-cn.models.ts",
+    "local": "packages/ai/src/providers/xiaomi-token-plan-cn.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/xiaomi-token-plan-sgp.models.ts",
+    "local": "packages/ai/src/providers/xiaomi-token-plan-sgp.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/xiaomi.models.ts",
+    "local": "packages/ai/src/providers/xiaomi.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/zai-coding-cn.models.ts",
+    "local": "packages/ai/src/providers/zai-coding-cn.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/providers/zai.models.ts",
+    "local": "packages/ai/src/providers/zai.models.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/types.ts",
+    "local": "packages/ai/src/types.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "76dfb88f feat(ai): add per-thinking-level sampling parameters (#9776)",
+      "b271b0a5 feat(ai): define Anthropic mid-conversation tools inline",
+      "89a5c7bd feat(ai): report token usage and cost for System One classify results",
+      "8562bcf6 feat(coding-agent): codemode and MCP",
+      "540e174c feat(coding-agent): Virtual models (#10035)",
+      "04efdfc3 feat(ai): Discount jev (#10119)",
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "890f9208 fix(ai): default unknown providers to non-strict tools (closes #9816)",
+      "f5c94648 feat(ai,coding-agent): add image input limits (closes #9631)",
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)",
+      "c596d09d feat(coding-agent): add prompt cache warming (#9668)",
+      "cf8d5fac feat(agent): add Pico storage foundation",
+      "16292398 fix(coding-agent): send forced system prompts without recording them",
+      "1283afd0 fix(ai): preserve thinking replay through renamed Anthropic models",
+      "e4c75a73 fix(coding-agent): replace the system prompt when a handler forces it",
+      "9e05370b Mid conversation system messages (#9548)",
+      "bbb61e34 fix(ai): send OpenRouter session affinity headers by default",
+      "17de82d7 feat(ai): add GPT-6 Astra support",
+      "8b5899dc fix(ai): restore stream compatibility",
+      "bf157122 fix(ai): remove unnecessary Chord dependency",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort",
+      "256f6302 feat(ai): add vllmPriority compat flag for vLLM scheduler priority (#9004)",
+      "b8b873b9 fix(ai): add supportsMaxOutputTokens compat flag for openai-responses (#8941)",
+      "e6dc574d feat: isolate Chord context API",
+      "6ec57e6e feat: consolidate Chord public API",
+      "34dc9d05 feat: move facet services into Chord",
+      "6b36eb59 fix(coding-agent): remove explicit tool choice from compaction calls",
+      "5c6655e7 fix(agent): make durable assistant framing burst-safe",
+      "b7bb00b9 fix(ai): retain reasoning details in thinking signature",
+      "4ca636c5 feat(ai): opeani completions reasoning details (#8246)",
+      "ed867e90 fix(ai): fallback cost not via stream options (#8352)",
+      "4809c2ab fix(ai): anthropic fallback usage (#8319)",
+      "b2374126 feat(ai): generalize openai-completions thinking token budget fields (#8275)",
+      "e5dde9a7 feat(ai): add simple tool choice option",
+      "eb1f87fa fix(coding-agent/ai): anthropic refusal error and fallbacks (#8258)",
+      "e47b8e37 feat(ai): use additional_tools for deferred tools",
+      "02bd2d1c fix(ai): preserve Responses tool-call namespaces",
+      "c3e7bc60 feat(ai): preserve Codex end_turn for debugging (#7766)",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)",
+      "6b461b75 feat: extract telemetry package",
+      "d07889da feat(ai): support thinking_token_budget on openai-completions (#7638)",
+      "04d6447f feat: add typed telemetry contracts"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/assistant-message-frame.ts",
+    "local": "packages/ai/src/utils/assistant-message-frame.ts",
+    "status": "missing",
+    "commits": [
+      "0fdec07b fix(ai): preserve provider thinking level in frames",
+      "8b5899dc fix(ai): restore stream compatibility",
+      "5c6655e7 fix(agent): make durable assistant framing burst-safe",
+      "a829de0a feat(ai): add assistant message frame reducer"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/deferred-tools.ts",
+    "local": "packages/ai/src/utils/deferred-tools.ts",
+    "status": "deleted-upstream",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/diagnostics.ts",
+    "local": "packages/ai/src/utils/diagnostics.ts",
+    "status": "base",
+    "commits": [
+      "cf8d5fac feat(agent): add Pico storage foundation"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/estimate.ts",
+    "local": "packages/ai/src/utils/estimate.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/event-stream.ts",
+    "local": "packages/ai/src/utils/event-stream.ts",
+    "status": "base",
+    "commits": [
+      "b2602be7 fix(ai): optimize EventStream queue"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/headers.ts",
+    "local": "packages/ai/src/utils/headers.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/model-operations.ts",
+    "local": "packages/ai/src/utils/model-operations.ts",
+    "status": "missing",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/models-error.ts",
+    "local": "packages/ai/src/utils/models-error.ts",
+    "status": "missing",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/node-http-proxy.ts",
+    "local": "packages/ai/src/utils/node-http-proxy.ts",
+    "status": "base",
+    "commits": [
+      "a63fb12c fix(ai): match subdomains and root domains in NO_PROXY (#8737)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/oauth-page.ts",
+    "local": "packages/ai/src/utils/oauth-page.ts",
+    "status": "missing",
+    "commits": [
+      "233f1744 fix(ai): use color Pi logo on OAuth pages",
+      "4df15743 feat(ai,coding-agent): share OAuth callback server and sign-in page"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/overflow.ts",
+    "local": "packages/ai/src/utils/overflow.ts",
+    "status": "base",
+    "commits": [
+      "3dd803d7 fix(ai): detect Z.AI CN endpoint context overflow errors",
+      "0e283203 fix(ai): detect z.ai prompt-too-long errors",
+      "661619e8 fix(ai): scope bodyless overflow errors to Cerebras"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/pi-user-agent.ts",
+    "local": "packages/ai/src/utils/ice-user-agent.ts",
+    "status": "missing",
+    "commits": [
+      "87af49de Add pi user-agent to most api adapters (#8361)",
+      "70e878d4 feat(ai): route xAI models through Responses and default to Grok 4.6 (#8124)",
+      "9d2ec7ff fix(ai): use pi user agent for Kimi Coding requests"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/provider-retry.ts",
+    "local": "packages/ai/src/utils/provider-retry.ts",
+    "status": "base",
+    "commits": [
+      "2bbfcca4 fix(ai): use exponential backoff when Retry-After is unparseable"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/retry.ts",
+    "local": "packages/ai/src/utils/retry.ts",
+    "status": "base",
+    "commits": [
+      "3874b3e9 fix(ai): retry \"Selected model is at capacity\" provider errors",
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider",
+      "e98f287e fix(ai): retry Azure peak-load capacity errors",
+      "e5d18382 fix(ai): retry Cloudflare 520 responses",
+      "c37b0e03 fix: cap agent retry backoff",
+      "86bac52f feat: add delta-backed replicated state",
+      "fe10558e fix(ai): retry upstream request buffer failures"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/sleep.ts",
+    "local": "packages/ai/src/utils/sleep.ts",
+    "status": "missing",
+    "commits": [
+      "55b0db4d fix(ai): prevent copilot policy login rate limits (#8254)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/text.ts",
+    "local": "packages/ai/src/utils/text.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/transcript.ts",
+    "local": "packages/ai/src/utils/transcript.ts",
+    "status": "missing",
+    "commits": [
+      "b271b0a5 feat(ai): define Anthropic mid-conversation tools inline",
+      "16292398 fix(coding-agent): send forced system prompts without recording them",
+      "e4c75a73 fix(coding-agent): replace the system prompt when a handler forces it",
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/uuid.ts",
+    "local": "packages/ai/src/utils/uuid.ts",
+    "status": "base",
+    "commits": [
+      "ef378654 feat(ai): support UUIDv7 follower timestamps"
+    ]
+  },
+  {
+    "file": "packages/ai/src/utils/validation.ts",
+    "local": "packages/ai/src/utils/validation.ts",
+    "status": "base",
+    "commits": [
+      "7915cdac feat(ai): add strict tool schema conversion"
+    ]
+  },
+  {
+    "file": "packages/ai/test/abort.test.ts",
+    "local": "packages/ai/test/abort.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "28fd5908 fix(ai,coding-agent): replace removed Together Kimi K2.6 with Kimi K3",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)",
+      "639a4664 fix(ai): update Anthropic abort test model"
+    ]
+  },
+  {
+    "file": "packages/ai/test/anthropic-adaptive-thinking-models.test.ts",
+    "local": "packages/ai/test/anthropic-adaptive-thinking-models.test.ts",
+    "status": "base",
+    "commits": [
+      "6f755151 fix(ai,coding-agent): update Fireworks tests and default for removed models",
+      "519184eb fix(ai): accept Fireworks models in adaptive thinking metadata test",
+      "c0947e64 fix(ai): remove stale adaptive thinking model expectation"
+    ]
+  },
+  {
+    "file": "packages/ai/test/anthropic-auth-token.test.ts",
+    "local": "packages/ai/test/anthropic-auth-token.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort",
+      "87af49de Add pi user-agent to most api adapters (#8361)",
+      "9d2ec7ff fix(ai): use pi user agent for Kimi Coding requests"
+    ]
+  },
+  {
+    "file": "packages/ai/test/anthropic-cache-write-1h-cost.test.ts",
+    "local": "packages/ai/test/anthropic-cache-write-1h-cost.test.ts",
+    "status": "base",
+    "commits": [
+      "667fc3dd fix(ai): price Vercel AI Gateway 1-hour cache writes correctly",
+      "9e05370b Mid conversation system messages (#9548)",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort"
+    ]
+  },
+  {
+    "file": "packages/ai/test/anthropic-eager-tool-input-compat.test.ts",
+    "local": "packages/ai/test/anthropic-eager-tool-input-compat.test.ts",
+    "status": "base",
+    "commits": [
+      "295cc72b fix(ai): send Anthropic tools non-strict when schema has rejected keywords",
+      "9e05370b Mid conversation system messages (#9548)",
+      "7915cdac feat(ai): add strict tool schema conversion"
+    ]
+  },
+  {
+    "file": "packages/ai/test/anthropic-empty-thinking-signature-compat.test.ts",
+    "local": "packages/ai/test/anthropic-empty-thinking-signature-compat.test.ts",
+    "status": "base",
+    "commits": [
+      "6f755151 fix(ai,coding-agent): update Fireworks tests and default for removed models",
+      "3955b27a fix(ai): preserve Vercel AI Gateway unsigned thinking",
+      "6b94ae2e fix(ai): preserve Fireworks thinking and native effort levels"
+    ]
+  },
+  {
+    "file": "packages/ai/test/anthropic-federation-sdk.test.ts",
+    "local": "packages/ai/test/anthropic-federation-sdk.test.ts",
+    "status": "missing",
+    "commits": [
+      "a9424cd4 feat(ai): Anthropic workload identity federation (#10242)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/anthropic-federation.test.ts",
+    "local": "packages/ai/test/anthropic-federation.test.ts",
+    "status": "missing",
+    "commits": [
+      "a9424cd4 feat(ai): Anthropic workload identity federation (#10242)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/anthropic-mid-conversation-effort.test.ts",
+    "local": "packages/ai/test/anthropic-mid-conversation-effort.test.ts",
+    "status": "missing",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort"
+    ]
+  },
+  {
+    "file": "packages/ai/test/anthropic-oauth.test.ts",
+    "local": "packages/ai/test/anthropic-oauth.test.ts",
+    "status": "base",
+    "commits": [
+      "7a11fe1c feat(ai): add copy code login method to Anthropic OAuth (#10194)",
+      "4df15743 feat(ai,coding-agent): share OAuth callback server and sign-in page"
+    ]
+  },
+  {
+    "file": "packages/ai/test/anthropic-sse-parsing.test.ts",
+    "local": "packages/ai/test/anthropic-sse-parsing.test.ts",
+    "status": "base",
+    "commits": [
+      "bf8e4b95 feat(coding-agent,tui): System theme (#10067)",
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "1283afd0 fix(ai): preserve thinking replay through renamed Anthropic models",
+      "9e05370b Mid conversation system messages (#9548)",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort"
+    ]
+  },
+  {
+    "file": "packages/ai/test/anthropic-strict-tool-schema.test.ts",
+    "local": "packages/ai/test/anthropic-strict-tool-schema.test.ts",
+    "status": "missing",
+    "commits": [
+      "295cc72b fix(ai): send Anthropic tools non-strict when schema has rejected keywords"
+    ]
+  },
+  {
+    "file": "packages/ai/test/anthropic-thinking-binding-e2e.test.ts",
+    "local": "packages/ai/test/anthropic-thinking-binding-e2e.test.ts",
+    "status": "missing",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort"
+    ]
+  },
+  {
+    "file": "packages/ai/test/assistant-message-frame.test.ts",
+    "local": "packages/ai/test/assistant-message-frame.test.ts",
+    "status": "missing",
+    "commits": [
+      "0fdec07b fix(ai): preserve provider thinking level in frames",
+      "8b5899dc fix(ai): restore stream compatibility",
+      "5c6655e7 fix(agent): make durable assistant framing burst-safe",
+      "a829de0a feat(ai): add assistant message frame reducer"
+    ]
+  },
+  {
+    "file": "packages/ai/test/azure-openai-base-url.test.ts",
+    "local": "packages/ai/test/azure-openai-base-url.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "87af49de Add pi user-agent to most api adapters (#8361)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/azure-openai-responses-reasoning-replay.test.ts",
+    "local": "packages/ai/test/azure-openai-responses-reasoning-replay.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/azure-openai-tool-choice.test.ts",
+    "local": "packages/ai/test/azure-openai-tool-choice.test.ts",
+    "status": "missing",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "e5dde9a7 feat(ai): add simple tool choice option",
+      "9117326b fix(ai): forward Azure Responses tool choice"
+    ]
+  },
+  {
+    "file": "packages/ai/test/baseten-models.test.ts",
+    "local": "packages/ai/test/baseten-models.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "3316c4e3 fix: repair Baseten and coding-agent test checks",
+      "22940a62 fix(ai): keep Baseten GLM-5.2 text-only (#8293)",
+      "ad58801c fix(ai): update Baseten GLM input modalities"
+    ]
+  },
+  {
+    "file": "packages/ai/test/bedrock-cache-write-1h-cost.test.ts",
+    "local": "packages/ai/test/bedrock-cache-write-1h-cost.test.ts",
+    "status": "missing",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "4c2d9133 fix(coding-agent): export extension event hook types (#9642)",
+      "8a7b0c03 fix(ai): price Bedrock one-hour cache writes"
+    ]
+  },
+  {
+    "file": "packages/ai/test/bedrock-convert-messages.test.ts",
+    "local": "packages/ai/test/bedrock-convert-messages.test.ts",
+    "status": "base",
+    "commits": [
+      "cf8d5fac feat(agent): add Pico storage foundation",
+      "9e05370b Mid conversation system messages (#9548)",
+      "98145a6c fix(ai): sanitize empty Bedrock tool argument keys (#7882)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/bedrock-custom-headers.test.ts",
+    "local": "packages/ai/test/bedrock-custom-headers.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/bedrock-error-metadata.test.ts",
+    "local": "packages/ai/test/bedrock-error-metadata.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/bedrock-raw-stop-reason.test.ts",
+    "local": "packages/ai/test/bedrock-raw-stop-reason.test.ts",
+    "status": "base",
+    "commits": [
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/bedrock-redacted-reasoning.test.ts",
+    "local": "packages/ai/test/bedrock-redacted-reasoning.test.ts",
+    "status": "missing",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "d57e531f fix(ai): round-trip Bedrock redacted reasoning (#8314)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/bedrock-response-headers.test.ts",
+    "local": "packages/ai/test/bedrock-response-headers.test.ts",
+    "status": "missing",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "10acee60 fix(ai): bedrock response to include smithy headers (#8243)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/bedrock-thinking-payload.test.ts",
+    "local": "packages/ai/test/bedrock-thinking-payload.test.ts",
+    "status": "base",
+    "commits": [
+      "69f0be6f fix(ai): drop stale thinking blocks on Bedrock Claude replays",
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/cache-retention.test.ts",
+    "local": "packages/ai/test/cache-retention.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider",
+      "ebced834 fix(ai): update tests for removed OpenCode Go Kimi K2.6",
+      "db91e033 feat(ai,coding-agent): add GPT-6 Sol and Luna support",
+      "8bfef4de fix(ai): update strict mode test expectations",
+      "af7359b9 fix(ai): exclude Cerebras from supportsStrictMode (#9804)",
+      "c596d09d feat(coding-agent): add prompt cache warming (#9668)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "17de82d7 feat(ai): add GPT-6 Astra support"
+    ]
+  },
+  {
+    "file": "packages/ai/test/classifier-models.test.ts",
+    "local": "packages/ai/test/classifier-models.test.ts",
+    "status": "missing",
+    "commits": [
+      "33e20335 feat(ai): expose Jev on Vercel AI Gateway and OpenCode Zen",
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/cloudflare-ai-binding.test.ts",
+    "local": "packages/ai/test/cloudflare-ai-binding.test.ts",
+    "status": "missing",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "55adba4f Replace the AI Gateway binding shim with a plain binding fetch (#8287)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/cloudflare-stream.test.ts",
+    "local": "packages/ai/test/cloudflare-stream.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/cloudflare-workers-ai-system-one.test.ts",
+    "local": "packages/ai/test/cloudflare-workers-ai-system-one.test.ts",
+    "status": "missing",
+    "commits": [
+      "4812cb26 feat(ai): add Cloudflare Clef classifiers to Workers AI (#10316)",
+      "89a5c7bd feat(ai): report token usage and cost for System One classify results",
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI"
+    ]
+  },
+  {
+    "file": "packages/ai/test/codex-websocket-cached-probe.ts",
+    "local": "packages/ai/test/codex-websocket-cached-probe.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/constrained-sampling.test.ts",
+    "local": "packages/ai/test/constrained-sampling.test.ts",
+    "status": "base",
+    "commits": [
+      "bc2d8dc1 fix(ai): drop mismatched item ids when replaying grammar tool calls",
+      "cf8d5fac feat(agent): add Pico storage foundation",
+      "9e05370b Mid conversation system messages (#9548)",
+      "8b5899dc fix(ai): restore stream compatibility",
+      "7915cdac feat(ai): add strict tool schema conversion"
+    ]
+  },
+  {
+    "file": "packages/ai/test/context-estimate.test.ts",
+    "local": "packages/ai/test/context-estimate.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/context-overflow.test.ts",
+    "local": "packages/ai/test/context-overflow.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "28fd5908 fix(ai,coding-agent): replace removed Together Kimi K2.6 with Kimi K3",
+      "ea9e0935 fix(ai): update tests for current model catalogs",
+      "afae6a1a fix(ai): update stale Gemini test model",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/cross-provider-handoff.test.ts",
+    "local": "packages/ai/test/cross-provider-handoff.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "28fd5908 fix(ai,coding-agent): replace removed Together Kimi K2.6 with Kimi K3",
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/deferred-tools.test.ts",
+    "local": "packages/ai/test/deferred-tools.test.ts",
+    "status": "deleted-upstream",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "2e6fe2f9 fix(ai): remove retired GPT-5.4 Codex models",
+      "e47b8e37 feat(ai): use additional_tools for deferred tools"
+    ]
+  },
+  {
+    "file": "packages/ai/test/empty.test.ts",
+    "local": "packages/ai/test/empty.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "28fd5908 fix(ai,coding-agent): replace removed Together Kimi K2.6 with Kimi K3",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/event-stream.test.ts",
+    "local": "packages/ai/test/event-stream.test.ts",
+    "status": "missing",
+    "commits": [
+      "b2602be7 fix(ai): optimize EventStream queue"
+    ]
+  },
+  {
+    "file": "packages/ai/test/fetch-option.test.ts",
+    "local": "packages/ai/test/fetch-option.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/fireworks-model-generation.test.ts",
+    "local": "packages/ai/test/fireworks-model-generation.test.ts",
+    "status": "missing",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "7d5eb0ee fix(ai): mock Radius in model generation tests",
+      "9e05370b Mid conversation system messages (#9548)",
+      "6b94ae2e fix(ai): preserve Fireworks thinking and native effort levels"
+    ]
+  },
+  {
+    "file": "packages/ai/test/fireworks-models.test.ts",
+    "local": "packages/ai/test/fireworks-models.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "6f755151 fix(ai,coding-agent): update Fireworks tests and default for removed models",
+      "8bfef4de fix(ai): update strict mode test expectations",
+      "9e05370b Mid conversation system messages (#9548)",
+      "d92eb8d4 feat(ai): enable Fireworks Messages deferred tool loading",
+      "bbb61e34 fix(ai): send OpenRouter session affinity headers by default",
+      "6b94ae2e fix(ai): preserve Fireworks thinking and native effort levels",
+      "56f3f33a fix(ai): remove retired Fireworks turbo router test",
+      "b9497c8c fix(ai): correct Fireworks GLM prompt caching, closes #7676"
+    ]
+  },
+  {
+    "file": "packages/ai/test/generate-models-strict.test.ts",
+    "local": "packages/ai/test/generate-models-strict.test.ts",
+    "status": "missing",
+    "commits": [
+      "265a3339 fix(ai): add Qwen3.8 Flash to individual token plan",
+      "6db110e6 fix(ai): add Qwen Token Plan Individual DeepSeek V4 Pro 0813",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/github-copilot-anthropic.test.ts",
+    "local": "packages/ai/test/github-copilot-anthropic.test.ts",
+    "status": "base",
+    "commits": [
+      "27c072e9 feat(ai,coding-agent): add new Copilot models",
+      "9e05370b Mid conversation system messages (#9548)",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort"
+    ]
+  },
+  {
+    "file": "packages/ai/test/github-copilot-oauth.test.ts",
+    "local": "packages/ai/test/github-copilot-oauth.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "ef41a24b fix(ai): keep Copilot tests aligned with current model catalog",
+      "55b0db4d fix(ai): prevent copilot policy login rate limits (#8254)",
+      "086c32e7 fix(ai): retry Copilot GET /models once on 429 during login",
+      "d5278eaa fix(ai): enable Copilot model policies sequentially during login",
+      "b3edf017 fix(ai): bound Copilot policy update concurrency",
+      "14cc26e8 fix(ai): restore Copilot models from account policy (#7672)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/google-raw-stop-reason.test.ts",
+    "local": "packages/ai/test/google-raw-stop-reason.test.ts",
+    "status": "base",
+    "commits": [
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "87af49de Add pi user-agent to most api adapters (#8361)",
+      "5093641a fix(ai): preserve Google length stops with tool calls"
+    ]
+  },
+  {
+    "file": "packages/ai/test/google-shared-gemini3-unsigned-tool-call.test.ts",
+    "local": "packages/ai/test/google-shared-gemini3-unsigned-tool-call.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/google-shared-image-tool-result-routing.test.ts",
+    "local": "packages/ai/test/google-shared-image-tool-result-routing.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/google-shared-signed-empty-blocks.test.ts",
+    "local": "packages/ai/test/google-shared-signed-empty-blocks.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/google-thinking-level-map.test.ts",
+    "local": "packages/ai/test/google-thinking-level-map.test.ts",
+    "status": "missing",
+    "commits": [
+      "16235fd9 fix(ai): avoid unsupported Gemini thinking levels",
+      "9e05370b Mid conversation system messages (#9548)",
+      "af2c3522 fix(ai): honor Google thinking level maps"
+    ]
+  },
+  {
+    "file": "packages/ai/test/google-vertex-api-key-resolution.test.ts",
+    "local": "packages/ai/test/google-vertex-api-key-resolution.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "87af49de Add pi user-agent to most api adapters (#8361)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/image-model-data.test.ts",
+    "local": "packages/ai/test/image-model-data.test.ts",
+    "status": "base",
+    "commits": [
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/image-tool-result.test.ts",
+    "local": "packages/ai/test/image-tool-result.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "28fd5908 fix(ai,coding-agent): replace removed Together Kimi K2.6 with Kimi K3",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/images-models.test.ts",
+    "local": "packages/ai/test/images-models.test.ts",
+    "status": "base",
+    "commits": [
+      "56746909 feat(tui,coding-agent): add color values and theme styling (#8398)",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/images.test.ts",
+    "local": "packages/ai/test/images.test.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/lazy-module-load.test.ts",
+    "local": "packages/ai/test/lazy-module-load.test.ts",
+    "status": "base",
+    "commits": [
+      "9dd90a49 fix(ai): replace Mistral SDK with native transport"
+    ]
+  },
+  {
+    "file": "packages/ai/test/llama-cpp-classify.test.ts",
+    "local": "packages/ai/test/llama-cpp-classify.test.ts",
+    "status": "missing",
+    "commits": [
+      "04efdfc3 feat(ai): Discount jev (#10119)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/max-thinking.test.ts",
+    "local": "packages/ai/test/max-thinking.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "12c416e1 feat(ai,coding-agent): add GPT-6.1 Sol and make it the Codex default",
+      "db91e033 feat(ai,coding-agent): add GPT-6 Sol and Luna support",
+      "9e05370b Mid conversation system messages (#9548)",
+      "17de82d7 feat(ai): add GPT-6 Astra support"
+    ]
+  },
+  {
+    "file": "packages/ai/test/message-types.test.ts",
+    "local": "packages/ai/test/message-types.test.ts",
+    "status": "missing",
+    "commits": [
+      "cf8d5fac feat(agent): add Pico storage foundation"
+    ]
+  },
+  {
+    "file": "packages/ai/test/meta-oauth.test.ts",
+    "local": "packages/ai/test/meta-oauth.test.ts",
+    "status": "missing",
+    "commits": [
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/mistral-http-transport.test.ts",
+    "local": "packages/ai/test/mistral-http-transport.test.ts",
+    "status": "missing",
+    "commits": [
+      "8930b9ec fix(ai): ignore empty Mistral content deltas",
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "6c87d9a0 fix(ai): merge indexed Mistral tool call chunks",
+      "87af49de Add pi user-agent to most api adapters (#8361)",
+      "9dd90a49 fix(ai): replace Mistral SDK with native transport"
+    ]
+  },
+  {
+    "file": "packages/ai/test/mistral-raw-stop-reason.test.ts",
+    "local": "packages/ai/test/mistral-raw-stop-reason.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "9dd90a49 fix(ai): replace Mistral SDK with native transport"
+    ]
+  },
+  {
+    "file": "packages/ai/test/mistral-reasoning-mode.test.ts",
+    "local": "packages/ai/test/mistral-reasoning-mode.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "dc84c1ac fix(ai): send requested thinking level to Mistral reasoning models",
+      "9e05370b Mid conversation system messages (#9548)",
+      "4bd3f48d fix(ai): enable GLM-5.2 reasoning on Mistral",
+      "96617628 fix(ai): use reasoning_effort for reasoning-capable mistral-medium-* models"
+    ]
+  },
+  {
+    "file": "packages/ai/test/model-catalog-types.test.ts",
+    "local": "packages/ai/test/model-catalog-types.test.ts",
+    "status": "base",
+    "commits": [
+      "27c072e9 feat(ai,coding-agent): add new Copilot models",
+      "1a584a7a feat(ai,coding-agent): add Grok 4.7 support",
+      "7d8ab31a fix(ai): route Copilot GPT models through Responses (#9253)",
+      "70e878d4 feat(ai): route xAI models through Responses and default to Grok 4.6 (#8124)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/model-data-validation.test.ts",
+    "local": "packages/ai/test/model-data-validation.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "c71a496f feat(coding-agent): add Nix flake (#9137)",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/model-types.test.ts",
+    "local": "packages/ai/test/model-types.test.ts",
+    "status": "missing",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/models-entry.test.ts",
+    "local": "packages/ai/test/models-entry.test.ts",
+    "status": "missing",
+    "commits": [
+      "ba7d5fbe feat(ai,durable): add lightweight pi-ai/models entry and avoid TypeBox in durable"
+    ]
+  },
+  {
+    "file": "packages/ai/test/models-runtime.test.ts",
+    "local": "packages/ai/test/models-runtime.test.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/node-http-proxy.test.ts",
+    "local": "packages/ai/test/node-http-proxy.test.ts",
+    "status": "base",
+    "commits": [
+      "a63fb12c fix(ai): match subdomains and root domains in NO_PROXY (#8737)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/oauth-auth.test.ts",
+    "local": "packages/ai/test/oauth-auth.test.ts",
+    "status": "base",
+    "commits": [
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider",
+      "b0bd0ff9 fix(coding-agent): only label known subscriptions in footer"
+    ]
+  },
+  {
+    "file": "packages/ai/test/oauth-callback-server.test.ts",
+    "local": "packages/ai/test/oauth-callback-server.test.ts",
+    "status": "missing",
+    "commits": [
+      "233f1744 fix(ai): use color Pi logo on OAuth pages",
+      "4df15743 feat(ai,coding-agent): share OAuth callback server and sign-in page"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-chatgpt-oauth.test.ts",
+    "local": "packages/ai/test/openai-chatgpt-oauth.test.ts",
+    "status": "missing",
+    "commits": [
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-codex-oauth.test.ts",
+    "local": "packages/ai/test/openai-codex-oauth.test.ts",
+    "status": "base",
+    "commits": [
+      "4df15743 feat(ai,coding-agent): share OAuth callback server and sign-in page"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-codex-stream.test.ts",
+    "local": "packages/ai/test/openai-codex-stream.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "64eeb82a fix(ai): process unterminated Codex SSE terminal events",
+      "9d2ec7ff fix(ai): use pi user agent for Kimi Coding requests",
+      "c3e7bc60 feat(ai): preserve Codex end_turn for debugging (#7766)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-completions-cache-control-format.test.ts",
+    "local": "packages/ai/test/openai-completions-cache-control-format.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-completions-empty-tools.test.ts",
+    "local": "packages/ai/test/openai-completions-empty-tools.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "aa23e784 fix(coding-agent): update repository links to \"earendil-works/pi\" (#9278)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-completions-prompt-cache.test.ts",
+    "local": "packages/ai/test/openai-completions-prompt-cache.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "6f755151 fix(ai,coding-agent): update Fireworks tests and default for removed models",
+      "9e05370b Mid conversation system messages (#9548)",
+      "6671c604 fix(ai): send Baseten session affinity headers",
+      "bbb61e34 fix(ai): send OpenRouter session affinity headers by default",
+      "b9497c8c fix(ai): correct Fireworks GLM prompt caching, closes #7676"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-completions-provider-stream-event.test.ts",
+    "local": "packages/ai/test/openai-completions-provider-stream-event.test.ts",
+    "status": "missing",
+    "commits": [
+      "002fc838 feat: expose provider stream events to extensions (#9901)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-completions-raw-stop-reason.test.ts",
+    "local": "packages/ai/test/openai-completions-raw-stop-reason.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-completions-reasoning-details.test.ts",
+    "local": "packages/ai/test/openai-completions-reasoning-details.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "c5ad7c1b fix(ai): concatenate openai completions reasoning deltas (#8605)",
+      "b7bb00b9 fix(ai): retain reasoning details in thinking signature",
+      "4ca636c5 feat(ai): opeani completions reasoning details (#8246)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-completions-retry.test.ts",
+    "local": "packages/ai/test/openai-completions-retry.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-completions-thinking-as-text.test.ts",
+    "local": "packages/ai/test/openai-completions-thinking-as-text.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "256f6302 feat(ai): add vllmPriority compat flag for vLLM scheduler priority (#9004)",
+      "b2374126 feat(ai): generalize openai-completions thinking token budget fields (#8275)",
+      "d07889da feat(ai): support thinking_token_budget on openai-completions (#7638)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-completions-thinking-token-budget.test.ts",
+    "local": "packages/ai/test/openai-completions-thinking-token-budget.test.ts",
+    "status": "missing",
+    "commits": [
+      "b2374126 feat(ai): generalize openai-completions thinking token budget fields (#8275)",
+      "d07889da feat(ai): support thinking_token_budget on openai-completions (#7638)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-completions-tool-choice.test.ts",
+    "local": "packages/ai/test/openai-completions-tool-choice.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "ebced834 fix(ai): update tests for removed OpenCode Go Kimi K2.6",
+      "890f9208 fix(ai): default unknown providers to non-strict tools (closes #9816)",
+      "ea9e0935 fix(ai): update tests for current model catalogs",
+      "9e05370b Mid conversation system messages (#9548)",
+      "713bdf38 Revert \"fix(ai): update stale DeepSeek Flash test model IDs\"",
+      "e8413008 fix(ai): update stale DeepSeek Flash test model IDs",
+      "12f59336 fix(ai): update DeepSeek Flash catalog",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort",
+      "6b36eb59 fix(coding-agent): remove explicit tool choice from compaction calls",
+      "fe37e9f9 fix(ai): omit tool_choice without tools closes #8607",
+      "3de00332 fix(ai): derive Z.AI reasoning effort metadata",
+      "b647d187 fix(ai): detect DeepSeek base URLs case-insensitively (#7933)",
+      "c185d412 fix(ai): send max_tokens to DeepSeek APIs",
+      "f0feecd7 fix(ai): update OpenCode completions fixture",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-completions-tool-result-images.test.ts",
+    "local": "packages/ai/test/openai-completions-tool-result-images.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "1b6ddca8 fix(ai): omit empty text parts from multimodal user messages",
+      "9e05370b Mid conversation system messages (#9548)",
+      "256f6302 feat(ai): add vllmPriority compat flag for vLLM scheduler priority (#9004)",
+      "b2374126 feat(ai): generalize openai-completions thinking token budget fields (#8275)",
+      "d07889da feat(ai): support thinking_token_budget on openai-completions (#7638)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-completions-vllm-priority.test.ts",
+    "local": "packages/ai/test/openai-completions-vllm-priority.test.ts",
+    "status": "missing",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "256f6302 feat(ai): add vllmPriority compat flag for vLLM scheduler priority (#9004)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-responses-chatgpt-sign-in.test.ts",
+    "local": "packages/ai/test/openai-responses-chatgpt-sign-in.test.ts",
+    "status": "missing",
+    "commits": [
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-responses-compat.test.ts",
+    "local": "packages/ai/test/openai-responses-compat.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider",
+      "a6ca8610 fix(ai): price OpenAI Fast mode service tier like priority",
+      "db91e033 feat(ai,coding-agent): add GPT-6 Sol and Luna support",
+      "9e05370b Mid conversation system messages (#9548)",
+      "b8b873b9 fix(ai): add supportsMaxOutputTokens compat flag for openai-responses (#8941)",
+      "75c7fd66 fix(ai): declare Cloudflare Responses strict tools (#7934)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-responses-empty-tool-result.test.ts",
+    "local": "packages/ai/test/openai-responses-empty-tool-result.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-responses-foreign-toolcall-id.test.ts",
+    "local": "packages/ai/test/openai-responses-foreign-toolcall-id.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-responses-message-id.test.ts",
+    "local": "packages/ai/test/openai-responses-message-id.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-responses-namespace.test.ts",
+    "local": "packages/ai/test/openai-responses-namespace.test.ts",
+    "status": "missing",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "1a7bc80e feat: move service wire semantics into Chord",
+      "02bd2d1c fix(ai): preserve Responses tool-call namespaces"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-responses-terminal-event.test.ts",
+    "local": "packages/ai/test/openai-responses-terminal-event.test.ts",
+    "status": "base",
+    "commits": [
+      "1b2aa0ca fix(ai): reject unfinished Responses tool calls instead of running them",
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openai-responses-usage-limit.test.ts",
+    "local": "packages/ai/test/openai-responses-usage-limit.test.ts",
+    "status": "missing",
+    "commits": [
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider"
+    ]
+  },
+  {
+    "file": "packages/ai/test/opencode-provider-headers.test.ts",
+    "local": "packages/ai/test/opencode-provider-headers.test.ts",
+    "status": "missing",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "561a2e06 fix(ai): send OpenCode session header"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openrouter-cache-control-models.test.ts",
+    "local": "packages/ai/test/openrouter-cache-control-models.test.ts",
+    "status": "base",
+    "commits": [
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openrouter-images.test.ts",
+    "local": "packages/ai/test/openrouter-images.test.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openrouter-oauth.test.ts",
+    "local": "packages/ai/test/openrouter-oauth.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/openrouter-reasoning-options.test.ts",
+    "local": "packages/ai/test/openrouter-reasoning-options.test.ts",
+    "status": "missing",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "650e7a61 fix(ai): derive OpenRouter reasoning controls (#8614)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/overflow.test.ts",
+    "local": "packages/ai/test/overflow.test.ts",
+    "status": "base",
+    "commits": [
+      "3dd803d7 fix(ai): detect Z.AI CN endpoint context overflow errors",
+      "0e283203 fix(ai): detect z.ai prompt-too-long errors",
+      "661619e8 fix(ai): scope bodyless overflow errors to Cerebras"
+    ]
+  },
+  {
+    "file": "packages/ai/test/pi-messages.test.ts",
+    "local": "packages/ai/test/ice-messages.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "002fc838 feat: expose provider stream events to extensions (#9901)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "4e69b0c2 feat(ai): preserve Anthropic per-turn thinking effort",
+      "e5dde9a7 feat(ai): add simple tool choice option"
+    ]
+  },
+  {
+    "file": "packages/ai/test/pre-generation-error.test.ts",
+    "local": "packages/ai/test/pre-generation-error.test.ts",
+    "status": "missing",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)",
+      "8b5899dc fix(ai): restore stream compatibility",
+      "5c6655e7 fix(agent): make durable assistant framing burst-safe"
+    ]
+  },
+  {
+    "file": "packages/ai/test/provider-error-body-passthrough.test.ts",
+    "local": "packages/ai/test/provider-error-body-passthrough.test.ts",
+    "status": "base",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/provider-error-body-regression.test.ts",
+    "local": "packages/ai/test/provider-error-body-regression.test.ts",
+    "status": "base",
+    "commits": [
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/providers.test.ts",
+    "local": "packages/ai/test/providers.test.ts",
+    "status": "base",
+    "commits": [
+      "6f755151 fix(ai,coding-agent): update Fireworks tests and default for removed models",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "f5c94648 feat(ai,coding-agent): add image input limits (closes #9631)",
+      "4d38031f feat(ai): ship Radius model catalog",
+      "aa50fe77 fix(ai): derive Google thinking levels from models.dev",
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/qwen-token-plan-models.test.ts",
+    "local": "packages/ai/test/qwen-token-plan-models.test.ts",
+    "status": "base",
+    "commits": [
+      "265a3339 fix(ai): add Qwen3.8 Flash to individual token plan",
+      "6db110e6 fix(ai): add Qwen Token Plan Individual DeepSeek V4 Pro 0813",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)",
+      "2f7f75a2 fix(ai): replace qwen3.8-max-preview with qwen3.8-max on token plan (#7670)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/radius-oauth.test.ts",
+    "local": "packages/ai/test/radius-oauth.test.ts",
+    "status": "base",
+    "commits": [
+      "4df15743 feat(ai,coding-agent): share OAuth callback server and sign-in page"
+    ]
+  },
+  {
+    "file": "packages/ai/test/radius-provider.test.ts",
+    "local": "packages/ai/test/radius-provider.test.ts",
+    "status": "missing",
+    "commits": [
+      "4d38031f feat(ai): ship Radius model catalog"
+    ]
+  },
+  {
+    "file": "packages/ai/test/retry.test.ts",
+    "local": "packages/ai/test/retry.test.ts",
+    "status": "base",
+    "commits": [
+      "02eed88f feat(ai,coding-agent): add alternative sign in for the openai provider",
+      "e98f287e fix(ai): retry Azure peak-load capacity errors",
+      "e5d18382 fix(ai): retry Cloudflare 520 responses",
+      "c37b0e03 fix: cap agent retry backoff",
+      "fe10558e fix(ai): retry upstream request buffer failures"
+    ]
+  },
+  {
+    "file": "packages/ai/test/sampling-options.test.ts",
+    "local": "packages/ai/test/sampling-options.test.ts",
+    "status": "base",
+    "commits": [
+      "76dfb88f feat(ai): add per-thinking-level sampling parameters (#9776)",
+      "c01f687e fix(ai): apply model samplingParams in direct stream()/complete() calls"
+    ]
+  },
+  {
+    "file": "packages/ai/test/stream.test.ts",
+    "local": "packages/ai/test/stream.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "49b9df48 fix(coding-agent): default NVIDIA to Nemotron 3 Ultra",
+      "c10bfb0d fix(ai): use dashed Claude model IDs for Cloudflare AI Gateway",
+      "28fd5908 fix(ai,coding-agent): replace removed Together Kimi K2.6 with Kimi K3",
+      "1a584a7a feat(ai,coding-agent): add Grok 4.7 support",
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)",
+      "cf8d5fac feat(agent): add Pico storage foundation",
+      "713bdf38 Revert \"fix(ai): update stale DeepSeek Flash test model IDs\"",
+      "e8413008 fix(ai): update stale DeepSeek Flash test model IDs",
+      "2e6fe2f9 fix(ai): remove retired GPT-5.4 Codex models",
+      "12f59336 fix(ai): update DeepSeek Flash catalog",
+      "1c28f303 fix(ai): update cloudflare gateway sonnet test id (#8260)",
+      "70e878d4 feat(ai): route xAI models through Responses and default to Grok 4.6 (#8124)",
+      "9dd90a49 fix(ai): replace Mistral SDK with native transport",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/supports-xhigh.test.ts",
+    "local": "packages/ai/test/supports-xhigh.test.ts",
+    "status": "base",
+    "commits": [
+      "12c416e1 feat(ai,coding-agent): add GPT-6.1 Sol and make it the Codex default",
+      "c90d9ea5 feat(ai,coding-agent): add Claude Sonnet 5.5 support",
+      "ebced834 fix(ai): update tests for removed OpenCode Go Kimi K2.6",
+      "db91e033 feat(ai,coding-agent): add GPT-6 Sol and Luna support",
+      "b4588f26 feat(ai,coding-agent): add Claude Opus 5.5 support",
+      "bb0f4aa6 fix(ai): preserve DeepSeek V4 effort metadata",
+      "713bdf38 Revert \"fix(ai): update stale DeepSeek Flash test model IDs\"",
+      "e8413008 fix(ai): update stale DeepSeek Flash test model IDs",
+      "2e6fe2f9 fix(ai): remove retired GPT-5.4 Codex models",
+      "12f59336 fix(ai): update DeepSeek Flash catalog",
+      "17de82d7 feat(ai): add GPT-6 Astra support",
+      "86d001d3 fix(ai): expose low thinking level for DeepSeek V4 Flash on opencode/opencode-go (#8181)",
+      "70e878d4 feat(ai): route xAI models through Responses and default to Grok 4.6 (#8124)",
+      "2f8b4b42 fix(ai): expose low reasoning effort for native DeepSeek V4 Flash (#7807)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/system-message-replay.test.ts",
+    "local": "packages/ai/test/system-message-replay.test.ts",
+    "status": "missing",
+    "commits": [
+      "16292398 fix(coding-agent): send forced system prompts without recording them",
+      "e4c75a73 fix(coding-agent): replace the system prompt when a handler forces it",
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/telemetry-options.test.ts",
+    "local": "packages/ai/test/telemetry-options.test.ts",
+    "status": "missing",
+    "commits": [
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)",
+      "9e05370b Mid conversation system messages (#9548)",
+      "6b461b75 feat: extract telemetry package",
+      "04d6447f feat: add typed telemetry contracts"
+    ]
+  },
+  {
+    "file": "packages/ai/test/together-models.test.ts",
+    "local": "packages/ai/test/together-models.test.ts",
+    "status": "base",
+    "commits": [
+      "28eaccb8 fix(ai): update Together DeepSeek V4 Pro model ID (#10336)",
+      "28fd5908 fix(ai,coding-agent): replace removed Together Kimi K2.6 with Kimi K3"
+    ]
+  },
+  {
+    "file": "packages/ai/test/tokens.test.ts",
+    "local": "packages/ai/test/tokens.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "28fd5908 fix(ai,coding-agent): replace removed Together Kimi K2.6 with Kimi K3",
+      "b73412a3 feat(ai,coding-agent): add Meta provider with Muse subscription OAuth (#9096)",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/tool-call-id-normalization.test.ts",
+    "local": "packages/ai/test/tool-call-id-normalization.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "aa23e784 fix(coding-agent): update repository links to \"earendil-works/pi\" (#9278)",
+      "ef41a24b fix(ai): keep Copilot tests aligned with current model catalog"
+    ]
+  },
+  {
+    "file": "packages/ai/test/tool-call-without-result.test.ts",
+    "local": "packages/ai/test/tool-call-without-result.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "28fd5908 fix(ai,coding-agent): replace removed Together Kimi K2.6 with Kimi K3",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/total-tokens.test.ts",
+    "local": "packages/ai/test/total-tokens.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "28fd5908 fix(ai,coding-agent): replace removed Together Kimi K2.6 with Kimi K3",
+      "afae6a1a fix(ai): update stale Gemini test model",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/transcript-tool-changes.test.ts",
+    "local": "packages/ai/test/transcript-tool-changes.test.ts",
+    "status": "missing",
+    "commits": [
+      "b271b0a5 feat(ai): define Anthropic mid-conversation tools inline",
+      "9e05370b Mid conversation system messages (#9548)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/typesafe-system-one.test.ts",
+    "local": "packages/ai/test/typesafe-system-one.test.ts",
+    "status": "missing",
+    "commits": [
+      "89a5c7bd feat(ai): report token usage and cost for System One classify results",
+      "04efdfc3 feat(ai): Discount jev (#10119)",
+      "a7d17e39 feat(ai): serve Jev classifier through OpenRouter and Cloudflare Workers AI",
+      "a328aa89 feat(ai,coding-agent): unify image and classifier model infrastructure (#9948)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/unicode-surrogate.test.ts",
+    "local": "packages/ai/test/unicode-surrogate.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "28fd5908 fix(ai,coding-agent): replace removed Together Kimi K2.6 with Kimi K3",
+      "c03d78bd feat(ai): add Qwen Token Plan Individual provider (#7659)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/uuid.test.ts",
+    "local": "packages/ai/test/uuid.test.ts",
+    "status": "base",
+    "commits": [
+      "ef378654 feat(ai): support UUIDv7 follower timestamps"
+    ]
+  },
+  {
+    "file": "packages/ai/test/validation.test.ts",
+    "local": "packages/ai/test/validation.test.ts",
+    "status": "base",
+    "commits": [
+      "cf8d5fac feat(agent): add Pico storage foundation",
+      "7915cdac feat(ai): add strict tool schema conversion"
+    ]
+  },
+  {
+    "file": "packages/ai/test/xai-responses.test.ts",
+    "local": "packages/ai/test/xai-responses.test.ts",
+    "status": "partial/divergent",
+    "commits": [
+      "1a584a7a feat(ai,coding-agent): add Grok 4.7 support",
+      "9e05370b Mid conversation system messages (#9548)",
+      "0dbf2b76 fix(ai): remove Grok Build 0.1 from built-in xAI model catalog (#9093)",
+      "87af49de Add pi user-agent to most api adapters (#8361)",
+      "70e878d4 feat(ai): route xAI models through Responses and default to Grok 4.6 (#8124)"
+    ]
+  },
+  {
+    "file": "packages/ai/test/xiaomi-models.test.ts",
+    "local": "packages/ai/test/xiaomi-models.test.ts",
+    "status": "base",
+    "commits": [
+      "0e4d4954 fix(ai,coding-agent): remove deprecated Xiaomi models"
+    ]
+  },
+  {
+    "file": "packages/ai/test/zai-coding-plan-models.test.ts",
+    "local": "packages/ai/test/zai-coding-plan-models.test.ts",
+    "status": "missing",
+    "commits": [
+      "ea9e0935 fix(ai): update tests for current model catalogs",
+      "5cd6a2a5 fix(ai-test): update glm 5.3 price",
+      "87205484 fix(ai): use Chinese ZAI Coding Plan catalog"
+    ]
+  },
+  {
+    "file": "packages/ai/vitest.config.ts",
+    "local": "packages/ai/vitest.config.ts",
+    "status": "base",
+    "commits": [
+      "6b461b75 feat: extract telemetry package"
+    ]
+  }
+]

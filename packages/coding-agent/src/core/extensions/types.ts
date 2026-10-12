@@ -104,6 +104,17 @@ export interface ExtensionUIDialogOptions {
 	content?: string;
 }
 
+/** Options for extension notifications. */
+export interface ExtensionNotifyOptions {
+	/**
+	 * Stable notice id. Interactive mode deduplicates notices with the same id and
+	 * shows warnings/errors that carry one in the notices badge instead of the transcript.
+	 */
+	id?: string;
+	/** Notice describes ongoing process state and cannot be dismissed. Requires `id`. */
+	sticky?: boolean;
+}
+
 /** Placement for extension widgets. */
 export type WidgetPlacement = "aboveEditor" | "belowEditor";
 
@@ -111,6 +122,14 @@ export type WidgetPlacement = "aboveEditor" | "belowEditor";
 export interface ExtensionWidgetOptions {
 	/** Where the widget is rendered. Defaults to "aboveEditor". */
 	placement?: WidgetPlacement;
+	/** Explicit text projection for RPC when content is a TUI component factory. The factory is never executed by RPC. */
+	rpcText?: string[];
+}
+
+/** Options for a custom header or footer. */
+export interface ExtensionChromeOptions {
+	/** Explicit text projection for RPC. The factory is never executed by RPC. */
+	rpcText?: string[];
 }
 
 /** Raw terminal input listener for extensions. */
@@ -143,7 +162,7 @@ export interface ExtensionUIContext {
 	input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 
 	/** Show a notification to the user. */
-	notify(message: string, type?: "info" | "warning" | "error"): void;
+	notify(message: string, type?: "info" | "warning" | "error", options?: ExtensionNotifyOptions): void;
 
 	/** Listen to raw terminal input (interactive mode only). Returns an unsubscribe function. */
 	onTerminalInput(handler: TerminalInputHandler): () => void;
@@ -188,10 +207,14 @@ export interface ExtensionUIContext {
 		factory:
 			| ((tui: TUI, theme: Theme, footerData: ReadonlyFooterDataProvider) => Component & { dispose?(): void })
 			| undefined,
+		options?: ExtensionChromeOptions,
 	): void;
 
 	/** Set a custom header component (shown at startup, above chat), or undefined to restore the built-in header. */
-	setHeader(factory: ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined): void;
+	setHeader(
+		factory: ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined,
+		options?: ExtensionChromeOptions,
+	): void;
 
 	/** Set the terminal window/tab title. */
 	setTitle(title: string): void;
@@ -483,6 +506,16 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * If omitted, the default execution mode applies.
 	 */
 	executionMode?: ToolExecutionMode;
+
+	/**
+	 * ICE mode policy class for an extension tool.
+	 * - "read": never mutates workspace or external state; ICE exposes it in plan and build mode.
+	 * - "write": may mutate state; ICE exposes it only in a trusted build session.
+	 *
+	 * If omitted, ICE plan/build modes keep the tool inactive. Package tools stay behind
+	 * `--allow-external` regardless of this declaration. The tool must still enforce its own authorization.
+	 */
+	access?: "read" | "write";
 
 	/** Execute the tool. */
 	execute(
@@ -1210,48 +1243,60 @@ export interface ExtensionAPI {
 	// Event Subscription
 	// =========================================================================
 
-	on(event: "project_trust", handler: ProjectTrustHandler): void;
-	on(event: "resources_discover", handler: ExtensionHandler<ResourcesDiscoverEvent, ResourcesDiscoverResult>): void;
-	on(event: "session_start", handler: ExtensionHandler<SessionStartEvent>): void;
-	on(event: "session_info_changed", handler: ExtensionHandler<SessionInfoChangedEvent>): void;
+	on(event: "project_trust", handler: ProjectTrustHandler): () => void;
+	on(
+		event: "resources_discover",
+		handler: ExtensionHandler<ResourcesDiscoverEvent, ResourcesDiscoverResult>,
+	): () => void;
+	on(event: "session_start", handler: ExtensionHandler<SessionStartEvent>): () => void;
+	on(event: "session_info_changed", handler: ExtensionHandler<SessionInfoChangedEvent>): () => void;
 	on(
 		event: "session_before_switch",
 		handler: ExtensionHandler<SessionBeforeSwitchEvent, SessionBeforeSwitchResult>,
-	): void;
-	on(event: "session_before_fork", handler: ExtensionHandler<SessionBeforeForkEvent, SessionBeforeForkResult>): void;
+	): () => void;
+	on(
+		event: "session_before_fork",
+		handler: ExtensionHandler<SessionBeforeForkEvent, SessionBeforeForkResult>,
+	): () => void;
 	on(
 		event: "session_before_compact",
 		handler: ExtensionHandler<SessionBeforeCompactEvent, SessionBeforeCompactResult>,
-	): void;
-	on(event: "session_compact", handler: ExtensionHandler<SessionCompactEvent>): void;
-	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): void;
-	on(event: "session_before_tree", handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>): void;
-	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): void;
-	on(event: "context", handler: ExtensionHandler<ContextEvent, ContextEventResult>): void;
+	): () => void;
+	on(event: "session_compact", handler: ExtensionHandler<SessionCompactEvent>): () => void;
+	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): () => void;
+	on(
+		event: "session_before_tree",
+		handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>,
+	): () => void;
+	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): () => void;
+	on(event: "context", handler: ExtensionHandler<ContextEvent, ContextEventResult>): () => void;
 	on(
 		event: "before_provider_request",
 		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
-	): void;
-	on(event: "before_provider_headers", handler: ExtensionHandler<BeforeProviderHeadersEvent>): void;
-	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): void;
-	on(event: "before_agent_start", handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>): void;
-	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
-	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;
-	on(event: "agent_settled", handler: ExtensionHandler<AgentSettledEvent>): void;
-	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): void;
-	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent>): void;
-	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): void;
-	on(event: "message_update", handler: ExtensionHandler<MessageUpdateEvent>): void;
-	on(event: "message_end", handler: ExtensionHandler<MessageEndEvent, MessageEndEventResult>): void;
-	on(event: "tool_execution_start", handler: ExtensionHandler<ToolExecutionStartEvent>): void;
-	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): void;
-	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): void;
-	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent>): void;
-	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): void;
-	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
-	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
-	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
-	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): void;
+	): () => void;
+	on(event: "before_provider_headers", handler: ExtensionHandler<BeforeProviderHeadersEvent>): () => void;
+	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): () => void;
+	on(
+		event: "before_agent_start",
+		handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>,
+	): () => void;
+	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): () => void;
+	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): () => void;
+	on(event: "agent_settled", handler: ExtensionHandler<AgentSettledEvent>): () => void;
+	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): () => void;
+	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent>): () => void;
+	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): () => void;
+	on(event: "message_update", handler: ExtensionHandler<MessageUpdateEvent>): () => void;
+	on(event: "message_end", handler: ExtensionHandler<MessageEndEvent, MessageEndEventResult>): () => void;
+	on(event: "tool_execution_start", handler: ExtensionHandler<ToolExecutionStartEvent>): () => void;
+	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): () => void;
+	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): () => void;
+	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent>): () => void;
+	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): () => void;
+	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): () => void;
+	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): () => void;
+	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): () => void;
+	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): () => void;
 
 	// =========================================================================
 	// Tool Registration
@@ -1588,7 +1633,7 @@ export type GetSessionNameHandler = () => string | undefined;
 export type GetActiveToolsHandler = () => string[];
 
 /** Tool info with name, description, parameter schema, prompt guidelines, and source metadata. */
-export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters" | "promptGuidelines"> & {
+export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters" | "promptGuidelines" | "access"> & {
 	sourceInfo: SourceInfo;
 };
 
@@ -1710,6 +1755,8 @@ export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionAction
 
 /** Loaded extension with all registered items. */
 export interface Extension {
+	/** Loader-owned API revocation and event-bus subscription cleanup. */
+	dispose?: () => void;
 	path: string;
 	resolvedPath: string;
 	hidden?: boolean;

@@ -1,6 +1,10 @@
 import type { AgentMessage } from "@zykairotis/ice-agent-core";
 import type { AgentSession } from "./core/agent-session.ts";
-import type { SubagentRetryState, SubagentRuntimeAttention } from "./ice-subagent-timeout-supervisor.ts";
+import type {
+	SubagentCheckInState,
+	SubagentRetryState,
+	SubagentRuntimeAttention,
+} from "./subagents/runtime/view-state.ts";
 import { redactCredentialText } from "./utils/redact.ts";
 
 export type IceAgentViewKind = "parent" | "subagent" | "historical-subagent";
@@ -41,7 +45,6 @@ export interface IceAgentViewPresentation {
 	readonly authority?: IceAgentViewAuthority;
 	readonly handoffMessageMarker?: string;
 	readonly finalizationMessageMarker?: string;
-	readonly timeoutContinuationMessageMarker?: string;
 	/** Marker for the internal timeout wrap-up prompt; hidden from child views. */
 	readonly wrapUpMessageMarker?: string;
 	readonly handoffMessageIndex?: number;
@@ -67,7 +70,6 @@ export type IceAgentViewPresentationPatch = IceAgentViewPresentation;
 export type IceAgentViewInteractionMode = "mirror" | "controlled";
 export type IceAgentViewControlState =
 	| "working"
-	| "awaiting-extension"
 	| "awaiting-finalization"
 	| "final-report-requested"
 	| "final-report-received"
@@ -85,12 +87,9 @@ export interface IceAgentViewLiveSessionControl {
 	readonly requestFinalReport: () => boolean;
 	readonly markFinalReportReceived: () => boolean;
 	readonly markTerminal: () => void;
-	/** Runtime timeout controls are optional for non-supervised display sessions. */
+	/** Runtime observation/stop controls are optional for non-supervised display sessions. */
 	readonly getRuntimeAttention?: () => SubagentRuntimeAttention | undefined;
-	readonly extendRuntime?: (additionalMs: number) => Promise<unknown>;
 	readonly stopRuntime?: () => Promise<unknown>;
-	readonly markAwaitingExtension?: () => boolean;
-	readonly resumeFromExtension?: () => boolean;
 	/** Parent-owned queued follow-up; rejected while a user has takeover control. */
 	readonly followUp?: (text: string) => Promise<void>;
 	readonly steer: (text: string) => Promise<void>;
@@ -121,6 +120,7 @@ export interface IceAgentViewDescriptor {
 	readonly startedAt?: number;
 	readonly finishedAt?: number;
 	readonly presentation?: IceAgentViewPresentation;
+	readonly checkIn?: SubagentCheckInState;
 	readonly messages?: readonly AgentMessage[];
 }
 
@@ -132,6 +132,7 @@ export interface IceAgentViewLiveSession {
 	readonly authority?: IceAgentViewAuthority;
 	readonly color?: IceAgentViewColor;
 	readonly presentation?: IceAgentViewPresentation;
+	readonly checkIn?: SubagentCheckInState;
 	readonly session: AgentSession;
 	readonly control?: IceAgentViewLiveSessionControl;
 }
@@ -272,7 +273,7 @@ function normalizeRuntimeAttention(input: unknown): SubagentRuntimeAttention | u
 	const state = input.state;
 	const phase = input.phase;
 	if (
-		(state !== "running" && state !== "awaiting_extension" && state !== "terminal") ||
+		(state !== "running" && state !== "terminal") ||
 		(phase !== "startup" &&
 			phase !== "working" &&
 			phase !== "wrapping_up" &&
@@ -281,23 +282,8 @@ function normalizeRuntimeAttention(input: unknown): SubagentRuntimeAttention | u
 	) {
 		return undefined;
 	}
-	const initialTimeoutMs = boundedRuntimeNumber(input.initialTimeoutMs);
-	const activeBudgetMs = boundedRuntimeNumber(input.activeBudgetMs);
 	const activeElapsedMs = boundedRuntimeNumber(input.activeElapsedMs);
-	const totalExtendedMs = boundedRuntimeNumber(input.totalExtendedMs);
-	const extensionCount = boundedRuntimeNumber(input.extensionCount);
-	const remainingExtendableMs = boundedRuntimeNumber(input.remainingExtendableMs);
-	const remainingRetentionMs = boundedRuntimeNumber(input.remainingRetentionMs);
-	if (
-		initialTimeoutMs === undefined ||
-		activeBudgetMs === undefined ||
-		activeElapsedMs === undefined ||
-		totalExtendedMs === undefined ||
-		extensionCount === undefined ||
-		remainingExtendableMs === undefined
-	) {
-		return undefined;
-	}
+	if (activeElapsedMs === undefined) return undefined;
 	const rawActivities = Array.isArray(input.lastActivities) ? input.lastActivities : [];
 	const lastActivities = rawActivities
 		.slice(-12)
@@ -380,20 +366,13 @@ function normalizeRuntimeAttention(input: unknown): SubagentRuntimeAttention | u
 		: undefined;
 	const progressAgeMs = boundedRuntimeNumber(input.progressAgeMs);
 	const lastProgressAtMs = boundedRuntimeNumber(input.lastProgressAtMs);
-	const decisionDeadlineAtMs = boundedRuntimeNumber(input.decisionDeadlineAtMs);
 	return deepFreezeSnapshot({
 		phase,
 		state,
-		initialTimeoutMs,
-		activeBudgetMs,
+		lifetimeDeadline: false,
 		activeElapsedMs,
-		totalExtendedMs,
-		extensionCount,
-		remainingExtendableMs,
-		...(remainingRetentionMs !== undefined ? { remainingRetentionMs } : {}),
 		...(progressAgeMs !== undefined ? { progressAgeMs } : {}),
 		...(lastProgressAtMs !== undefined ? { lastProgressAtMs } : {}),
-		...(decisionDeadlineAtMs !== undefined ? { decisionDeadlineAtMs } : {}),
 		lastActivities,
 		...(repeatedFailure ? { repeatedFailure } : {}),
 		...(usage ? { usage } : {}),
@@ -428,10 +407,6 @@ export function normalizeIceAgentViewPresentation(
 	const finalizationMessageMarker =
 		typeof input.finalizationMessageMarker === "string"
 			? truncatePresentationText(input.finalizationMessageMarker, MAX_PRESENTATION_LABEL_BYTES)
-			: undefined;
-	const timeoutContinuationMessageMarker =
-		typeof input.timeoutContinuationMessageMarker === "string"
-			? truncatePresentationText(input.timeoutContinuationMessageMarker, MAX_PRESENTATION_LABEL_BYTES)
 			: undefined;
 	const wrapUpMessageMarker =
 		typeof input.wrapUpMessageMarker === "string"
@@ -498,7 +473,6 @@ export function normalizeIceAgentViewPresentation(
 		...(authority ? { authority } : {}),
 		...(handoffMessageMarker ? { handoffMessageMarker } : {}),
 		...(finalizationMessageMarker ? { finalizationMessageMarker } : {}),
-		...(timeoutContinuationMessageMarker ? { timeoutContinuationMessageMarker } : {}),
 		...(wrapUpMessageMarker ? { wrapUpMessageMarker } : {}),
 		...(handoffMessageIndex !== undefined ? { handoffMessageIndex } : {}),
 		...(finalizationMessageIndex !== undefined ? { finalizationMessageIndex } : {}),
@@ -517,16 +491,111 @@ export function normalizeIceAgentViewPresentation(
 	return Object.keys(normalized).length > 0 ? (deepFreezeSnapshot(normalized) as IceAgentViewPresentation) : undefined;
 }
 
+/** Blocking subagent waits that the user can move to the background (ctrl+b). */
+export interface IceBlockingWaitSource {
+	/** Number of in-flight blocking waits owned by the current parent session. */
+	count(): number;
+	/** End every in-flight blocking wait early; the children keep running. Returns how many were released. */
+	release(): number;
+	/** Subagents released to the background that have not finished yet. */
+	backgroundCount(): number;
+}
+
+/** One child in the subagent overview; the runtime registry stays the lifecycle owner. */
+export interface IceSubagentOverviewChild {
+	readonly id: string;
+	readonly agent: string;
+	/** Optional name given at launch; usable wherever the ID is. */
+	readonly name?: string;
+	readonly description: string;
+	/** Instance state: starting, queued (waiting for a concurrency slot), running, idle, parked, blocked, stopped. */
+	readonly state: string;
+	readonly lastTurnOutcome?: string;
+	readonly depth: number;
+	/** True while a turn is executing. */
+	readonly running: boolean;
+	/** True when no parent tool call is waiting on the running turn. */
+	readonly background: boolean;
+	/** True while the child session is in memory and can be shown live. */
+	readonly resident: boolean;
+	/** Parked after its work settled: out of memory and live views, still resumable. */
+	readonly finished: boolean;
+	readonly turns: number;
+	readonly tokens: number;
+	readonly cost: number;
+	readonly patchState?: string;
+	readonly blockedReasons?: readonly string[];
+}
+
+export type IceSubagentApprovalAnswer = "allow-once" | "allow-session" | "deny";
+
+export interface IceSubagentOverviewApproval {
+	readonly id: string;
+	readonly childId: string;
+	readonly agent: string;
+	/** The child's name, shown in place of its ID. */
+	readonly name?: string;
+	readonly tool: string;
+	/** Redacted, bounded operation summary. */
+	readonly summary: string;
+	/** Rule an `allow-session` answer would grant; absent when only one-off approval is offered. */
+	readonly sessionRule?: string;
+	readonly foreground: boolean;
+	readonly queuedAt: number;
+	readonly deadline: number;
+}
+
+/** Bounded, owner-scoped subagent state shared by the footer, the Agent Hub, and RPC clients. */
+export interface IceSubagentOverview {
+	/** False when `ice.subagents.enabled` blocks new launches. */
+	readonly enabled: boolean;
+	/** Children the parent may run at once: running turns, turns queued for a slot, and the ceiling. */
+	readonly capacity: { readonly running: number; readonly queued: number; readonly max: number };
+	/** How many levels of children may delegate further. */
+	readonly maxDepth: number;
+	readonly children: readonly IceSubagentOverviewChild[];
+	readonly approvals: readonly IceSubagentOverviewApproval[];
+	/** Invalid settings that block new launches. */
+	readonly diagnostics: readonly string[];
+}
+
+/** Bounded, redacted transcript of one child owned by the current parent. */
+export interface IceSubagentTranscript {
+	/** True while the child session is resident and still updating. */
+	readonly live: boolean;
+	readonly messages: readonly AgentMessage[];
+}
+
+/** User lifecycle actions on one child; the same operations the Agent Hub offers. */
+export type IceSubagentControlAction = "stop" | "resume" | "delete" | "send";
+
+/** Read and answer subagent state; implemented by the subagent runtime. */
+export interface IceSubagentControlSource {
+	/** Undefined until a parent session is available. */
+	overview(): IceSubagentOverview | undefined;
+	/** Answer a pending approval; false when it is no longer pending. */
+	respondToApproval(approvalId: string, answer: IceSubagentApprovalAnswer): boolean;
+	/** Messages of a child of the current parent, including parked children read from their durable transcript. */
+	messages(id: string): { readonly live: boolean; readonly messages: readonly AgentMessage[] } | undefined;
+	/** Run a lifecycle action on a child of the current parent (ID or launch name); resolves to a summary. */
+	control(id: string, action: IceSubagentControlAction, message?: string): Promise<string>;
+}
+
 export class IceAgentViewBridge {
 	private parentSession: AgentSession | undefined;
+	private blockingWaits: IceBlockingWaitSource | undefined;
+	private controlSource: IceSubagentControlSource | undefined;
 	private liveSource: IceAgentViewLiveSessionSource | undefined;
 	private unsubscribeLiveSource: (() => void) | undefined;
 	private readonly historical = new Map<string, IceAgentViewDescriptor>();
 	private readonly listeners = new Set<() => void>();
-	private readonly switcherRequestListeners = new Set<() => void>();
 	private readonly uiState = new Map<string, AgentViewUiState>();
 	private readonly interactionModes = new Map<string, IceAgentViewInteractionMode>();
 	private displayedId = "parent";
+
+	getParentSession(): AgentSession | undefined {
+		return this.parentSession;
+	}
 
 	setParentSession(session: AgentSession): void {
 		const replaced = this.parentSession !== undefined && this.parentSession !== session;
@@ -538,6 +607,58 @@ export class IceAgentViewBridge {
 			this.displayedId = "parent";
 		}
 		this.publish();
+	}
+
+	setBlockingWaitSource(source: IceBlockingWaitSource | undefined): void {
+		this.blockingWaits = source;
+	}
+
+	hasBlockingWait(): boolean {
+		return (this.blockingWaits?.count() ?? 0) > 0;
+	}
+
+	releaseBlockingWaits(): number {
+		return this.blockingWaits?.release() ?? 0;
+	}
+
+	backgroundSubagentCount(): number {
+		return this.blockingWaits?.backgroundCount() ?? 0;
+	}
+
+	/** Change notifications arrive through the live-session source subscription (`subscribe`). */
+	setSubagentControlSource(source: IceSubagentControlSource | undefined): void {
+		this.controlSource = source;
+		this.publish();
+	}
+
+	getSubagentOverview(): IceSubagentOverview | undefined {
+		try {
+			return this.controlSource?.overview();
+		} catch {
+			return undefined;
+		}
+	}
+
+	respondToSubagentApproval(approvalId: string, answer: IceSubagentApprovalAnswer): boolean {
+		return this.controlSource?.respondToApproval(approvalId, answer) ?? false;
+	}
+
+	/** Rejects without a subagent runtime, for unknown children, and when the runtime refuses the action. */
+	async controlSubagent(id: string, action: IceSubagentControlAction, message?: string): Promise<string> {
+		if (!this.controlSource) throw new Error("No subagent runtime in this session.");
+		return this.controlSource.control(id, action, message);
+	}
+
+	/** Undefined for the parent, unknown IDs, and children of another parent session. */
+	getSubagentTranscript(id: string): IceSubagentTranscript | undefined {
+		if (id === "parent") return undefined;
+		const view = this.getView(id);
+		if (view?.kind === "parent") return undefined;
+		if (view?.session) return { live: true, messages: cloneBoundedMessages(view.session.messages).messages };
+		// A parked child has left memory; its durable transcript is still the authoritative history.
+		const durable = this.controlSource?.messages(id);
+		if (durable) return { live: durable.live, messages: cloneBoundedMessages(durable.messages).messages };
+		return view ? { live: false, messages: view.messages ?? [] } : undefined;
 	}
 
 	connectLiveSessions(source: IceAgentViewLiveSessionSource): void {
@@ -613,23 +734,6 @@ export class IceAgentViewBridge {
 		this.publish();
 	}
 
-	requestAgentSwitcher(): boolean {
-		if (this.switcherRequestListeners.size === 0) return false;
-		for (const listener of this.switcherRequestListeners) {
-			try {
-				listener();
-			} catch {
-				// UI-intent observers must not affect bridge state or runtime execution.
-			}
-		}
-		return true;
-	}
-
-	subscribeAgentSwitcherRequests(listener: () => void): () => void {
-		this.switcherRequestListeners.add(listener);
-		return () => this.switcherRequestListeners.delete(listener);
-	}
-
 	listViews(): readonly IceAgentViewDescriptor[] {
 		const parent: IceAgentViewDescriptor[] = this.parentSession
 			? [
@@ -671,9 +775,9 @@ export class IceAgentViewBridge {
 				presentation: runtimeAttention
 					? normalizeIceAgentViewPresentation({ ...entry.presentation, runtimeAttention })
 					: entry.presentation,
+				...(entry.checkIn ? { checkIn: entry.checkIn } : {}),
 				model: entry.model,
-				status:
-					controlState === "awaiting-extension" ? "needs_time" : entry.session.isStreaming ? "working" : "idle",
+				status: entry.session.isStreaming ? "working" : "idle",
 				cwd: entry.session.sessionManager.getCwd(),
 			});
 		});
@@ -753,14 +857,6 @@ export class IceAgentViewBridge {
 	getRuntimeAttention(id: string): SubagentRuntimeAttention | undefined {
 		const entry = this.liveSource?.list().find((candidate) => candidate.runId === id);
 		return entry?.control?.getRuntimeAttention?.() ?? entry?.presentation?.runtimeAttention;
-	}
-
-	async extendRuntime(id: string, additionalMs: number): Promise<unknown> {
-		const entry = this.liveSource?.list().find((candidate) => candidate.runId === id);
-		if (!entry?.control?.extendRuntime) throw new Error("The selected subagent cannot be extended.");
-		const result = await entry.control.extendRuntime(additionalMs);
-		this.publish();
-		return result;
 	}
 
 	async stopRuntime(id: string): Promise<unknown> {

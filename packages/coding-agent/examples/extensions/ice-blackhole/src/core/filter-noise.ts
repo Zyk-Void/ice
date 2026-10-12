@@ -20,10 +20,13 @@ const XML_WRAPPER_RE = /<(system-reminder|ide_opened_file|command-message|contex
 
 /** Return cleaned user text, or null if the block is noise. Cleans once. */
 const cleanOrNull = (text: string): string | null => {
-	const trimmed = text.trim();
-	if (NOISE_STRINGS.some((s) => trimmed.includes(s))) return null;
-	const cleaned = trimmed.replace(XML_WRAPPER_RE, "").trim();
-	return cleaned.length > 0 ? cleaned : null;
+	const cleaned = text.replace(XML_WRAPPER_RE, "").trim();
+	if (!cleaned) return null;
+	if (NOISE_STRINGS.some((s) => cleaned === s || cleaned.includes(s))) {
+		const remaining = NOISE_STRINGS.reduce((value, noise) => value.replaceAll(noise, "").trim(), cleaned);
+		return remaining.length > 0 ? remaining : null;
+	}
+	return cleaned;
 };
 
 export const filterNoise = (blocks: NormalizedBlock[]): NormalizedBlock[] => {

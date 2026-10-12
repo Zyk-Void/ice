@@ -32,6 +32,10 @@
           "path": "settings.md"
         },
         {
+          "title": "Subagents V2",
+          "path": "subagents-v2.md"
+        },
+        {
           "title": "Keybindings",
           "path": "keybindings.md"
         },
@@ -81,6 +85,18 @@
     {
       "title": "Reference",
       "items": [
+        {
+          "title": "Subagents V2 Reference",
+          "path": "subagents-v2-reference.md"
+        },
+        {
+          "title": "Subagents V2 Migration",
+          "path": "subagents-v2-migration.md"
+        },
+        {
+          "title": "Subagents V2 Architecture",
+          "path": "subagents-v2-architecture.md"
+        },
         {
           "title": "Session Format",
           "path": "session-format.md"

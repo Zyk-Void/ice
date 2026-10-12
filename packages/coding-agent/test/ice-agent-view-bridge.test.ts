@@ -38,6 +38,42 @@ function createLiveSource(): {
 }
 
 describe("ICE agent view bridge", () => {
+	it("exposes the subagent overview and approval answers, failing soft without a source", () => {
+		const bridge = new IceAgentViewBridge();
+		expect(bridge.getSubagentOverview()).toBeUndefined();
+		expect(bridge.respondToSubagentApproval("r1", "deny")).toBe(false);
+		const overview = {
+			enabled: true,
+			capacity: { running: 0, queued: 0, max: 4 },
+			maxDepth: 0,
+			children: [],
+			approvals: [],
+			diagnostics: [],
+		};
+		const respond = vi.fn(() => true);
+		const listener = vi.fn();
+		bridge.subscribe(listener);
+		bridge.setSubagentControlSource({
+			overview: () => overview,
+			respondToApproval: respond,
+			messages: () => undefined,
+			control: async () => "",
+		});
+		expect(listener).toHaveBeenCalledOnce();
+		expect(bridge.getSubagentOverview()).toBe(overview);
+		expect(bridge.respondToSubagentApproval("r1", "allow-session")).toBe(true);
+		expect(respond).toHaveBeenCalledWith("r1", "allow-session");
+		bridge.setSubagentControlSource({
+			overview: () => {
+				throw new Error("no parent session");
+			},
+			respondToApproval: respond,
+			messages: () => undefined,
+			control: async () => "",
+		});
+		expect(bridge.getSubagentOverview()).toBeUndefined();
+	});
+
 	it("keeps parent, live, and historical views distinct and replaces live with history", () => {
 		const bridge = new IceAgentViewBridge();
 		const parent = fakeSession("parent");
@@ -125,21 +161,6 @@ describe("ICE agent view bridge", () => {
 		expect(listener).toHaveBeenCalled();
 		expect(bridge.requestDisplay("missing")).toBe(false);
 		expect(bridge.getDisplayedId()).toBe("parent");
-	});
-
-	it("publishes native switcher requests without mutating the selected agent view", () => {
-		const bridge = new IceAgentViewBridge();
-		bridge.setParentSession(fakeSession("parent"));
-		const listener = vi.fn();
-		const unsubscribe = bridge.subscribeAgentSwitcherRequests(listener);
-
-		expect(bridge.requestAgentSwitcher()).toBe(true);
-		expect(listener).toHaveBeenCalledOnce();
-		expect(bridge.getDisplayedId()).toBe("parent");
-
-		unsubscribe();
-		expect(bridge.requestAgentSwitcher()).toBe(false);
-		expect(listener).toHaveBeenCalledOnce();
 	});
 
 	it("preserves an explicit verification state in bounded historical presentation", () => {

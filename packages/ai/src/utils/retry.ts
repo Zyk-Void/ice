@@ -100,6 +100,16 @@ export interface RetryPolicy {
 	maxRetries: number;
 	/** Base delay in ms. Per-attempt delay is `baseDelayMs * 2^(attempt-1)` before jitter. */
 	baseDelayMs: number;
+	/** Maximum exponential backoff delay in ms (default 60 seconds). */
+	maxDelayMs?: number;
+}
+
+/** Finite, timer-safe exponential backoff shared by assistant and session retries. */
+export function getRetryDelayMs(baseDelayMs: number, attempt: number, maxDelayMs = 60_000): number {
+	const cap = Number.isFinite(maxDelayMs) && maxDelayMs >= 0 ? Math.min(maxDelayMs, 2_147_483_647) : 60_000;
+	if (!Number.isFinite(baseDelayMs) || baseDelayMs <= 0) return 0;
+	const exponent = Number.isFinite(attempt) ? Math.max(0, Math.min(1023, attempt - 1)) : 1023;
+	return Math.min(cap, baseDelayMs * 2 ** exponent);
 }
 
 /** Optional callbacks emitted by {@link retryAssistantCall} around each retry. */
@@ -129,15 +139,15 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 			reject(new RetrySleepAbortError());
 			return;
 		}
-		const timeout = setTimeout(resolve, ms);
-		signal?.addEventListener(
-			"abort",
-			() => {
-				clearTimeout(timeout);
-				reject(new RetrySleepAbortError());
-			},
-			{ once: true },
-		);
+		const onAbort = () => {
+			clearTimeout(timeout);
+			reject(new RetrySleepAbortError());
+		};
+		const timeout = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		signal?.addEventListener("abort", onAbort, { once: true });
 	});
 }
 
@@ -192,7 +202,7 @@ export async function retryAssistantCall(
 
 		attempt++;
 		lastRetry = { attempt, errorMessage: response.errorMessage || "Unknown error" };
-		const delayMs = policy!.baseDelayMs * 2 ** (attempt - 1);
+		const delayMs = getRetryDelayMs(policy!.baseDelayMs, attempt, policy!.maxDelayMs);
 		await callbacks?.onRetryScheduled?.(attempt, maxAttempts, delayMs, lastRetry.errorMessage);
 
 		// Normalize aborts during retry backoff to the same AssistantMessage shape as

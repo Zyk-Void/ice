@@ -498,6 +498,46 @@ describe("Agent", () => {
 		expect(agent.state.messages).not.toContainEqual(message);
 	});
 
+	it("removes only the selected queued steering and follow-up messages", async () => {
+		const agent = new Agent({
+			streamFn: () => {
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
+				});
+				return stream;
+			},
+		});
+		agent.state.messages = [
+			{ role: "user", content: [{ type: "text", text: "initial" }], timestamp: Date.now() },
+			createAssistantMessage("initial response"),
+		];
+
+		const steeringToKeep = { role: "user" as const, content: "keep steering", timestamp: Date.now() };
+		const steeringToRemove = { role: "user" as const, content: "remove steering", timestamp: Date.now() + 1 };
+		const followUpToKeep = { role: "user" as const, content: "keep follow-up", timestamp: Date.now() + 2 };
+		const followUpToRemove = { role: "user" as const, content: "remove follow-up", timestamp: Date.now() + 3 };
+		agent.steer(steeringToKeep);
+		agent.steer(steeringToRemove);
+		agent.followUp(followUpToKeep);
+		agent.followUp(followUpToRemove);
+
+		expect(agent.removeSteeringMessage(steeringToRemove)).toBe(true);
+		expect(agent.removeSteeringMessage(steeringToRemove)).toBe(false);
+		expect(agent.removeFollowUpMessage(followUpToRemove)).toBe(true);
+		expect(agent.removeFollowUpMessage(followUpToRemove)).toBe(false);
+
+		await agent.continue();
+
+		const deliveredUserMessages = agent.state.messages
+			.filter((message) => message.role === "user")
+			.map((message) => (typeof message.content === "string" ? message.content : ""));
+		expect(deliveredUserMessages).toContain("keep steering");
+		expect(deliveredUserMessages).toContain("keep follow-up");
+		expect(deliveredUserMessages).not.toContain("remove steering");
+		expect(deliveredUserMessages).not.toContain("remove follow-up");
+	});
+
 	it("should handle abort controller", () => {
 		const agent = new Agent({ streamFn: unusedStreamFunction });
 

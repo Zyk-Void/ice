@@ -1,0 +1,1162 @@
+[
+  {
+    "path": "package.json",
+    "ice_version": "0.0.3",
+    "pi_version": "0.0.3",
+    "differences": {
+      "devEngines": {
+        "ice": {
+          "packageManager": {
+            "name": "npm",
+            "version": "12.0.2",
+            "onFail": "download"
+          }
+        },
+        "pi": null
+      },
+      "devDependencies": {
+        "@typescript/native-preview": {
+          "ice": "7.0.0-dev.20260120.1",
+          "pi": null
+        },
+        "esbuild": {
+          "ice": "0.28.1",
+          "pi": "0.28.2"
+        },
+        "jiti": {
+          "ice": "2.7.0",
+          "pi": null
+        },
+        "tsx": {
+          "ice": "4.22.1",
+          "pi": null
+        },
+        "typescript": {
+          "ice": "5.9.3",
+          "pi": "7.0.2"
+        }
+      },
+      "overrides": {
+        "gaxios": {
+          "ice": {
+            "rimraf": "6.1.2"
+          },
+          "pi": null
+        },
+        "protobufjs": {
+          "ice": "7.6.5",
+          "pi": "7.6.6"
+        },
+        "rimraf": {
+          "ice": "6.1.2",
+          "pi": null
+        }
+      },
+      "scripts": {
+        "build": {
+          "ice": "cd packages/tui && npm run build && cd ../ai && npm run build && cd ../agent && npm run build && cd ../storage/sqlite-node && npm run build && cd ../../protocol && npm run build && cd ../client && npm run build && cd ../server && npm run build && cd ../coding-agent && npm run build",
+          "pi": "cd packages/chord && npm run build && cd ../tui && npm run build && cd ../telemetry && npm run build && cd ../codemode && npm run build && cd ../mcp && npm run build && cd ../ai && npm run build && cd ../durable && npm run build && cd ../agent && npm run build && cd ../protocol && npm run build && cd ../client && npm run build && cd ../server && npm run build && cd ../coding-agent && npm run build"
+        },
+        "build:curax-snapshot": {
+          "ice": "node scripts/build-curax-snapshot.mjs",
+          "pi": null
+        },
+        "build:native:darwin": {
+          "ice": null,
+          "pi": "npm --prefix packages/tui run build:native:darwin"
+        },
+        "build:native:linux": {
+          "ice": null,
+          "pi": "npm --prefix packages/tui run build:native:linux"
+        },
+        "build:native:win32": {
+          "ice": null,
+          "pi": "npm --prefix packages/tui run build:native:win32"
+        },
+        "build:offline": {
+          "ice": "cd packages/tui && npm run build && cd ../ai && npm run build:offline && cd ../agent && npm run build && cd ../storage/sqlite-node && npm run build && cd ../../protocol && npm run build && cd ../client && npm run build && cd ../server && npm run build && cd ../coding-agent && npm run build",
+          "pi": "cd packages/chord && npm run build && cd ../tui && npm run build && cd ../telemetry && npm run build && cd ../codemode && npm run build && cd ../mcp && npm run build && cd ../ai && npm run build:offline && cd ../durable && npm run build && cd ../agent && npm run build && cd ../protocol && npm run build && cd ../client && npm run build && cd ../server && npm run build && cd ../coding-agent && npm run build"
+        },
+        "check": {
+          "ice": "biome check --write --error-on-warnings packages scripts .ice biome.json package.json tsconfig*.json && corepack npm@12.0.2 run check:pinned-deps && corepack npm@12.0.2 run check:ts-imports && corepack npm@12.0.2 run check:shrinkwrap && corepack npm@12.0.2 run check:install-lock:coding-agent && tsgo --noEmit && corepack npm@12.0.2 run check:browser-smoke",
+          "pi": "biome check --write --error-on-warnings . && npm run check:pinned-deps && npm run check:runtime-deps && npm run check:ts-imports && npm run check:entry-graphs && npm run check:install-lock:coding-agent && tsc --noEmit && npm run check:browser-smoke"
+        },
+        "check:entry-graphs": {
+          "ice": null,
+          "pi": "node scripts/check-entry-graphs.mjs"
+        },
+        "check:package-install": {
+          "ice": null,
+          "pi": "node scripts/coding-agent-consumer.mjs"
+        },
+        "check:runtime-deps": {
+          "ice": null,
+          "pi": "node scripts/check-runtime-deps.mjs"
+        },
+        "check:shrinkwrap": {
+          "ice": "node scripts/generate-coding-agent-shrinkwrap.mjs --check",
+          "pi": null
+        },
+        "eval": {
+          "ice": "npm run eval --workspace=@zykairotis/ice-evals --",
+          "pi": "npm run eval --workspace=@earendil-works/pi-evals --"
+        },
+        "generate:models": {
+          "ice": "npm --prefix packages/ai run generate-models && npm --prefix packages/ai run generate-image-models",
+          "pi": "npm --prefix packages/ai run generate-models"
+        },
+        "ice:m12:bench": {
+          "ice": "tsx benchmarks/native-vs-subprocess/src/cli.ts bench",
+          "pi": null
+        },
+        "ice:m12:compat": {
+          "ice": "tsx benchmarks/native-vs-subprocess/src/cli.ts compat",
+          "pi": null
+        },
+        "ice:m12:preflight": {
+          "ice": "tsx benchmarks/native-vs-subprocess/src/cli.ts preflight",
+          "pi": null
+        },
+        "ice:m12:report": {
+          "ice": "tsx benchmarks/native-vs-subprocess/src/cli.ts report",
+          "pi": null
+        },
+        "ice:m12:safety": {
+          "ice": "tsx benchmarks/native-vs-subprocess/src/cli.ts safety",
+          "pi": null
+        },
+        "ice:m12:self-test": {
+          "ice": "tsx benchmarks/native-vs-subprocess/src/cli.ts self-test",
+          "pi": null
+        },
+        "ice:m13:verify": {
+          "ice": "tsx benchmarks/native-vs-subprocess/src/cli.ts m13:verify",
+          "pi": null
+        },
+        "ice:subagent-prompt-cache:bench": {
+          "ice": "tsx benchmarks/subagent-prompt-cache/src/cli.ts",
+          "pi": null
+        },
+        "shrinkwrap:coding-agent": {
+          "ice": "node scripts/generate-coding-agent-shrinkwrap.mjs",
+          "pi": null
+        },
+        "test:mcp-conformance": {
+          "ice": null,
+          "pi": "node packages/coding-agent/test/mcp-conformance/run.ts"
+        },
+        "test:scripts": {
+          "ice": "node --test scripts/*.test.mjs",
+          "pi": "node --test scripts/*.test.mjs scripts/*.test.ts"
+        },
+        "update:model-catalog-pin": {
+          "ice": null,
+          "pi": "node scripts/update-model-catalog-pin.mjs"
+        },
+        "version:major": {
+          "ice": "npm version major -ws --no-git-tag-version && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",
+          "pi": "npm version major --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts"
+        },
+        "version:minor": {
+          "ice": "npm version minor -ws --no-git-tag-version && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",
+          "pi": "npm version minor --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts"
+        },
+        "version:patch": {
+          "ice": "npm version patch -ws --no-git-tag-version && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",
+          "pi": "npm version patch --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts"
+        },
+        "version:set": {
+          "ice": "npm version -ws",
+          "pi": "npm version --workspaces --no-workspaces-update"
+        }
+      },
+      "workspaces": {
+        "ice": [
+          "packages/*",
+          "packages/storage/*",
+          "packages/coding-agent/examples/extensions/with-deps",
+          "packages/coding-agent/examples/extensions/custom-provider-anthropic",
+          "packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
+          "packages/coding-agent/examples/extensions/sandbox",
+          "packages/coding-agent/examples/extensions/gondolin"
+        ],
+        "pi": [
+          "packages/*",
+          "packages/coding-agent/examples/extensions/with-deps",
+          "packages/coding-agent/examples/extensions/custom-provider-anthropic",
+          "packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
+          "packages/coding-agent/examples/extensions/sandbox",
+          "packages/coding-agent/examples/extensions/gondolin"
+        ]
+      }
+    }
+  },
+  {
+    "path": "packages/agent/package.json",
+    "ice_version": "0.83.0",
+    "pi_version": "1.0.2",
+    "differences": {
+      "dependencies": {
+        "@FORK/PACKAGE-ai": {
+          "ice": "^0.83.0",
+          "pi": "^1.0.2"
+        },
+        "diff": {
+          "ice": "8.0.4",
+          "pi": null
+        },
+        "ignore": {
+          "ice": "7.0.5",
+          "pi": null
+        },
+        "typebox": {
+          "ice": "1.3.7",
+          "pi": "1.3.27"
+        },
+        "yaml": {
+          "ice": "2.9.0",
+          "pi": null
+        }
+      },
+      "devDependencies": {
+        "@types/node": {
+          "ice": "24.12.4",
+          "pi": "22.19.19"
+        },
+        "@vitest/coverage-v8": {
+          "ice": "4.1.9",
+          "pi": null
+        },
+        "typescript": {
+          "ice": "5.9.3",
+          "pi": null
+        },
+        "vitest": {
+          "ice": "4.1.9",
+          "pi": "4.1.11"
+        }
+      },
+      "exports": {
+        "./node": {
+          "ice": {
+            "types": "./dist/node.d.ts",
+            "import": "./dist/node.js"
+          },
+          "pi": null
+        },
+        "./session/testing": {
+          "ice": {
+            "types": "./dist/harness/session/testing/index.d.ts",
+            "import": "./dist/harness/session/testing/index.js"
+          },
+          "pi": null
+        }
+      },
+      "scripts": {
+        "build": {
+          "ice": "tsgo -p tsconfig.build.json",
+          "pi": "tsc -p tsconfig.build.json"
+        },
+        "coverage:harness": {
+          "ice": "vitest --run --config vitest.harness.config.ts --coverage",
+          "pi": null
+        },
+        "test:harness": {
+          "ice": "vitest --run --config vitest.harness.config.ts",
+          "pi": null
+        }
+      }
+    }
+  },
+  {
+    "path": "packages/ai/package.json",
+    "ice_version": "0.83.0",
+    "pi_version": "1.0.2",
+    "differences": {
+      "dependencies": {
+        "@FORK/PACKAGE-telemetry": {
+          "ice": null,
+          "pi": "^1.0.2"
+        },
+        "@anthropic-ai/sdk": {
+          "ice": "0.91.1",
+          "pi": "0.129.0"
+        },
+        "@aws-sdk/client-bedrock-runtime": {
+          "ice": "3.1048.0",
+          "pi": "3.1127.0"
+        },
+        "@google/genai": {
+          "ice": "1.52.0",
+          "pi": "2.21.0"
+        },
+        "@mistralai/mistralai": {
+          "ice": "2.2.6",
+          "pi": null
+        },
+        "@opentelemetry/api": {
+          "ice": "1.9.0",
+          "pi": null
+        },
+        "@smithy/node-http-handler": {
+          "ice": "4.7.3",
+          "pi": "4.12.1"
+        },
+        "http-proxy-agent": {
+          "ice": "7.0.2",
+          "pi": "9.1.0"
+        },
+        "https-proxy-agent": {
+          "ice": "7.0.6",
+          "pi": "9.1.0"
+        },
+        "openai": {
+          "ice": "6.26.0",
+          "pi": "7.19.0"
+        },
+        "typebox": {
+          "ice": "1.3.7",
+          "pi": "1.3.27"
+        }
+      },
+      "devDependencies": {
+        "@types/node": {
+          "ice": "24.12.4",
+          "pi": "22.19.19"
+        },
+        "vitest": {
+          "ice": "4.1.9",
+          "pi": "4.1.11"
+        }
+      },
+      "exports": {
+        "./models": {
+          "ice": null,
+          "pi": {
+            "types": "./dist/models.d.ts",
+            "import": "./dist/models.js"
+          }
+        },
+        "./utils/*": {
+          "ice": null,
+          "pi": {
+            "types": "./dist/utils/*.d.ts",
+            "import": "./dist/utils/*.js"
+          }
+        }
+      },
+      "scripts": {
+        "build:offline": {
+          "ice": "npm run check:model-data && tsgo -p tsconfig.build.json && shx rm -rf dist/providers/data && shx cp -r src/providers/data dist/providers/data",
+          "pi": "npm run check:model-data && tsc -p tsconfig.build.json && shx rm -rf dist/providers/data && shx cp -r src/providers/data dist/providers/data"
+        },
+        "generate-image-models": {
+          "ice": "node scripts/generate-image-models.ts --strict",
+          "pi": null
+        }
+      }
+    }
+  },
+  {
+    "path": "packages/chord/package.json",
+    "ice_version": null,
+    "pi_version": "1.0.2",
+    "differences": {
+      "engines": {
+        "ice": null,
+        "pi": {
+          "node": ">=22.19.0"
+        }
+      },
+      "dependencies": {
+        "ice": null,
+        "pi": {
+          "esbuild": "0.28.2"
+        }
+      },
+      "devDependencies": {
+        "ice": null,
+        "pi": {
+          "shx": "0.4.0",
+          "vitest": "4.1.11"
+        }
+      },
+      "exports": {
+        "ice": null,
+        "pi": {
+          ".": {
+            "source": "./src/index.ts",
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+          },
+          "./context": {
+            "source": "./src/context/index.ts",
+            "types": "./dist/context/index.d.ts",
+            "import": "./dist/context/index.js"
+          },
+          "./delta": {
+            "source": "./src/delta/index.ts",
+            "types": "./dist/delta/index.d.ts",
+            "import": "./dist/delta/index.js"
+          },
+          "./bundler": {
+            "source": "./src/bundler.ts",
+            "types": "./dist/bundler.d.ts",
+            "import": "./dist/bundler.js"
+          },
+          "./node": {
+            "source": "./src/node.ts",
+            "types": "./dist/node.d.ts",
+            "import": "./dist/node.js"
+          },
+          "./package.json": "./package.json"
+        }
+      },
+      "scripts": {
+        "ice": null,
+        "pi": {
+          "clean": "shx rm -rf dist",
+          "build": "tsc -p tsconfig.build.json",
+          "test": "vitest --run",
+          "prepublishOnly": "npm run clean && npm run build"
+        }
+      }
+    }
+  },
+  {
+    "path": "packages/client/package.json",
+    "ice_version": "0.83.0",
+    "pi_version": "1.0.2",
+    "differences": {
+      "dependencies": {
+        "@FORK/PACKAGE-protocol": {
+          "ice": "^0.83.0",
+          "pi": "^1.0.2"
+        },
+        "@earendil-works/chord": {
+          "ice": null,
+          "pi": "^1.0.2"
+        }
+      },
+      "devDependencies": {
+        "vitest": {
+          "ice": "4.1.9",
+          "pi": "4.1.11"
+        }
+      },
+      "scripts": {
+        "build": {
+          "ice": "tsgo -p tsconfig.build.json",
+          "pi": "tsc -p tsconfig.build.json"
+        },
+        "typecheck": {
+          "ice": "tsgo -p tsconfig.test.json",
+          "pi": "tsc -p tsconfig.test.json"
+        }
+      }
+    }
+  },
+  {
+    "path": "packages/codemode/package.json",
+    "ice_version": null,
+    "pi_version": "1.0.2",
+    "differences": {
+      "engines": {
+        "ice": null,
+        "pi": {
+          "node": ">=22.19.0"
+        }
+      },
+      "dependencies": {
+        "ice": null,
+        "pi": {
+          "quickjs-wasi": "3.6.2"
+        }
+      },
+      "devDependencies": {
+        "ice": null,
+        "pi": {
+          "shx": "0.4.0",
+          "vitest": "4.1.11"
+        }
+      },
+      "exports": {
+        "ice": null,
+        "pi": {
+          ".": {
+            "source": "./src/index.ts",
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+          },
+          "./declarations": {
+            "source": "./src/declarations.ts",
+            "types": "./dist/declarations.d.ts",
+            "import": "./dist/declarations.js"
+          },
+          "./source": {
+            "source": "./src/source.ts",
+            "types": "./dist/source.d.ts",
+            "import": "./dist/source.js"
+          },
+          "./worker": {
+            "source": "./src/runtime/worker.ts",
+            "types": "./dist/runtime/worker.d.ts",
+            "import": "./dist/runtime/worker.js"
+          }
+        }
+      },
+      "scripts": {
+        "ice": null,
+        "pi": {
+          "clean": "shx rm -rf dist",
+          "build": "tsc -p tsconfig.build.json",
+          "test": "vitest --run",
+          "prepublishOnly": "npm run clean && npm run build"
+        }
+      }
+    }
+  },
+  {
+    "path": "packages/coding-agent/examples/extensions/custom-provider-anthropic/package.json",
+    "ice_version": "0.83.0",
+    "pi_version": "1.0.2",
+    "differences": {}
+  },
+  {
+    "path": "packages/coding-agent/examples/extensions/custom-provider-gitlab-duo/package.json",
+    "ice_version": "0.83.0",
+    "pi_version": "1.0.2",
+    "differences": {}
+  },
+  {
+    "path": "packages/coding-agent/examples/extensions/gondolin/package.json",
+    "ice_version": "0.83.0",
+    "pi_version": "1.0.2",
+    "differences": {
+      "dependencies": {
+        "@FORK/PACKAGE-gondolin": {
+          "ice": "0.12.0",
+          "pi": null
+        },
+        "@earendil-works/gondolin": {
+          "ice": null,
+          "pi": "0.12.0"
+        }
+      }
+    }
+  },
+  {
+    "path": "packages/coding-agent/examples/extensions/sandbox/package.json",
+    "ice_version": "1.13.0",
+    "pi_version": "1.0.2",
+    "differences": {}
+  },
+  {
+    "path": "packages/coding-agent/examples/extensions/with-deps/package.json",
+    "ice_version": "0.83.0",
+    "pi_version": "1.0.2",
+    "differences": {}
+  },
+  {
+    "path": "packages/coding-agent/examples/plugins/pi-example-plugin/package.json",
+    "ice_version": null,
+    "pi_version": "1.0.0",
+    "differences": {}
+  },
+  {
+    "path": "packages/coding-agent/install-lock/package.json",
+    "ice_version": "0.83.0",
+    "pi_version": "1.0.2",
+    "differences": {
+      "dependencies": {
+        "@FORK/PACKAGE-coding-agent": {
+          "ice": "0.83.0",
+          "pi": "1.0.2"
+        }
+      },
+      "overrides": {
+        "gaxios": {
+          "ice": {
+            "rimraf": "6.1.2"
+          },
+          "pi": null
+        },
+        "protobufjs": {
+          "ice": "7.6.5",
+          "pi": "7.6.6"
+        },
+        "rimraf": {
+          "ice": "6.1.2",
+          "pi": null
+        }
+      }
+    }
+  },
+  {
+    "path": "packages/coding-agent/package.json",
+    "ice_version": "0.83.0",
+    "pi_version": "1.0.2",
+    "differences": {
+      "dependencies": {
+        "@FORK/PACKAGE-agent-core": {
+          "ice": "^0.83.0",
+          "pi": "^1.0.2"
+        },
+        "@FORK/PACKAGE-ai": {
+          "ice": "^0.83.0",
+          "pi": "^1.0.2"
+        },
+        "@FORK/PACKAGE-client": {
+          "ice": "^0.83.0",
+          "pi": null
+        },
+        "@FORK/PACKAGE-codemode": {
+          "ice": null,
+          "pi": "^1.0.2"
+        },
+        "@FORK/PACKAGE-mcp": {
+          "ice": null,
+          "pi": "^1.0.2"
+        },
+        "@FORK/PACKAGE-protocol": {
+          "ice": "^0.83.0",
+          "pi": null
+        },
+        "@FORK/PACKAGE-storage-sqlite-node": {
+          "ice": "0.83.0",
+          "pi": null
+        },
+        "@FORK/PACKAGE-tui": {
+          "ice": "^0.83.0",
+          "pi": "^1.0.2"
+        },
+        "@earendil-works/chord": {
+          "ice": null,
+          "pi": "^1.0.2"
+        },
+        "brace-expansion": {
+          "ice": null,
+          "pi": "5.0.12"
+        },
+        "chalk": {
+          "ice": "5.6.2",
+          "pi": "6.0.0"
+        },
+        "glob": {
+          "ice": "13.0.6",
+          "pi": null
+        },
+        "grok-mermaid": {
+          "ice": null,
+          "pi": "0.2.3"
+        },
+        "ignore": {
+          "ice": "7.0.5",
+          "pi": "7.0.8"
+        },
+        "minimatch": {
+          "ice": "10.2.5",
+          "pi": "10.2.6"
+        },
+        "quickjs-wasi": {
+          "ice": null,
+          "pi": "3.6.2"
+        },
+        "semver": {
+          "ice": "7.8.0",
+          "pi": "7.8.5"
+        },
+        "typebox": {
+          "ice": "1.3.7",
+          "pi": "1.3.27"
+        },
+        "undici": {
+          "ice": "8.9.0",
+          "pi": "8.10.2"
+        }
+      },
+      "optionalDependencies": {
+        "ice": {
+          "@FORK/PACKAGE-clipboard": "0.3.10"
+        },
+        "pi": null
+      },
+      "devDependencies": {
+        "@FORK/PACKAGE-client": {
+          "ice": null,
+          "pi": "^1.0.2"
+        },
+        "@FORK/PACKAGE-protocol": {
+          "ice": null,
+          "pi": "^1.0.2"
+        },
+        "@FORK/PACKAGE-server": {
+          "ice": null,
+          "pi": "^1.0.2"
+        },
+        "@types/diff": {
+          "ice": "7.0.2",
+          "pi": null
+        },
+        "@types/ms": {
+          "ice": "2.1.0",
+          "pi": null
+        },
+        "@types/node": {
+          "ice": "24.12.4",
+          "pi": "22.19.19"
+        },
+        "marked": {
+          "ice": null,
+          "pi": "18.0.11"
+        },
+        "typescript": {
+          "ice": "5.9.3",
+          "pi": null
+        },
+        "vitest": {
+          "ice": "4.1.9",
+          "pi": "4.1.11"
+        }
+      },
+      "overrides": {
+        "gaxios": {
+          "ice": {
+            "rimraf": "6.1.2"
+          },
+          "pi": null
+        },
+        "protobufjs": {
+          "ice": "7.6.5",
+          "pi": "7.6.6"
+        },
+        "rimraf": {
+          "ice": "6.1.2",
+          "pi": null
+        }
+      },
+      "exports": {
+        "./client": {
+          "ice": {
+            "types": "./dist/client/index.d.ts",
+            "import": "./dist/client/index.js"
+          },
+          "pi": {
+            "source": "./src/client/index.ts"
+          }
+        },
+        "./experimental/plugin": {
+          "ice": null,
+          "pi": {
+            "source": "./src/experimental/plugin.ts"
+          }
+        },
+        "./rpc-entry": {
+          "ice": {
+            "import": "./dist/rpc-entry.js"
+          },
+          "pi": {
+            "import": "./dist/bundle/rpc-entry.js"
+          }
+        }
+      },
+      "scripts": {
+        "build": {
+          "ice": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js dist/ice.js dist/rpc-entry.js && npm run copy-assets",
+          "pi": "npm run build:unbundled && node ../../scripts/build-coding-agent-bundle.mjs"
+        },
+        "build:binary": {
+          "ice": "npm --prefix ../tui run build && npm --prefix ../ai run build && npm --prefix ../agent run build && npm --prefix ../protocol run build && npm --prefix ../client run build && npm run build && bun build --compile ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile dist/ice && npm run copy-binary-assets",
+          "pi": "npm --prefix ../tui run build && npm --prefix ../telemetry run build && npm --prefix ../ai run build && npm --prefix ../agent run build && npm --prefix ../protocol run build && npm --prefix ../client run build && npm run build && bun build --compile --no-compile-autoload-bunfig ./dist/bun/cli.js ./src/utils/image-resize-worker.ts ./src/extensions/codemode/worker.ts --outfile dist/pi && npm run copy-binary-assets"
+        },
+        "build:unbundled": {
+          "ice": null,
+          "pi": "tsc -p tsconfig.build.json && shx chmod +x dist/cli.js dist/rpc-entry.js && npm run copy-assets"
+        },
+        "copy-assets": {
+          "ice": "shx mkdir -p dist/modes/interactive/theme && shx cp src/modes/interactive/theme/*.json dist/modes/interactive/theme/ && shx mkdir -p dist/modes/interactive/assets && shx mkdir -p dist/observe && shx cp src/observe/observe-dashboard.html dist/observe/ && shx mkdir -p dist/core/export-html/vendor && shx cp src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/core/export-html/ && shx cp src/core/export-html/vendor/*.js dist/core/export-html/vendor/ && shx mkdir -p dist/ice-cognee-skills && shx cp -r src/ice-cognee-skills/* dist/ice-cognee-skills/",
+          "pi": "shx mkdir -p dist/modes/interactive/theme && shx cp src/modes/interactive/theme/*.json dist/modes/interactive/theme/ && shx mkdir -p dist/modes/interactive/assets && shx cp src/modes/interactive/assets/*.png dist/modes/interactive/assets/ && shx mkdir -p dist/core/export-html/vendor && shx cp src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/core/export-html/ && shx cp src/core/export-html/vendor/*.js dist/core/export-html/vendor/"
+        },
+        "copy-binary-assets": {
+          "ice": "shx cp package.json dist/ && shx cp README.md dist/ && shx cp CHANGELOG.md dist/ && shx mkdir -p dist/theme && shx cp src/modes/interactive/theme/*.json dist/theme/ && shx mkdir -p dist/assets && shx mkdir -p dist/export-html/vendor && shx cp src/core/export-html/template.html dist/export-html/ && shx cp src/core/export-html/vendor/*.js dist/export-html/vendor/ && shx cp -r docs dist/ && shx cp -r examples dist/ && shx cp ../../node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm dist/",
+          "pi": "shx cp package.json dist/ && shx cp README.md dist/ && shx cp CHANGELOG.md dist/ && shx mkdir -p dist/theme && shx cp src/modes/interactive/theme/*.json dist/theme/ && shx mkdir -p dist/assets && shx cp src/modes/interactive/assets/*.png dist/assets/ && shx mkdir -p dist/export-html/vendor && shx cp src/core/export-html/template.html dist/export-html/ && shx cp src/core/export-html/vendor/*.js dist/export-html/vendor/ && shx cp -r docs dist/ && shx cp -r examples dist/ && shx cp ../../node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm dist/"
+        },
+        "prepublishOnly": {
+          "ice": "npm run clean && npm run build && npm run shrinkwrap",
+          "pi": "npm run clean && npm run build"
+        },
+        "quality:live": {
+          "ice": "tsx examples/subagent-quality-live-bench.ts",
+          "pi": null
+        },
+        "shrinkwrap": {
+          "ice": "node ../../scripts/generate-coding-agent-shrinkwrap.mjs",
+          "pi": null
+        },
+        "w5:live": {
+          "ice": "tsx examples/w5-writer-dogfood.ts",
+          "pi": null
+        }
+      }
+    }
+  },
+  {
+    "path": "packages/durable/package.json",
+    "ice_version": null,
+    "pi_version": "1.0.2",
+    "differences": {
+      "engines": {
+        "ice": null,
+        "pi": {
+          "node": ">=22.19.0"
+        }
+      },
+      "dependencies": {
+        "ice": null,
+        "pi": {
+          "@earendil-works/chord": "^1.0.2",
+          "@FORK/PACKAGE-ai": "^1.0.2",
+          "diff": "8.0.4",
+          "typebox": "1.3.27"
+        }
+      },
+      "devDependencies": {
+        "ice": null,
+        "pi": {
+          "shx": "0.4.0",
+          "vitest": "4.1.11"
+        }
+      },
+      "exports": {
+        "ice": null,
+        "pi": {
+          ".": {
+            "source": "./src/index.ts",
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "default": "./dist/index.js"
+          },
+          "./env": {
+            "source": "./src/env/index.ts",
+            "types": "./dist/env/index.d.ts",
+            "import": "./dist/env/index.js",
+            "default": "./dist/env/index.js"
+          },
+          "./env/node": {
+            "source": "./src/env/node.ts",
+            "types": "./dist/env/node.d.ts",
+            "import": "./dist/env/node.js",
+            "default": "./dist/env/node.js"
+          },
+          "./tools": {
+            "source": "./src/tools/index.ts",
+            "types": "./dist/tools/index.d.ts",
+            "import": "./dist/tools/index.js",
+            "default": "./dist/tools/index.js"
+          },
+          "./storage/memory": {
+            "source": "./src/storage/memory.ts",
+            "types": "./dist/storage/memory.d.ts",
+            "import": "./dist/storage/memory.js",
+            "default": "./dist/storage/memory.js"
+          },
+          "./storage/jsonl": {
+            "source": "./src/storage/jsonl/index.ts",
+            "types": "./dist/storage/jsonl/index.d.ts",
+            "import": "./dist/storage/jsonl/index.js",
+            "default": "./dist/storage/jsonl/index.js"
+          },
+          "./storage/jsonl/node": {
+            "source": "./src/storage/jsonl/node.ts",
+            "types": "./dist/storage/jsonl/node.d.ts",
+            "import": "./dist/storage/jsonl/node.js",
+            "default": "./dist/storage/jsonl/node.js"
+          },
+          "./storage/sqlite": {
+            "source": "./src/storage/sqlite/index.ts",
+            "types": "./dist/storage/sqlite/index.d.ts",
+            "import": "./dist/storage/sqlite/index.js",
+            "default": "./dist/storage/sqlite/index.js"
+          },
+          "./storage/sqlite/node": {
+            "source": "./src/storage/sqlite/node.ts",
+            "types": "./dist/storage/sqlite/node.d.ts",
+            "import": "./dist/storage/sqlite/node.js",
+            "default": "./dist/storage/sqlite/node.js"
+          },
+          "./testing": {
+            "source": "./src/testing/index.ts",
+            "types": "./dist/testing/index.d.ts",
+            "import": "./dist/testing/index.js",
+            "default": "./dist/testing/index.js"
+          },
+          "./package.json": "./package.json"
+        }
+      },
+      "scripts": {
+        "ice": null,
+        "pi": {
+          "clean": "shx rm -rf dist",
+          "build": "tsc -p tsconfig.build.json",
+          "test": "vitest --run",
+          "bench:storage": "vitest bench --config vitest.benchmark.config.ts",
+          "bench:storage:memory": "node --conditions=source --experimental-strip-types test/storage-memory.ts",
+          "bench:tool-output": "node --conditions=source --experimental-strip-types --expose-gc test/tool-output-bench.ts",
+          "prepublishOnly": "npm run clean && npm run build"
+        }
+      }
+    }
+  },
+  {
+    "path": "packages/evals/package.json",
+    "ice_version": "0.83.0",
+    "pi_version": "1.0.2",
+    "differences": {
+      "devDependencies": {
+        "@FORK/PACKAGE-ai": {
+          "ice": "^0.83.0",
+          "pi": "^1.0.2"
+        },
+        "@FORK/PACKAGE-coding-agent": {
+          "ice": "^0.83.0",
+          "pi": "^1.0.2"
+        },
+        "@types/node": {
+          "ice": "24.12.4",
+          "pi": "22.19.19"
+        },
+        "@vitest-evals/core": {
+          "ice": null,
+          "pi": "0.15.0"
+        },
+        "autoevals": {
+          "ice": null,
+          "pi": "0.3.0"
+        },
+        "typescript": {
+          "ice": "5.9.3",
+          "pi": null
+        },
+        "vitest": {
+          "ice": "4.1.9",
+          "pi": "4.1.11"
+        }
+      },
+      "scripts": {
+        "eval": {
+          "ice": "node scripts/run-evals.mjs",
+          "pi": "npm run eval:host && npm run eval:docs --"
+        },
+        "eval:docs": {
+          "ice": null,
+          "pi": "node --experimental-strip-types src/cli.ts"
+        },
+        "eval:host": {
+          "ice": null,
+          "pi": "vitest run --config vitest.evals.config.ts --project host"
+        }
+      }
+    }
+  },
+  {
+    "path": "packages/mcp/package.json",
+    "ice_version": null,
+    "pi_version": "1.0.2",
+    "differences": {
+      "engines": {
+        "ice": null,
+        "pi": {
+          "node": ">=22.19.0"
+        }
+      },
+      "dependencies": {
+        "ice": null,
+        "pi": {
+          "cross-spawn": "7.0.6"
+        }
+      },
+      "devDependencies": {
+        "ice": null,
+        "pi": {
+          "@types/cross-spawn": "6.0.6",
+          "shx": "0.4.0",
+          "vitest": "4.1.11"
+        }
+      },
+      "exports": {
+        "ice": null,
+        "pi": {
+          ".": {
+            "source": "./src/index.ts",
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+          },
+          "./oauth": {
+            "source": "./src/oauth/index.ts",
+            "types": "./dist/oauth/index.d.ts",
+            "import": "./dist/oauth/index.js"
+          },
+          "./testing": {
+            "source": "./src/testing/index.ts",
+            "types": "./dist/testing/index.d.ts",
+            "import": "./dist/testing/index.js"
+          }
+        }
+      },
+      "scripts": {
+        "ice": null,
+        "pi": {
+          "clean": "shx rm -rf dist",
+          "build": "tsc -p tsconfig.build.json",
+          "test": "vitest --run",
+          "prepublishOnly": "npm run clean && npm run build"
+        }
+      }
+    }
+  },
+  {
+    "path": "packages/protocol/package.json",
+    "ice_version": "0.83.0",
+    "pi_version": "1.0.2",
+    "differences": {
+      "dependencies": {
+        "@earendil-works/chord": {
+          "ice": null,
+          "pi": "^1.0.2"
+        },
+        "typebox": {
+          "ice": "1.3.7",
+          "pi": "1.3.27"
+        }
+      },
+      "devDependencies": {
+        "vitest": {
+          "ice": "4.1.9",
+          "pi": "4.1.11"
+        }
+      },
+      "scripts": {
+        "build": {
+          "ice": "tsgo -p tsconfig.build.json",
+          "pi": "tsc -p tsconfig.build.json"
+        }
+      }
+    }
+  },
+  {
+    "path": "packages/server/package.json",
+    "ice_version": "0.83.0",
+    "pi_version": "1.0.2",
+    "differences": {
+      "dependencies": {
+        "@FORK/PACKAGE-ai": {
+          "ice": "^0.83.0",
+          "pi": null
+        },
+        "@FORK/PACKAGE-protocol": {
+          "ice": "^0.83.0",
+          "pi": "^1.0.2"
+        },
+        "@earendil-works/chord": {
+          "ice": null,
+          "pi": "^1.0.2"
+        }
+      },
+      "devDependencies": {
+        "vitest": {
+          "ice": "4.1.9",
+          "pi": "4.1.11"
+        }
+      },
+      "scripts": {
+        "build": {
+          "ice": "tsgo -p tsconfig.build.json",
+          "pi": "tsc -p tsconfig.build.json"
+        },
+        "dev": {
+          "ice": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+          "pi": "tsc -p tsconfig.build.json --watch --preserveWatchOutput"
+        },
+        "typecheck": {
+          "ice": "tsgo -p tsconfig.test.json",
+          "pi": "tsc -p tsconfig.test.json"
+        }
+      }
+    }
+  },
+  {
+    "path": "packages/telemetry/package.json",
+    "ice_version": null,
+    "pi_version": "1.0.2",
+    "differences": {
+      "engines": {
+        "ice": null,
+        "pi": {
+          "node": ">=22.19.0"
+        }
+      },
+      "devDependencies": {
+        "ice": null,
+        "pi": {
+          "@types/node": "22.19.19",
+          "vitest": "4.1.11"
+        }
+      },
+      "exports": {
+        "ice": null,
+        "pi": {
+          ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+          },
+          "./testing": {
+            "types": "./dist/testing/index.d.ts",
+            "import": "./dist/testing/index.js"
+          }
+        }
+      },
+      "scripts": {
+        "ice": null,
+        "pi": {
+          "clean": "shx rm -rf dist",
+          "build": "tsc -p tsconfig.build.json",
+          "test": "vitest --run",
+          "prepublishOnly": "npm run clean && npm run build"
+        }
+      }
+    }
+  },
+  {
+    "path": "packages/tui/package.json",
+    "ice_version": "0.83.0",
+    "pi_version": "1.0.2",
+    "differences": {
+      "dependencies": {
+        "marked": {
+          "ice": "18.0.5",
+          "pi": "18.0.11"
+        }
+      },
+      "devDependencies": {
+        "chalk": {
+          "ice": "5.6.2",
+          "pi": "6.0.0"
+        }
+      },
+      "scripts": {
+        "build": {
+          "ice": "tsgo -p tsconfig.build.json",
+          "pi": "tsc -p tsconfig.build.json"
+        },
+        "build:native:linux": {
+          "ice": null,
+          "pi": "native/linux/build.sh"
+        },
+        "build:native:win32": {
+          "ice": null,
+          "pi": "node native/win32/build.mjs"
+        }
+      }
+    }
+  }
+]

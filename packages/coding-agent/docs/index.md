@@ -45,6 +45,7 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 - [Security](security.md) - project trust, sandbox boundaries, and vulnerability reporting.
 - [Containerization](containerization.md) - sandbox ice with Gondolin, Docker, or OpenShell.
 - [Settings](settings.md) - global and project settings.
+- [Subagents V2](subagents-v2.md) - agent definitions, permissions, child lifecycle, and worktree patches.
 - [Keybindings](keybindings.md) - default shortcuts and custom keybindings.
 - [Sessions](sessions.md) - session management, branching, and tree navigation.
 - [Compaction](compaction.md) - context compaction and branch summarization.
@@ -68,6 +69,9 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 
 ## Reference
 
+- [Subagents V2 schema and settings](subagents-v2-reference.md)
+- [Subagents V2 migration](subagents-v2-migration.md)
+- [Subagents V2 architecture](subagents-v2-architecture.md)
 - [Environment variables](environment-variables.md) - Ice process configuration and session metadata available to bash tools.
 - [Session format](session-format.md) - JSONL session file format, entry types, and SessionManager API.
 

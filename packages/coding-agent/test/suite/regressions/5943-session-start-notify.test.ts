@@ -73,6 +73,8 @@ type LoadedResourcesContext = {
 	formatDisplayPath: (resourcePath: string) => string;
 	formatContextPath: (resourcePath: string) => string;
 	getBuiltInCommandConflictDiagnostics: (extensionRunner: LoadedResourcesContext["session"]["extensionRunner"]) => [];
+	/** Resource load problems go to notices; this regression only covers transcript rendering. */
+	syncResourceNotices: () => void;
 };
 
 type RebindContext = {
@@ -249,6 +251,7 @@ function createLoadedResourcesContext(): LoadedResourcesContext {
 		formatDisplayPath: (resourcePath) => resourcePath,
 		formatContextPath: (resourcePath) => resourcePath.replace("/repo/", ""),
 		getBuiltInCommandConflictDiagnostics: () => [],
+		syncResourceNotices: () => {},
 	};
 }
 

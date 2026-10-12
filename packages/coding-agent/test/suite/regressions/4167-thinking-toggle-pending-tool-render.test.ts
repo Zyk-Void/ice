@@ -43,6 +43,7 @@ type RenderSessionContextThis = {
 		getShowImages(): boolean;
 		getImageWidthCells(): number;
 		getShowCacheMissNotices(): boolean;
+		getToolStyle(): "compact" | "boxed";
 	};
 	readonly renderSession: { sessionManager: { getCwd(): string; getEntries(): SessionEntry[] } };
 	sessionManager: { getCwd(): string; getEntries(): SessionEntry[] };
@@ -54,6 +55,8 @@ type RenderSessionContextThis = {
 	effectiveAppearance(): ReturnType<typeof createDefaultAppearance>;
 	addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void;
 	renderSessionItems: RenderSessionItems;
+	createToolComponent(name: string, id: string, args: unknown, cwd: string): ToolExecutionComponent;
+	findOpenToolGroup(): unknown;
 };
 
 type RenderSessionEntries = (
@@ -78,16 +81,23 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 			getShowImages: () => false,
 			getImageWidthCells: () => 60,
 			getShowCacheMissNotices: () => false,
+			getToolStyle: () => "compact",
 		},
 		sessionManager: { getCwd: () => process.cwd(), getEntries: () => [] },
 		session: { retryAttempt: 0, modelRegistry: { find: () => undefined } },
-		toolOutputExpanded: false,
+		// Compact tool rows show result text only when expanded.
+		toolOutputExpanded: true,
 		isInitialized: true,
 		updateEditorBorderColor: vi.fn(),
 		getRegisteredToolDefinition: (_toolName: string) => undefined,
 		effectiveAppearance: () => createDefaultAppearance(),
 		renderSessionItems: (InteractiveMode.prototype as unknown as { renderSessionItems: RenderSessionItems })
 			.renderSessionItems,
+		createToolComponent: (
+			InteractiveMode.prototype as unknown as Pick<RenderSessionContextThis, "createToolComponent">
+		).createToolComponent,
+		findOpenToolGroup: (InteractiveMode.prototype as unknown as Pick<RenderSessionContextThis, "findOpenToolGroup">)
+			.findOpenToolGroup,
 		addMessageToChat(message: AgentMessage) {
 			chatContainer.addChild(new Text(message.role, 0, 0));
 		},

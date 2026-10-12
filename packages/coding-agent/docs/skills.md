@@ -11,6 +11,7 @@ Ice implements the [Agent Skills standard](https://agentskills.io/specification)
 - [Locations](#locations)
 - [How Skills Work](#how-skills-work)
 - [Skill Commands](#skill-commands)
+- [Hot Reload](#hot-reload)
 - [Skill Structure](#skill-structure)
 - [Frontmatter](#frontmatter)
 - [Validation](#validation)
@@ -88,6 +89,14 @@ Toggle skill commands via `/settings` in interactive mode or in `settings.json`:
   "enableSkillCommands": true
 }
 ```
+
+## Hot Reload
+
+Skills are reloaded without restarting the session:
+
+- When a prompt is submitted, ice re-scans the skill locations. `/skill:name` expansion and the `<available_skills>` section of the system prompt always reflect the current files, so newly added, updated, and deleted skills take effect on the next prompt.
+- Interactive mode also re-scans skill locations every few seconds while idle, keeping the `/skill:name` command list in autocomplete up to date.
+- Deleting a skill's `SKILL.md` or its whole directory removes the skill on the next scan; skill name collisions from the same rescan are re-reported as usual.
 
 ## Skill Structure
 

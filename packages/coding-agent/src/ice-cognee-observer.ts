@@ -1,4 +1,4 @@
-import { appendFile, chmod, mkdir, readFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readFile, rename, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { redactMemoryText } from "./ice-cognee.ts";
@@ -6,6 +6,8 @@ import { redactMemoryText } from "./ice-cognee.ts";
 export const COGNEE_OBSERVATION_FILE = "observations.jsonl";
 const MAX_EVENTS = 500;
 const MAX_PREVIEW_CHARS = 900;
+/** The log rotates to a single `.1` generation past this size, so it never grows without bound. */
+export const MAX_OBSERVATION_FILE_BYTES = 2 * 1024 * 1024;
 const POLL_MS = 350;
 
 export type CogneeObservationOperation =
@@ -64,7 +66,21 @@ function observationPath(storageDir: string): string {
 	return join(storageDir, COGNEE_OBSERVATION_FILE);
 }
 
-export async function appendCogneeObservation(storageDir: string, observation: CogneeObservation): Promise<void> {
+/** Appends per storage directory run one at a time, so two writers never race the size-check rename. */
+const appendQueues = new Map<string, Promise<void>>();
+
+export function appendCogneeObservation(storageDir: string, observation: CogneeObservation): Promise<void> {
+	const next = (appendQueues.get(storageDir) ?? Promise.resolve()).then(() =>
+		writeCogneeObservation(storageDir, observation),
+	);
+	appendQueues.set(storageDir, next);
+	void next.then(() => {
+		if (appendQueues.get(storageDir) === next) appendQueues.delete(storageDir);
+	});
+	return next;
+}
+
+async function writeCogneeObservation(storageDir: string, observation: CogneeObservation): Promise<void> {
 	const safe = {
 		...observation,
 		preview: observation.preview === undefined ? undefined : redactMemoryText(observation.preview, MAX_PREVIEW_CHARS),
@@ -74,20 +90,26 @@ export async function appendCogneeObservation(storageDir: string, observation: C
 		const path = observationPath(storageDir);
 		await appendFile(path, `${JSON.stringify(safe)}\n`, { encoding: "utf8", mode: 0o600 });
 		await chmod(path, 0o600);
+		if ((await stat(path)).size > MAX_OBSERVATION_FILE_BYTES) await rename(path, `${path}.1`);
 	} catch {
 		// Observation must never affect the Ice loop.
 	}
 }
 
 export async function readCogneeObservations(storageDir: string): Promise<CogneeObservation[]> {
-	let text: string;
-	try {
-		text = await readFile(observationPath(storageDir), "utf8");
-	} catch {
-		return [];
-	}
+	const readLines = async (path: string): Promise<string[]> => {
+		try {
+			return (await readFile(path, "utf8")).split("\n").filter((line) => line.length > 0);
+		} catch {
+			return [];
+		}
+	};
+	const path = observationPath(storageDir);
+	let lines = await readLines(path);
+	// Right after a rotation the live file is short; fill the view from the previous generation.
+	if (lines.length < MAX_EVENTS) lines = [...(await readLines(`${path}.1`)), ...lines];
 	const events: CogneeObservation[] = [];
-	for (const line of text.split("\n").slice(-MAX_EVENTS)) {
+	for (const line of lines.slice(-MAX_EVENTS)) {
 		try {
 			const parsed: unknown = JSON.parse(line);
 			if (isObservation(parsed)) events.push(parsed);

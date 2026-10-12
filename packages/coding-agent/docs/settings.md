@@ -1,6 +1,6 @@
 # Settings
 
-For ICE delegation, see the [subagent user guide](subagent-user-guide.md), including opt-in exact child routes, native durable hook intents, host-owned command-hook policy, and project workflow skills. Its approved expansion contracts supersede historical deferral notes below.
+For ICE subagents (agents, permissions, hooks, MCP tools), see [subagents-v2.md](subagents-v2.md).
 
 Stock `ice` uses JSON settings files with project settings overriding global settings. The `ice` launcher opts into global-first ordinary preferences, including startup, reload, scoped writes, and session switches. Permission denies, trust, and restrictive caps remain separate from preference precedence.
 
@@ -31,6 +31,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 |---------|------|---------|-------------|
 | `defaultProvider` | string | - | Default provider (e.g., `"anthropic"`, `"openai"`) |
 | `defaultModel` | string | - | Default model ID |
+| `favoriteModels` | string[] | `[]` | Global-only exact `provider/model` IDs pinned first in `/model`; toggle with Shift+F. Does not change Ctrl+P cycling |
 | `defaultThinkingLevel` | string | - | `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`, `"ultra"` |
 | `hideThinkingBlock` | boolean | `false` | Hide thinking blocks in output |
 | `showCacheMissNotices` | boolean | `false` | Show transcript notices for significant prompt-cache misses |
@@ -56,6 +57,9 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | `theme` | string | `"dark"` | Theme name (`"dark"`, `"light"`, or custom) |
 | `externalEditor` | string | `$VISUAL`, then `$EDITOR`, then Notepad on Windows or `nano` elsewhere | Command for Ctrl+G external editor; takes precedence over environment variables |
 | `quietStartup` | boolean | `false` | Hide startup header |
+| `toolStyle` | string | `"compact"` | Interactive tool calls: `"compact"` (bullet rows, consecutive read/search/shell/MCP calls merged into one summary row, `ctrl+o` expands) or `"boxed"` (padded background blocks) |
+| `symbols` | string | `"auto"` | Glyph set for interactive chrome: `"auto"` (unicode, or ascii for `TERM=dumb` and non-UTF-8 locales), `"unicode"`, `"nerd"` (Nerd Fonts v3), or `"ascii"` |
+| `footerStyle` | string | `"compact"` | Interactive footer: `"compact"` (one status row: mode, directory, branch, model, context, notices) or `"legacy"` (multi-row usage footer). Footer color/style customization preserves the compact layout; custom field order, visibility, or separators use the customized multi-row layout |
 | `defaultProjectTrust` | string | `"ask"` | Fallback project trust behavior: `"ask"`, `"always"`, or `"never"`. Global setting only |
 | `collapseChangelog` | boolean | `false` | Show condensed changelog after updates |
 | `enableInstallTelemetry` | boolean | `true` | Send an anonymous install/update version ping after first install or changelog-detected updates. This does not control update checks |
@@ -68,7 +72,7 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 | `autocompleteMaxVisible` | number | `5` | Max visible items in autocomplete dropdown (3-20) |
 | `showHardwareCursor` | boolean | `false` | Show the terminal cursor while TUI positions it for IME support |
 | `uiMode` | string | `"regular"` | Interactive UI mode: `"regular"` or experimental `"fullscreen"`. Changes from `/settings` apply immediately; `--ui-mode` overrides this setting at startup |
-| `fullscreenScrollbar` | string | `"auto"` | Fullscreen transcript scrollbar: `"auto"` shows it temporarily while scrolling, `"always"` reserves the rightmost column and keeps it visible, and `"hidden"` hides it. Has no effect in regular UI mode |
+| `fullscreenScrollbar` | string | `"hidden"` | Fullscreen transcript scrollbar: `"hidden"` hides it, `"auto"` shows it temporarily while scrolling, and `"always"` reserves the rightmost column and keeps it visible. Has no effect in regular UI mode |
 
 For VS Code, include `--wait` so ice resumes after the editor exits:
 
@@ -159,7 +163,7 @@ The loaded extension exposes all Blackhole fields in `/settings`. Changes persis
 
 If both native and Blackhole mid-run triggers are enabled, Blackhole yields to native ICE and displays a warning. Keep native `compaction.enabled` set to `true` for overflow recovery; the native 95% safety net applies regardless of which mid-run trigger owns proactive compaction.
 
-Blackhole summaries open with a `[Last Actions]` section (the most recent tool actions, failures marked) and list in-flight background subagent jobs under `[Running Agents]` (re-attach via `inspect_subagent_job`). When the Cognee extension runs with `checkpointRecall: true`, the checkpoint also carries a capped `[Relevant Memory]` section.
+Blackhole summaries open with a `[Last Actions]` section (the most recent tool actions, failures marked). A `[Subagents]` section lists the session's current V2 children from their journaled `ice-subagent-v2-child` records (latest per child, deleted ones dropped, capped at 12): name, id, agent, state, last-turn outcome, assurance, task description, the first 160 characters of the validated result marked as untrusted, and how to read the full report (`agent_control action=output` or `status`). When the Cognee extension runs with `checkpointRecall: true`, the checkpoint also carries a capped `[Relevant Memory]` section.
 
 ### Branch Summary
 
@@ -309,73 +313,7 @@ See [packages.md](packages.md) for package management details.
 
 ## ICE subagents and hooks
 
-ICE keeps its operational settings under the existing `ice` namespace. Global values live in `~/.ice/agent/settings.json`; trusted project values live in `.ice/settings.json`. The namespace is parsed strictly: unknown keys in `ice.subagents.restrictions` or `ice.hooks` fail closed for delegation instead of being ignored.
-
-```json
-{
-  "ice": {
-    "subagents": {
-      "enabled": true,
-      "defaults": {
-        "thinking": "medium",
-        "timeoutMs": 120000,
-        "maxOutputBytes": 24576
-      },
-      "allowedRoles": ["self", "api-review"],
-      "roleDefaults": {
-        "api-review": { "thinking": "high" }
-      },
-      "restrictions": {
-        "maxTimeoutMs": 300000,
-        "denyTools": ["bash", "write", "edit"]
-      },
-      "modelSelection": { "mode": "inherit-parent" }
-    },
-    "hooks": {
-      "enabled": true,
-      "definitions": [
-        {
-          "id": "review-launch-policy",
-          "event": "subagent.beforeLaunch",
-          "roles": ["self", "api-review"],
-          "kind": "in-process",
-          "timeoutMs": 1500,
-          "required": true
-        }
-      ]
-    }
-  }
-}
-```
-
-Resolution is deterministic and global-first for ice: an explicit global value beats a trusted-project value, then the built-in/file default (bundled/global defaults, project defaults, per-role defaults, and per-call requests are resolved once before launch). Timeout/output caps and deny lists narrow authority; they never widen the parent. An omitted or empty `allowedRoles` list adds no restriction; use `restrictions.denyRoles` for explicit denial. Project settings are ignored until project trust is established, and a more-specific allow cannot override a broader deny. Malformed settings files and security-sensitive namespaces fail closed. Every launch result reports effective timeout/output limits, tool restrictions, source labels, and bounded diagnostics. Stock `ice` keeps its existing project-first merge; the `ice` launcher uses global-first shared preferences, not only its subagent namespace. File-agent discovery uses `~/.ice/agents` (or `<agentDir>/agents` for an explicit custom directory) ahead of trusted `.ice/agents`, with shadowed sources surfaced. Explicit global arrays replace the corresponding project configuration arrays; explicit empty, false, and zero values are not treated as missing. For subagent preferences the order is file/default, project default, project role, global default, global role, then explicit invocation request; hard caps and denies apply afterward.
-
-Read/review delegation also accepts an optional restricted local `outputSchema` object. The root must be an object with `additionalProperties: false`; only bounded object/array/string/number/integer/boolean/null nodes are supported. `$ref`, remote schemas, unions, executable validators, and unknown keywords are rejected before child creation. A valid schema validates a nested `payload` while the mandatory `summary`/`evidence` envelope remains authoritative. Payloads are capped at 16 KiB and are retained in bounded durable result projections.
-
-`manage_subagent` supports `inspect`, `extend`, `stop`, owner-bound `follow_up`, `resume`, and `delete`. Follow-up requires a stable `requestId`, is deduplicated, queues through the retained native Ice child, preserves its original scope/tools/model/execution contract, and is rejected while a user has Take Control. `resume` continues an eligible completed child in its original session under a new run id, re-derives profile/resources/project trust/tool authority fail-closed at the resume boundary, re-points the session's own tool/stream/turn-stop wrappers at the resumed run's hooks and authority callback, and cannot widen model/profile/scope/tools; `delete` is owner-scoped and idempotent, rejects active children, and releases both the retained session and its historical view snapshot. Durable async acceptance stores the resolved thinking, timeout, output limit, tools, and profile source hash; settings changes do not silently re-resolve accepted jobs.
-
-The shipped hook dispatcher supports trusted parent-owned in-process handlers supplied by the ICE integration. Decision events are `subagent.beforeLaunch`, `subagent.beforeTool`, and `subagent.beforeAccept`; observational lifecycle events, including bounded `subagent.checkpoint`, cannot authorize work. Optional `roleHookIds` and `callHookIds` selections filter optional hooks as a union; required hooks remain active, and an explicitly empty selector selects no optional hooks. A `beforeLaunch` handler may return bounded `contextAdditions`; the parent redacts and merges them into the context packet, then reruns context, source/resource, scope, and preflight validation before admission. Missing approval, malformed required-hook output, timeout, or a required handler that is unavailable blocks the gated action. Executable hooks require global `ice.hooks.commandPolicy`, trusted build mode, startup-authorized parent Bash, pinned executable/script identities, and execution approval. Plan/review children cannot execute command hooks. Global definitions win ID collisions without downgrading required status. Trusted handlers can register through `registerIceSubagentHook(ice.events, id, handler)`; replacement/unregistration of a captured handler fails closed. Hooks never load child extensions, create another agent loop, or grant additional model/tool authority. Each dispatched handler gets a stable event ID; the parent persists redacted intent/outcome records in the session, and reload warns about unresolved intent without replaying the hook.
-
-`modelSelection.mode` accepts `"inherit-parent"` (default) or `"configured"` (global opt-in for exact per-call/file routes resolved through Ice's catalog). File agents may declare exact `model`/`fallbackModel` references; candidates run call/primary/fallback/parent with bounded skip reasons and policy denials fail the launch. `allowedRoles` is an intersection restriction, not an authority-granting union. `ice.subagents.enabled: false` blocks new launches while retained jobs remain inspectable and cancellable through their existing owner-scoped APIs.
-
-### Profile authoring templates
-
-Custom roles stay data-only Markdown profiles under the file-agent locations (`~/.ice/agents` globally, or `<agentDir>/agents` for an explicit custom directory, and `.ice/agents` for trusted projects). Expertise belongs in the prompt; `tools` is the declared capability request and is still intersected with parent mode, active tools, scope, and ICE restrictions. Supported authority-neutral fields include `model`, `fallbackModel`, `skills`, `prompts`, `context`, `hooks`, and explicit `mcp` server/tool selectors.
-
-```markdown
----
-name: api-review
-description: Review API changes for compatibility and security regressions
-tools: read, grep, find, ls
-thinking: high
-timeoutMs: 180000
----
-
-Review only the approved scope. Report concrete file evidence and unresolved claims;
-do not modify files, delegate, or infer approval from this prompt.
-```
-
-Useful specializations include `api-review`, `migration-review`, `frontend-review`, and `verification`; do not add executable commands or ambient resource discovery to a profile as a way to expand authority. `model`, `fallbackModel`, `hooks`, skills, and explicit `mcp` selectors are data, never permission grants: the child still cannot exceed parent authority, mode restrictions, or deny policy. `list_subagent_profiles` reports requested versus effective tools, primary/fallback models, effective MCP selections, bounded budgets, source labels, and diagnostics without executing the profile. Interactive `/settings` also exposes an `Effective policy` submenu with bounded source-aware role budgets, trust/enablement state, hook declarations, routing policy, and settings-load errors; it does not author executable roles.
+Subagent settings live under `ice.subagents` and hook definitions under `ice.hooks`. See the [Subagents V2 guide](subagents-v2.md), [settings and schema reference](subagents-v2-reference.md), and [migration guide](subagents-v2-migration.md) for supported fields, precedence, permission rules, hooks, MCP selectors, and removed legacy settings. V2 is the only current subagent system; `ice.subagents.v2` is an ignored compatibility key.
 
 ## Example
 

@@ -10,12 +10,13 @@ import { extractFiles } from "../extract/files.ts";
 import { extractGoals } from "../extract/goals.ts";
 import { dedupPreferencesAgainstGoals, extractPreferences } from "../extract/preferences.ts";
 import type { SectionData } from "../sections.ts";
-import type { NormalizedBlock } from "../types.ts";
+import type { FileOps, NormalizedBlock } from "../types.ts";
 import { buildBriefSections, stringifyBrief, toolOneLiner } from "./brief.ts";
 import { clipSentence, firstLine, nonEmptyLines } from "./content.ts";
 
 export interface BuildSectionsInput {
 	blocks: NormalizedBlock[];
+	fileOps?: FileOps;
 }
 
 const BLOCKER_RE =
@@ -78,8 +79,8 @@ const extractOutstandingContext = (blocks: NormalizedBlock[]): string[] => {
 	return items.slice(0, 5);
 };
 
-const formatFileActivity = (blocks: NormalizedBlock[]): string[] => {
-	const act = extractFiles(blocks);
+const formatFileActivity = (blocks: NormalizedBlock[], fileOps?: FileOps): string[] => {
+	const act = extractFiles(blocks, fileOps);
 	// Dedup: if already Modified, drop from Created (file existed before)
 	for (const p of act.modified) act.created.delete(p);
 	const lines: string[] = [];
@@ -103,7 +104,7 @@ export const buildSections = (input: BuildSectionsInput): SectionData => {
 		recentActions: extractRecentActions(blocks),
 		sessionGoal,
 		outstandingContext: extractOutstandingContext(blocks),
-		filesAndChanges: formatFileActivity(blocks),
+		filesAndChanges: formatFileActivity(blocks, input.fileOps),
 		commits: formatCommits(extractCommits(blocks)),
 		userPreferences,
 		briefTranscript: stringifyBrief(briefSections),

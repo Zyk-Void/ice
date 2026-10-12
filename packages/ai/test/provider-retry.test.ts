@@ -11,6 +11,27 @@ function providerError(status: number | undefined, headers?: Record<string, stri
 describe("provider request retries", () => {
 	afterEach(() => {
 		vi.useRealTimers();
+		vi.restoreAllMocks();
+	});
+
+	it.each<Record<string, string>>([
+		{ "retry-after": "not-a-date" },
+		{ "retry-after": "Infinity" },
+		{ "retry-after": "-2" },
+		{ "retry-after-ms": "Infinity" },
+		{ "retry-after-ms": "-10" },
+	])("falls back to bounded backoff for invalid delay headers %j", async (headers) => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		const request = vi
+			.fn<() => Promise<string>>()
+			.mockRejectedValueOnce(providerError(429, headers))
+			.mockResolvedValue("ok");
+		const result = retryProviderRequest(request, { maxRetries: 1 });
+		await vi.advanceTimersByTimeAsync(499);
+		expect(request).toHaveBeenCalledTimes(1);
+		await vi.advanceTimersByTimeAsync(1);
+		await expect(result).resolves.toBe("ok");
 	});
 
 	it("retries retryable provider errors", async () => {

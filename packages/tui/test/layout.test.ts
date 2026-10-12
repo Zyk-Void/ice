@@ -190,6 +190,22 @@ describe("viewport layout", () => {
 		assert.strictEqual(scrollView.isFollowingEnd, true);
 	});
 
+	it("repaints cached scrollbar rows when a style starts returning a different color", () => {
+		let color = "\x1b[48;5;1m";
+		const content = new Text(Array.from({ length: 8 }, (_, i) => `row${i}`).join("\n"), 0, 0);
+		const scroll = new ScrollView(content, {
+			scrollbar: "always",
+			scrollbarStyle: (text) => `${color}${text}\x1b[49m`,
+		});
+		const first = renderLayoutFrame(scroll, 8, 4, () => {}).lines;
+		assert.ok(first.some((line) => line.includes("\x1b[48;5;1m")));
+		color = "\x1b[48;5;2m";
+		const second = renderLayoutFrame(scroll, 8, 4, () => {}).lines;
+		assert.ok(second.some((line) => line.includes("\x1b[48;5;2m")));
+		assert.ok(second.every((line) => !line.includes("\x1b[48;5;1m")));
+		assert.deepStrictEqual(visibleLines(second), visibleLines(first));
+	});
+
 	it("renders a transient proportional scrollbar without replacing cell content", async () => {
 		const sourceLines = ["abcd界", "abcde2", "abcde3", "abcde4", "abcde5", "abcde6", "abcde7", "abcde8"];
 		const contentBackground = "\x1b[42m";
